@@ -19,8 +19,9 @@ import {
   listMethods,
   saveMethod,
 } from '../lib/repository';
-import type { Method, MethodType, ValidationType } from '../lib/types';
+import type { Method, MethodFamily, MethodType, ValidationType } from '../lib/types';
 import {
+  METHOD_FAMILY_LABELS,
   METHOD_TYPE_LABELS,
   STATUS_LABELS,
   VALIDATION_TYPE_LABELS,
@@ -68,9 +69,15 @@ export function Dashboard() {
     code: '',
     name: '',
     type: 'quantitative' as MethodType,
+    family: 'analytical' as MethodFamily,
     unit: '',
     rangeMin: '',
     rangeMax: '',
+    lsl: '',
+    usl: '',
+    resolution: '',
+    measurand: '',
+    toleranceUnit: '',
     equipment: '',
     referenceNorm: '',
     validationType: 'full' as ValidationType,
@@ -129,9 +136,15 @@ export function Dashboard() {
         code: form.code.trim(),
         name: form.name.trim(),
         type: form.type,
+        family: form.family,
         unit: form.unit.trim(),
         rangeMin: form.rangeMin ? Number(form.rangeMin) : null,
         rangeMax: form.rangeMax ? Number(form.rangeMax) : null,
+        lsl: form.lsl ? Number(form.lsl) : null,
+        usl: form.usl ? Number(form.usl) : null,
+        resolution: form.resolution ? Number(form.resolution) : null,
+        measurand: form.measurand.trim(),
+        toleranceUnit: form.toleranceUnit.trim(),
         equipment: form.equipment.trim(),
         referenceNorm: form.referenceNorm.trim(),
         validationType: form.validationType,
@@ -374,6 +387,11 @@ export function Dashboard() {
                 <option key={value} value={value}>{label}</option>
               ))}
             </Select>
+            <Select label="Família de ensaio" value={form.family} onChange={(e) => setForm({ ...form, family: e.target.value as MethodFamily })}>
+              {Object.entries(METHOD_FAMILY_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </Select>
             <Select label="Tipo de validação" value={form.validationType} onChange={(e) => setForm({ ...form, validationType: e.target.value as ValidationType })}>
               {Object.entries(VALIDATION_TYPE_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
@@ -381,6 +399,11 @@ export function Dashboard() {
             </Select>
             <Input label="Faixa mínima" type="number" step="any" value={form.rangeMin} onChange={(e) => setForm({ ...form, rangeMin: e.target.value })} />
             <Input label="Faixa máxima" type="number" step="any" value={form.rangeMax} onChange={(e) => setForm({ ...form, rangeMax: e.target.value })} />
+            <Input label="LSL (limite inferior)" type="number" step="any" value={form.lsl} onChange={(e) => setForm({ ...form, lsl: e.target.value })} />
+            <Input label="USL (limite superior)" type="number" step="any" value={form.usl} onChange={(e) => setForm({ ...form, usl: e.target.value })} />
+            <Input label="Resolução" type="number" step="any" value={form.resolution} onChange={(e) => setForm({ ...form, resolution: e.target.value })} />
+            <Input label="Mensurando" value={form.measurand} onChange={(e) => setForm({ ...form, measurand: e.target.value })} />
+            <Input label="Unidade da tolerância" value={form.toleranceUnit} onChange={(e) => setForm({ ...form, toleranceUnit: e.target.value })} />
             <Input label="Equipamento" className="sm:col-span-2" value={form.equipment} onChange={(e) => setForm({ ...form, equipment: e.target.value })} />
             <Input label="Norma / referência" className="sm:col-span-2" value={form.referenceNorm} onChange={(e) => setForm({ ...form, referenceNorm: e.target.value })} />
             <Textarea label="Descrição / escopo" className="sm:col-span-2" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />

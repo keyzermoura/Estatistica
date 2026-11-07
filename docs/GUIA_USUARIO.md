@@ -86,10 +86,15 @@ Preencha a identificação que aparecerá no relatório:
 | Código | Código interno do método (ex.: `HPLC-CAF-01`) |
 | Nome | Nome descritivo do método |
 | Tipo | Quantitativo, qualitativo, dimensional/físico, microbiológico ou outro |
+| Família de ensaio | Analítico, dimensional, físico destrutivo/não destrutivo ou atributo |
 | Tipo de validação | Completa, parcial ou verificação de método normalizado |
 | Unidade | Unidade do resultado (ex.: `mg/L`) |
 | Equipamento principal | Equipamento e condições relevantes |
 | Faixa mínima / máxima | Faixa de trabalho declarada |
+| Mensurando | Grandeza medida descrita no relatório |
+| LSL / USL | Limites inferior e superior de tolerância; o LSL deve ser menor que o USL |
+| Resolução | Menor incremento distinguível do instrumento |
+| Unidade da tolerância | Unidade dos limites (ex.: `mm`, `N`) |
 | Norma / referência | Norma ou documento que orienta a validação |
 | Descrição | Resumo do princípio analítico |
 | Título da validação | Nome do processo no painel e no relatório |
@@ -210,6 +215,13 @@ A tabela permite adicionar, editar e remover medições. Cada linha tem:
 - **Texto**: resultado qualitativo, quando aplicável;
 - **Notas**.
 
+A planilha de coleta aceita ainda as colunas **Parte**, **Corpo de prova**,
+**Destrutivo (0/1)**, **Valor de referência**, **Incerteza da referência**,
+**Temperatura**, **Umidade**, **Velocidade de ensaio**, **Outras condições** e
+**Categoria**. Esses valores são preservados ao salvar e usados pelos perfis
+dimensionais, físicos e de atributo; a edição direta na tabela será ampliada
+quando o perfil da família estiver ativo.
+
 Para repetibilidade e precisão, o **nível** é o agrupamento principal. Para
 exatidão, informe a **Referência**; se ela estiver vazia, o sistema tenta usar
 um nível numérico como referência. Para LD/LQ por brancos, use um nível chamado
@@ -218,15 +230,25 @@ um nível numérico como referência. Para LD/LQ por brancos, use um nível cham
 ### 7.2 Importação
 
 1. Clique em **Modelo** para baixar um XLSX já com a ordem do delineamento.
-2. Preencha as colunas `Valor`, `Referência` e `Notas`.
+2. Preencha as colunas `Valor`, `Referência` e `Notas` e, quando aplicável, as
+   colunas de parte/corpo de prova, condições e padrão de referência.
 3. Clique em **Importar** e selecione o arquivo `.xlsx`, `.xls` ou `.csv`.
 4. Revise as linhas na tela e clique em **Salvar medições**.
 
 A primeira aba da planilha é lida. Os cabeçalhos aceitam variações com ou sem
 acento (ex.: `Nível`, `Nivel`, `Concentração`; `Analista/Lab`, `Laboratório`,
 `Lab`; `Valor`, `Resultado`, `Resposta`; `Referência`, `Fortificado`,
-`Nominal`). Números com vírgula decimal são aceitos. Linhas sem valor e sem
-texto são ignoradas.
+`Nominal`; `Parte`, `Part ID`; `Corpo de prova`, `Specimen`). Números com
+vírgula decimal são aceitos. Linhas sem valor, texto ou categoria são
+ignoradas. Planilhas antigas, sem as novas colunas, continuam válidas.
+
+Regras de importação:
+
+- família **dimensional** exige `Parte` (`part_id`) em todas as linhas;
+- `Destrutivo = 1` exige **Corpo de prova**;
+- os limites do método exigem **LSL < USL**;
+- a importação é bloqueada com a lista de linhas inconsistentes, sem alterar os
+  dados já gravados.
 
 ### 7.3 Verificações automáticas
 

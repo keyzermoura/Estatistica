@@ -71,12 +71,16 @@ estat2/
 │  │     └─ StepAudit.tsx
 │  ├─ lib/
 │  │  ├─ types.ts             ← modelo de dados TypeScript
-│  │  ├─ db.ts                ← schema SQLite, persistência, migrações
+│  │  ├─ schema.ts            ← schema SQLite + migrações versionadas
+│  │  ├─ db.ts                ← abertura/persistência e acesso ao SQLite
 │  │  ├─ repository.ts        ← CRUD + auditoria + versionamento
+│  │  ├─ spreadsheet.ts       ← XLSX/CSV de coleta (importação/exportação)
+│  │  ├─ validation.ts        ← regras de integridade do modelo v2
 │  │  ├─ seed.ts              ← método/validação de exemplo
 │  │  ├─ export.ts            ← XLSX, CSV, DOCX, PDF, ZIP
 │  │  ├─ report.ts            ← composição do relatório
 │  │  ├─ criteria.ts          ← avaliação de critérios de aceitação
+│  │  ├─ __tests__/           ← migração, planilhas e validações
 │  │  └─ utils.ts
 │  ├─ profiles/
 │  │  ├─ types.ts             ← contrato MethodProfile
@@ -119,6 +123,13 @@ destrutivo/não destrutivo e atributo) serão registradas no mesmo contrato. O
 motor em `src/stats/analysis.ts` apenas orquestra os módulos indicados pelo
 perfil ativo e mantém as regras gerais de veredito, qualidade e auditoria.
 
+Desde a migração v2, `methods.family` registra a família do ensaio
+(`analytical`, `dimensional`, `physical-destructive`,
+`physical-nondestructive` ou `attribute`). Enquanto os próximos perfis não
+estiverem implementados, `getProfileForMethod` usa o perfil analítico como
+fallback para não quebrar telas; métodos migrados de versões anteriores são
+lidos como `analytical`.
+
 ## 3. Modelo de dados (SQLite)
 
 ```
@@ -136,24 +147,47 @@ settings (chave/valor: laboratório, logo, tema, referências)
 
 | Tabela | Campos principais | Finalidade |
 |---|---|---|
-| `methods` | id, code, name, type, unit, range_min/max, equipment, reference_norm, validation_type, criteria_json | Cadastro do método e critérios |
+| `methods` | id, code, name, type, **family**, unit, range_min/max, **lsl/usl**, **resolution**, **measurand**, **tolerance_unit**, equipment, reference_norm, validation_type, criteria_json | Cadastro do método, família e tolerâncias |
 | `validations` | id, method_id, title, objective, scope, status, current_step, version, responsible, reviewer, approver, locked, approved_at, report_config_json | Processo de validação |
 | `validation_parameters` | validation_id, param_key, selected, justification, criteria_json | Checklist de parâmetros |
 | `designs` | validation_id, input_json, plan_json, seed, created_at | Delineamento, curva de poder e mapa de execução |
-| `measurements` | validation_id, run_order, level, analyst, day, equipment, lot, sample, replicate, value, text_value, notes | Dados brutos |
+| `measurements` | validation_id, run_order, level, analyst, day, equipment, lot, sample, **part_id**, **specimen**, **destructive**, **condition_json**, **ref_value**, **ref_uncertainty**, **category**, replicate, value, reference_value, text_value, notes | Dados brutos dimensionais, físicos e de atributo |
 | `analyses` | validation_id, parameter_key, kind, input_hash, results_json | Resultados congelados por versão |
 | `uncertainty_items` | validation_id, source, type, distribution, value, divisor, sensitivity, std_uncertainty, dof | Orçamento GUM |
 | `reports` | validation_id, version, status, content_json, elaborated/reviewed/approved, dates, locked | Relatório e assinaturas |
 | `validation_versions` | validation_id, version, snapshot_json, reason, created_by, created_at | Histórico imutável |
 | `audit_logs` | validation_id, entity, action, actor, before_json, after_json, reason, timestamp | Trilha de auditoria |
 | `settings` | key, value_json | Configuração local |
+| `schema_migrations` | version, applied_at, description | Versão aplicada do schema |
+
+### Migrações versionadas
+
+`src/lib/schema.ts` concentra o schema base e as migrações. Abrir um banco
+antigo executa `CREATE TABLE IF NOT EXISTS` (sem alterar tabelas existentes) e
+depois aplica, em transação, as versões pendentes registradas em
+`schema_migrations`:
+
+| Versão | Conteúdo |
+|---|---|
+| 1 | Schema inicial analítico (marco para bancos anteriores ao controle de versão) |
+| 2 | `methods.family/lsl/usl/resolution/measurand/tolerance_unit` e `measurements.part_id/specimen/destructive/condition_json/ref_value/ref_uncertainty/category`; métodos existentes recebem `family = 'analytical'` |
+
+As migrações são idempotentes: cada coluna é adicionada apenas se ausente e
+cada versão é registrada uma única vez. O arquivo persistido em IndexedDB é
+regravado logo após a abertura, de modo que a migração fica durável. Uma falha
+de migração não substitui o banco por um vazio; o arquivo original permanece
+intacto para diagnóstico e exportação.
 
 Regras de integridade:
 
 - `validations.locked = 1` após aprovação; repositório rejeita alterações.
-- Toda escrita relevante gera `audit_logs` com antes/depois.
+- Toda escrita relevante gera `audit_logs` com antes/depois (inclusive métodos e
+  a substituição completa das medições).
 - Aprovar cria um snapshot em `validation_versions` e congela o relatório.
 - Nova versão exige justificativa e incrementa `validations.version`.
+- Família `dimensional` exige `measurements.part_id`; `destructive = 1` exige
+  `specimen`; quando ambos os limites existem, `lsl < usl`. As regras valem na
+  importação e no repositório.
 
 ## 4. Fluxo do usuário
 
@@ -205,12 +239,21 @@ critério cadastrado).
 
 ## 6. Exportações
 
-- **XLSX/CSV**: planilha de coleta e dados brutos.
+- **XLSX/CSV**: planilha de coleta e dados brutos. Inclui as novas colunas de
+  identificação (`Parte`, `Corpo de prova`, `Destrutivo`), condições de ensaio,
+  padrão de referência (`Valor/Incerteza da referência`) e categoria. O XLSX
+  traz também a aba `Método` com família, LSL/USL, resolução, mensurando e
+  unidade de tolerância.
+- **Importação**: orientada por cabeçalho, com aliases em português/inglês.
+  Planilhas antigas continuam válidas; colunas ausentes assumem valores
+  neutros. A primeira aba é sempre lida como medições.
 - **DOCX**: relatório completo, com tabelas, gráficos (PNG) e assinaturas.
 - **PDF**: prévia renderizada, paginada, com cabeçalho/rodapé e numeração.
-- **ZIP de evidências**: dados CSV, resultados JSON, relatório DOCX/PDF, snapshot
-  do banco `.sqlite`, manifesto com hashes SHA-256.
-- **Banco**: `.sqlite` exportável/importável.
+- **ZIP de evidências**: dados CSV, `metodo.json` com os novos campos do método,
+  resultados JSON, relatório DOCX/PDF, snapshot do banco `.sqlite`, manifesto
+  com hashes SHA-256.
+- **Banco**: `.sqlite` exportável/importável; ao importar, as migrações são
+  aplicadas antes de disponibilizar os dados.
 
 ## 7. Testes
 
@@ -223,4 +266,10 @@ critério cadastrado).
 - orçamento GUM (exemplo de incerteza combinada e Welch-Satterthwaite);
 - aleatorização reprodutível (mesma semente → mesma sequência);
 - caracterização da saída analítica original (snapshot completo, sem `-u`),
-  protegendo o comportamento existente durante a evolução por perfis.
+  protegendo o comportamento existente durante a evolução por perfis;
+- migração de um `.sqlite` real da versão anterior, comparando dados
+  antes/depois e verificando idempotência;
+- round-trip XLSX/CSV de todas as colunas de medição e compatibilidade com
+  planilhas antigas;
+- regras de integridade (`part_id` dimensional, `specimen` destrutivo e
+  `lsl < usl`).

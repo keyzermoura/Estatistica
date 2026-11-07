@@ -11,6 +11,27 @@ export type MethodType =
   | 'microbiological'
   | 'other';
 
+/**
+ * Famílias de ensaio suportadas pelo modelo de dados.
+ *
+ * A família determina o perfil estatístico aplicado à validação. Métodos
+ * criados antes da migração v2 são lidos como `analytical`.
+ */
+export type MethodFamily =
+  | 'analytical'
+  | 'dimensional'
+  | 'physical-destructive'
+  | 'physical-nondestructive'
+  | 'attribute';
+
+export const METHOD_FAMILY_VALUES: MethodFamily[] = [
+  'analytical',
+  'dimensional',
+  'physical-destructive',
+  'physical-nondestructive',
+  'attribute',
+];
+
 export type ValidationType = 'full' | 'partial' | 'verification';
 
 export type ValidationStatus =
@@ -70,9 +91,21 @@ export interface Method {
   code: string;
   name: string;
   type: MethodType;
+  /** Família estatística do ensaio; padrão `analytical`. */
+  family: MethodFamily;
   unit: string;
   rangeMin: number | null;
   rangeMax: number | null;
+  /** Limite inferior de tolerância (LSL), quando aplicável. */
+  lsl: number | null;
+  /** Limite superior de tolerância (USL), quando aplicável. */
+  usl: number | null;
+  /** Menor incremento distinguível do sistema de medição. */
+  resolution: number | null;
+  /** Grandeza medida (mensurando) descrita no relatório. */
+  measurand: string;
+  /** Unidade dos limites de tolerância. */
+  toleranceUnit: string;
   equipment: string;
   referenceNorm: string;
   validationType: ValidationType;
@@ -216,6 +249,14 @@ export interface DesignRecord {
   createdAt: string;
 }
 
+/** Condições ambientais/operacionais registradas por medição. */
+export interface MeasurementCondition {
+  temperature: number | null;
+  humidity: number | null;
+  testSpeed: number | null;
+  other: string;
+}
+
 export interface Measurement {
   id: string;
   validationId: string;
@@ -226,6 +267,20 @@ export interface Measurement {
   equipment: string;
   lot: string;
   sample: string;
+  /** Identificação da peça/parte para ensaios dimensionais. */
+  partId?: string;
+  /** Corpo de prova individual em ensaios destrutivos. */
+  specimen?: string;
+  /** 1/0 no banco; `true` quando o corpo de prova é consumido. */
+  destructive?: boolean;
+  /** Condições de ensaio; serializadas em `condition_json`. */
+  condition?: MeasurementCondition | null;
+  /** Valor aceito do padrão de referência (distinto de `referenceValue`). */
+  refValue?: number | null;
+  /** Incerteza expandida declarada para o padrão de referência. */
+  refUncertainty?: number | null;
+  /** Categoria observada em ensaios de atributo. */
+  category?: string;
   replicate: number;
   value: number | null;
   referenceValue?: number | null;
@@ -412,6 +467,21 @@ export const METHOD_TYPE_LABELS: Record<MethodType, string> = {
   dimensional: 'Dimensional / físico',
   microbiological: 'Microbiológico',
   other: 'Outro',
+};
+
+export const METHOD_FAMILY_LABELS: Record<MethodFamily, string> = {
+  analytical: 'Analítico (química)',
+  dimensional: 'Dimensional',
+  'physical-destructive': 'Físico destrutivo',
+  'physical-nondestructive': 'Físico não destrutivo',
+  attribute: 'Atributo (qualitativo)',
+};
+
+export const EMPTY_MEASUREMENT_CONDITION: MeasurementCondition = {
+  temperature: null,
+  humidity: null,
+  testSpeed: null,
+  other: '',
 };
 
 export const VALIDATION_TYPE_LABELS: Record<ValidationType, string> = {

@@ -495,10 +495,11 @@ são tratados por lista (listwise) e registrados.
 
 ## 15. Testes de referência
 
-`npm test` executa 19 casos: os 18 casos de referência numérica de
+`npm test` executa 28 casos: 19 casos estatísticos (18 referências numéricas de
 `stats.test.ts` e 1 teste de caracterização que congela a saída completa da
-análise analítica anterior à introdução dos perfis de método. Os principais
-valores de referência:
+análise analítica anterior à introdução dos perfis de método) e 9 testes de
+infraestrutura de dados (migração versionada, round-trip XLSX/CSV e validações
+do modelo v2). Os principais valores de referência estatísticos:
 
 | Caso | Referência | Tolerância |
 |---|---|---|

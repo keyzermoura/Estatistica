@@ -3,12 +3,14 @@ import { ArrowLeft, ArrowRight, FlaskConical, Plus, Save, Sparkles } from 'lucid
 import type {
   AcceptanceCriterion,
   Method,
+  MethodFamily,
   MethodType,
   ParamKey,
   Validation,
   ValidationType,
 } from '../../lib/types';
 import {
+  METHOD_FAMILY_LABELS,
   METHOD_TYPE_LABELS,
   VALIDATION_TYPE_LABELS,
 } from '../../lib/types';
@@ -51,6 +53,8 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
     () => method.criteria.filter((criterion) => criterion.parameter === criteriaParameter),
     [method.criteria, criteriaParameter],
   );
+
+  const showTolerance = method.family !== 'analytical' && method.family !== 'attribute';
 
   const setCriteria = (criteria: AcceptanceCriterion[]) => {
     setMethod((prev) => ({
@@ -184,6 +188,24 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
               ))}
             </Select>
           </Field>
+          <Field
+            label="Família de ensaio"
+            hint="Define o perfil estatístico aplicado. Validações antigas permanecem analíticas."
+          >
+            <Select
+              value={method.family}
+              disabled={locked}
+              onChange={(e) =>
+                setMethod({ ...method, family: e.target.value as MethodFamily })
+              }
+            >
+              {Object.entries(METHOD_FAMILY_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </Field>
           <Field label="Tipo de validação">
             <Select
               value={method.validationType}
@@ -229,6 +251,52 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
             disabled={locked}
             onChange={(e) => setMethod({ ...method, rangeMax: parseNumber(e.target.value) })}
           />
+          <Input
+            label="Mensurando"
+            value={method.measurand}
+            disabled={locked}
+            onChange={(e) => setMethod({ ...method, measurand: e.target.value })}
+            placeholder="Diâmetro externo, resistência à tração…"
+          />
+          {showTolerance ? (
+            <>
+              <Input
+                label="LSL — limite inferior"
+                type="number"
+                step="any"
+                value={method.lsl ?? ''}
+                disabled={locked}
+                onChange={(e) => setMethod({ ...method, lsl: parseNumber(e.target.value) })}
+                hint="Deve ser menor que o USL."
+              />
+              <Input
+                label="USL — limite superior"
+                type="number"
+                step="any"
+                value={method.usl ?? ''}
+                disabled={locked}
+                onChange={(e) => setMethod({ ...method, usl: parseNumber(e.target.value) })}
+              />
+              <Input
+                label="Resolução"
+                type="number"
+                step="any"
+                value={method.resolution ?? ''}
+                disabled={locked}
+                onChange={(e) =>
+                  setMethod({ ...method, resolution: parseNumber(e.target.value) })
+                }
+                hint="Menor incremento distinguível do instrumento."
+              />
+              <Input
+                label="Unidade da tolerância"
+                value={method.toleranceUnit}
+                disabled={locked}
+                onChange={(e) => setMethod({ ...method, toleranceUnit: e.target.value })}
+                placeholder="mm, N, °C…"
+              />
+            </>
+          ) : null}
           <Input
             label="Norma / referência"
             className="sm:col-span-2 lg:col-span-4"

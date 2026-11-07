@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { Measurement } from '../../lib/types';
 import { replaceMeasurements, updateValidation } from '../../lib/repository';
+import { assertMeasurementIdentities } from '../../lib/validation';
 import {
   downloadDesignTemplate,
   downloadMeasurementsCsv,
@@ -51,6 +52,13 @@ function blankMeasurement(bundle: StepProps['bundle'], index: number): Measureme
     equipment: run?.equipment ?? '',
     lot: run?.lot ?? '',
     sample: run?.sample ?? '',
+    partId: '',
+    specimen: '',
+    destructive: false,
+    condition: null,
+    refValue: null,
+    refUncertainty: null,
+    category: '',
     replicate: run?.replicate ?? 1,
     value: null,
     referenceValue: null,
@@ -124,6 +132,13 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
       equipment: run.equipment,
       lot: run.lot,
       sample: run.sample,
+      partId: '',
+      specimen: '',
+      destructive: false,
+      condition: null,
+      refValue: null,
+      refUncertainty: null,
+      category: '',
       replicate: run.replicate,
       value: null,
       referenceValue: null,
@@ -144,6 +159,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
         toast.push('Nenhuma linha com valor ou texto foi encontrada na planilha.', 'danger');
         return;
       }
+      assertMeasurementIdentities(rows, bundle.method.family);
       setMeasurements(importedToMeasurements(rows, bundle.validation.id));
       toast.push(`${rows.length} linha(s) importadas. Revise e clique em salvar.`);
     } catch (error) {

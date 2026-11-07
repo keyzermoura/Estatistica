@@ -2,7 +2,6 @@
  * Exportações: XLSX/CSV, DOCX, PDF, pacote ZIP de evidências e banco SQLite.
  */
 
-import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { jsPDF } from 'jspdf';
 import {
@@ -22,16 +21,21 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
-import type {
-  Measurement,
-  ReportRecord,
-  ValidationBundle,
-} from './types';
+import type { ReportRecord, ValidationBundle } from './types';
 import type { ValidationAnalysis } from '../stats/analysis';
 import { fmt } from '../stats/distributions';
 import { exportSqlite } from './repository';
+import {
+  buildDesignTemplateXlsx,
+  buildMeasurementsXlsx,
+  measurementsToCsv,
+  methodMetadataRows,
+  parseSpreadsheetBuffer,
+} from './spreadsheet';
 import { downloadBlob, downloadText, downloadBytes, sha256, slugify } from './utils';
 import { VERDICT_LABELS } from './report';
+
+export { importedToMeasurements } from './spreadsheet';
 
 const MIME_XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 const MIME_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -41,210 +45,26 @@ function baseName(bundle: ValidationBundle): string {
   return `${slugify(bundle.method.code || 'metodo')}-v${bundle.validation.version}`;
 }
 
-function measurementRows(bundle: ValidationBundle) {
-  return bundle.measurements.map((m) => ({
-    'Ordem': m.runOrder,
-    'Nível': m.level,
-    'Analista/Lab': m.analyst,
-    'Dia': m.day,
-    'Equipamento': m.equipment,
-    'Lote': m.lot,
-    'Amostra': m.sample,
-    'Réplica': m.replicate,
-    'Valor': m.value ?? '',
-    'Referência': m.referenceValue ?? '',
-    'Texto': m.textValue,
-    'Notas': m.notes,
-  }));
-}
-
-export function measurementsToCsv(bundle: ValidationBundle): string {
-  const sheet = XLSX.utils.json_to_sheet(measurementRows(bundle));
-  return XLSX.utils.sheet_to_csv(sheet, { FS: ';' });
-}
-
 export function downloadMeasurementsCsv(bundle: ValidationBundle) {
   downloadText(
-    `\ufeff${measurementsToCsv(bundle)}`,
+    `\ufeff${measurementsToCsv(bundle.measurements)}`,
     `${baseName(bundle)}-dados.csv`,
     'text/csv;charset=utf-8',
   );
 }
 
 export function downloadMeasurementsXlsx(bundle: ValidationBundle) {
-  const workbook = XLSX.utils.book_new();
-  const dataSheet = XLSX.utils.json_to_sheet(measurementRows(bundle));
-  XLSX.utils.book_append_sheet(workbook, dataSheet, 'Medições');
-  const design = bundle.design;
-  if (design) {
-    const planSheet = XLSX.utils.json_to_sheet(
-      design.plan.runs.map((r) => ({
-        'Ordem': r.runOrder,
-        'Nível': r.level,
-        'Analista': r.analyst,
-        'Dia': r.day,
-        'Equipamento': r.equipment,
-        'Lote': r.lot,
-        'Amostra': r.sample,
-        'Réplica': r.replicate,
-        'Combinação': r.combination,
-      })),
-    );
-    XLSX.utils.book_append_sheet(workbook, planSheet, 'Plano');
-    const paramSheet = XLSX.utils.json_to_sheet(
-      design.plan.parameterPlans.map((p) => ({
-        'Parâmetro': p.key,
-        'Método': p.method,
-        'n por grupo': p.nPerGroup ?? '',
-        'Grupos': p.groups ?? '',
-        'Total': p.total,
-        'Poder': p.achievedPower ?? '',
-        'Fórmula': p.formula,
-        'Referência': p.reference,
-      })),
-    );
-    XLSX.utils.book_append_sheet(workbook, paramSheet, 'Tamanho de amostra');
-  }
-  const bytes = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
-  downloadBytes(new Uint8Array(bytes), `${baseName(bundle)}-dados.xlsx`, MIME_XLSX);
+  const bytes = buildMeasurementsXlsx(bundle);
+  downloadBytes(bytes, `${baseName(bundle)}-dados.xlsx`, MIME_XLSX);
 }
 
 export function downloadDesignTemplate(bundle: ValidationBundle) {
-  const workbook = XLSX.utils.book_new();
-  const rows =
-    bundle.design?.plan.runs.map((r) => ({
-      'Ordem': r.runOrder,
-      'Nível': r.level,
-      'Analista/Lab': r.analyst,
-      'Dia': r.day,
-      'Equipamento': r.equipment,
-      'Lote': r.lot,
-      'Amostra': r.sample,
-      'Réplica': r.replicate,
-      'Valor': '',
-      'Referência': '',
-      'Notas': '',
-    })) ??
-    Array.from({ length: 20 }, (_, i) => ({
-      'Ordem': i + 1,
-      'Nível': '',
-      'Analista/Lab': '',
-      'Dia': '',
-      'Equipamento': '',
-      'Lote': '',
-      'Amostra': '',
-      'Réplica': '',
-      'Valor': '',
-      'Referência': '',
-      'Notas': '',
-    }));
-  const sheet = XLSX.utils.json_to_sheet(rows);
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Coleta');
-  const bytes = XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer;
-  downloadBytes(
-    new Uint8Array(bytes),
-    `${baseName(bundle)}-modelo-coleta.xlsx`,
-    MIME_XLSX,
-  );
+  const bytes = buildDesignTemplateXlsx(bundle);
+  downloadBytes(bytes, `${baseName(bundle)}-modelo-coleta.xlsx`, MIME_XLSX);
 }
 
-const normalizeHeader = (value: string): string =>
-  value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-
-const HEADER_ALIASES: Record<string, string[]> = {
-  runOrder: ['ordem', 'ordemexecucao', 'run', 'runorder', 'sequencia'],
-  level: ['nivel', 'nivelconcentracao', 'concentracao', 'level', 'concentration'],
-  analyst: ['analista', 'laboratorio', 'lab', 'analyst'],
-  day: ['dia', 'day', 'data'],
-  equipment: ['equipamento', 'equipment', 'instrumento'],
-  lot: ['lote', 'lot', 'batch'],
-  sample: ['amostra', 'sample', 'id'],
-  replicate: ['replica', 'replicate', 'rep'],
-  value: ['valor', 'resultado', 'value', 'resposta', 'response', 'medicao'],
-  referenceValue: ['referencia', 'reference', 'valoreferencia', 'nominal', 'fortificado'],
-  textValue: ['texto', 'textvalue', 'resultadotexto', 'qualitativo'],
-  notes: ['notas', 'notes', 'observacoes', 'observacao'],
-};
-
-export interface ImportedRow {
-  runOrder: number;
-  level: string;
-  analyst: string;
-  day: string;
-  equipment: string;
-  lot: string;
-  sample: string;
-  replicate: number;
-  value: number | null;
-  referenceValue: number | null;
-  textValue: string;
-  notes: string;
-}
-
-function mapImportRow(raw: Record<string, unknown>, index: number): ImportedRow {
-  const normalized = new Map<string, unknown>();
-  for (const [key, value] of Object.entries(raw)) {
-    normalized.set(normalizeHeader(key), value);
-  }
-  const pick = (field: keyof typeof HEADER_ALIASES): unknown => {
-    for (const alias of HEADER_ALIASES[field]) {
-      if (normalized.has(alias)) return normalized.get(alias);
-    }
-    return undefined;
-  };
-  const numeric = (v: unknown): number | null => {
-    if (v === null || v === undefined || v === '') return null;
-    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-    const parsed = Number(String(v).trim().replace(',', '.').replace(/[^\d.+-eE]/g, ''));
-    return Number.isFinite(parsed) ? parsed : null;
-  };
-  const text = (v: unknown): string => (v === null || v === undefined ? '' : String(v).trim());
-  const explicitOrder = numeric(pick('runOrder'));
-  return {
-    runOrder: explicitOrder ?? index + 1,
-    level: text(pick('level')),
-    analyst: text(pick('analyst')),
-    day: text(pick('day')),
-    equipment: text(pick('equipment')),
-    lot: text(pick('lot')),
-    sample: text(pick('sample')),
-    replicate: numeric(pick('replicate')) ?? 1,
-    value: numeric(pick('value')),
-    referenceValue: numeric(pick('referenceValue')),
-    textValue: text(pick('textValue')),
-    notes: text(pick('notes')),
-  };
-}
-
-export async function parseSpreadsheet(file: File): Promise<ImportedRow[]> {
-  const buffer = await file.arrayBuffer();
-  const workbook = XLSX.read(buffer, { type: 'array' });
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) throw new Error('A planilha não possui abas.');
-  const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], {
-    defval: '',
-  });
-  return raw.map(mapImportRow).filter((r) => r.value !== null || r.textValue);
-}
-
-export function importedToMeasurements(
-  imported: ImportedRow[],
-  validationId: string,
-): Measurement[] {
-  let id = 0;
-  return imported.map((row) => {
-    id += 1;
-    return {
-      id: `imp_${Date.now().toString(36)}_${id}`,
-      validationId,
-      ...row,
-      textValue: row.textValue,
-    };
-  });
+export async function parseSpreadsheet(file: File) {
+  return parseSpreadsheetBuffer(await file.arrayBuffer());
 }
 
 // ── DOCX ───────────────────────────────────────────────────────────────────
@@ -771,7 +591,18 @@ export async function buildEvidenceZip(
 ): Promise<Uint8Array> {
   const zip = new JSZip();
   const folder = zip.folder(baseName(bundle)) ?? zip;
-  const csv = measurementsToCsv(bundle);
+  const csv = measurementsToCsv(bundle.measurements);
+  const methodJson = JSON.stringify(
+    {
+      ...methodMetadataRows(bundle.method)[0],
+      tipo: bundle.method.type,
+      equipamento: bundle.method.equipment,
+      norma: bundle.method.referenceNorm,
+      tipoValidacao: bundle.method.validationType,
+    },
+    null,
+    2,
+  );
   const docx = await buildReportDocx(bundle, analysis, report);
   const pdf = await buildReportPdf(bundle, analysis, report);
   const sqlite = await exportSqlite();
@@ -791,6 +622,7 @@ export async function buildEvidenceZip(
   );
   const files: Array<[string, Uint8Array | string]> = [
     ['dados.csv', `\ufeff${csv}`],
+    ['metodo.json', methodJson],
     ['resultados.json', analysisJson],
     ['relatorio.docx', docx],
     ['relatorio.pdf', pdf],

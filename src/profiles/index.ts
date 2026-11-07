@@ -29,10 +29,14 @@ export function getProfile(family: string): MethodProfile {
 }
 
 /**
- * Perfil ativo para um método. Até a introdução do campo `family` no modelo
- * (migração do Prompt 2), todo método usa o perfil analítico.
+ * Perfil ativo para um método. A família já é persistida (migração v2), mas
+ * apenas o perfil analítico está registrado; as demais famílias usam o perfil
+ * analítico como fallback até que seus módulos sejam implementados nos
+ * próximos prompts. Isso evita quebrar telas ao classificar um método.
  */
-export function getProfileForMethod(_method?: Method): MethodProfile {
+export function getProfileForMethod(method?: Method): MethodProfile {
+  const family = method?.family;
+  if (family && REGISTRY[family]) return REGISTRY[family];
   return getProfile(DEFAULT_PROFILE_ID);
 }
 

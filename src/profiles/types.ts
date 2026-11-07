@@ -11,18 +11,14 @@ import type {
   AcceptanceCriterion,
   DesignInput,
   DesignType,
+  MethodFamily,
   MethodType,
   ParamKey,
   ValidationType,
 } from '../lib/types';
 import type { AnalysisModule } from '../stats/analysis-types';
 
-export type MethodFamily =
-  | 'analytical'
-  | 'dimensional'
-  | 'physical-destructive'
-  | 'physical-nondestructive'
-  | 'attribute';
+export type { MethodFamily } from '../lib/types';
 
 export interface MetricDefinition {
   key: string;

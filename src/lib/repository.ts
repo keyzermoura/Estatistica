@@ -13,7 +13,9 @@ import {
   type AuditLog,
   type DesignRecord,
   type Measurement,
+  type MeasurementCondition,
   type Method,
+  type MethodFamily,
   type ParamKey,
   type ReportConfig,
   type ReportRecord,
@@ -23,6 +25,11 @@ import {
   type ValidationParameter,
   type ValidationVersion,
 } from './types';
+import {
+  assertMeasurementIdentities,
+  assertMethodTolerance,
+  normalizeMethodFamily,
+} from './validation';
 import {
   exportDatabase,
   flush,
@@ -86,9 +93,15 @@ function mapMethod(r: Row): Method {
     code: str(r.code),
     name: str(r.name),
     type: str(r.type, 'quantitative') as Method['type'],
+    family: normalizeMethodFamily(r.family),
     unit: str(r.unit),
     rangeMin: maybeNum(r.range_min),
     rangeMax: maybeNum(r.range_max),
+    lsl: maybeNum(r.lsl),
+    usl: maybeNum(r.usl),
+    resolution: maybeNum(r.resolution),
+    measurand: str(r.measurand),
+    toleranceUnit: str(r.tolerance_unit),
     equipment: str(r.equipment),
     referenceNorm: str(r.reference_norm),
     validationType: str(r.validation_type, 'full') as Method['validationType'],
@@ -130,6 +143,18 @@ function mapParameter(r: Row): ValidationParameter {
   };
 }
 
+function normalizeCondition(
+  condition: MeasurementCondition | null | undefined,
+): MeasurementCondition | null {
+  if (!condition || typeof condition !== 'object') return null;
+  return {
+    temperature: maybeNum(condition.temperature),
+    humidity: maybeNum(condition.humidity),
+    testSpeed: maybeNum(condition.testSpeed),
+    other: typeof condition.other === 'string' ? condition.other : '',
+  };
+}
+
 function mapMeasurement(r: Row): Measurement {
   return {
     id: str(r.id),
@@ -141,12 +166,54 @@ function mapMeasurement(r: Row): Measurement {
     equipment: str(r.equipment),
     lot: str(r.lot),
     sample: str(r.sample),
+    partId: str(r.part_id),
+    specimen: str(r.specimen),
+    destructive: bool(r.destructive),
+    condition: normalizeCondition(json<MeasurementCondition | null>(r.condition_json, null)),
+    refValue: maybeNum(r.ref_value),
+    refUncertainty: maybeNum(r.ref_uncertainty),
+    category: str(r.category),
     replicate: num(r.replicate, 1),
     value: maybeNum(r.value),
     referenceValue: maybeNum(r.reference_value),
     textValue: str(r.text_value),
     notes: str(r.notes),
   };
+}
+
+type NormalizedMeasurement = Measurement & {
+  partId: string;
+  specimen: string;
+  destructive: boolean;
+  condition: MeasurementCondition | null;
+  refValue: number | null;
+  refUncertainty: number | null;
+  category: string;
+};
+
+/** Garante que campos opcionais vindos de chamadas antigas tenham defaults. */
+function normalizeMeasurement(measurement: Measurement): NormalizedMeasurement {
+  return {
+    ...measurement,
+    partId: measurement.partId ?? '',
+    specimen: measurement.specimen ?? '',
+    destructive: measurement.destructive === true,
+    condition: normalizeCondition(measurement.condition),
+    refValue: measurement.refValue ?? null,
+    refUncertainty: measurement.refUncertainty ?? null,
+    category: measurement.category ?? '',
+  };
+}
+
+function conditionToJson(condition: MeasurementCondition | null | undefined): string | null {
+  const normalized = normalizeCondition(condition);
+  if (!normalized) return null;
+  const hasValue =
+    normalized.temperature !== null ||
+    normalized.humidity !== null ||
+    normalized.testSpeed !== null ||
+    normalized.other.trim() !== '';
+  return hasValue ? JSON.stringify(normalized) : null;
 }
 
 function mapDesign(r: Row): DesignRecord {
@@ -277,39 +344,74 @@ export function getMethod(id: string): Method | null {
 export function saveMethod(method: Method, actor = 'sistema'): Method {
   const existing = getMethod(method.id);
   const timestamp = nowIso();
-  const next: Method = { ...method, updatedAt: timestamp, createdAt: existing?.createdAt ?? timestamp };
-  run(
-    `INSERT INTO methods (id, code, name, type, unit, range_min, range_max, equipment, reference_norm, validation_type, description, criteria_json, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       code=excluded.code, name=excluded.name, type=excluded.type, unit=excluded.unit,
-       range_min=excluded.range_min, range_max=excluded.range_max, equipment=excluded.equipment,
-       reference_norm=excluded.reference_norm, validation_type=excluded.validation_type,
-       description=excluded.description, criteria_json=excluded.criteria_json, updated_at=excluded.updated_at`,
-    [
-      next.id,
-      next.code,
-      next.name,
-      next.type,
-      next.unit,
-      next.rangeMin,
-      next.rangeMax,
-      next.equipment,
-      next.referenceNorm,
-      next.validationType,
-      next.description,
-      JSON.stringify(next.criteria),
-      next.createdAt,
-      next.updatedAt,
-    ],
-  );
+  const next: Method = {
+    ...method,
+    family: normalizeMethodFamily(method.family),
+    lsl: method.lsl ?? null,
+    usl: method.usl ?? null,
+    resolution: method.resolution ?? null,
+    measurand: method.measurand ?? '',
+    toleranceUnit: method.toleranceUnit ?? '',
+    updatedAt: timestamp,
+    createdAt: existing?.createdAt ?? timestamp,
+  };
+  assertMethodTolerance(next);
+  transaction(() => {
+    run(
+      `INSERT INTO methods (id, code, name, type, family, unit, range_min, range_max, lsl, usl, resolution, measurand, tolerance_unit, equipment, reference_norm, validation_type, description, criteria_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         code=excluded.code, name=excluded.name, type=excluded.type, family=excluded.family,
+         unit=excluded.unit, range_min=excluded.range_min, range_max=excluded.range_max,
+         lsl=excluded.lsl, usl=excluded.usl, resolution=excluded.resolution,
+         measurand=excluded.measurand, tolerance_unit=excluded.tolerance_unit,
+         equipment=excluded.equipment, reference_norm=excluded.reference_norm,
+         validation_type=excluded.validation_type, description=excluded.description,
+         criteria_json=excluded.criteria_json, updated_at=excluded.updated_at`,
+      [
+        next.id,
+        next.code,
+        next.name,
+        next.type,
+        next.family,
+        next.unit,
+        next.rangeMin,
+        next.rangeMax,
+        next.lsl,
+        next.usl,
+        next.resolution,
+        next.measurand,
+        next.toleranceUnit,
+        next.equipment,
+        next.referenceNorm,
+        next.validationType,
+        next.description,
+        JSON.stringify(next.criteria),
+        next.createdAt,
+        next.updatedAt,
+      ],
+    );
+    logAudit(
+      'global',
+      'method',
+      existing ? 'update' : 'create',
+      actor,
+      existing,
+      next,
+      existing ? 'Atualização do cadastro do método' : 'Criação do método',
+    );
+  });
   return next;
 }
 
-export function deleteMethod(id: string) {
+export function deleteMethod(id: string, actor = 'sistema') {
   const used = row<{ n: number }>('SELECT COUNT(*) AS n FROM validations WHERE method_id = ?', [id]);
   if (num(used?.n) > 0) throw new Error('Exclua as validações vinculadas antes de excluir o método.');
-  run('DELETE FROM methods WHERE id = ?', [id]);
+  const before = getMethod(id);
+  transaction(() => {
+    run('DELETE FROM methods WHERE id = ?', [id]);
+    logAudit('global', 'method', 'delete', actor, before, null, 'Exclusão do método');
+  });
 }
 
 // ── Validações ─────────────────────────────────────────────────────────────
@@ -329,6 +431,13 @@ function assertUnlocked(validationId: string) {
   if (validation?.locked) {
     throw new Error('Validação aprovada e bloqueada; crie uma nova versão para editar.');
   }
+}
+
+/** Família do método vinculado à validação (analytical como fallback seguro). */
+function methodFamilyForValidation(validationId: string): MethodFamily {
+  const validation = getValidation(validationId);
+  const method = validation ? getMethod(validation.methodId) : null;
+  return method?.family ?? 'analytical';
 }
 
 export function createValidation(
@@ -620,13 +729,18 @@ export function replaceMeasurements(
   reason = '',
 ): Measurement[] {
   assertUnlocked(validationId);
-  const beforeCount = listMeasurements(validationId).length;
+  const before = listMeasurements(validationId);
+  const normalized = measurements.map((measurement) => ({
+    ...normalizeMeasurement(measurement),
+    validationId,
+  }));
+  assertMeasurementIdentities(normalized, methodFamilyForValidation(validationId));
   transaction(() => {
     run('DELETE FROM measurements WHERE validation_id = ?', [validationId]);
-    for (const m of measurements) {
+    for (const m of normalized) {
       run(
-        `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, replicate, value, reference_value, text_value, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, part_id, specimen, destructive, condition_json, ref_value, ref_uncertainty, category, replicate, value, reference_value, text_value, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           m.id,
           validationId,
@@ -637,6 +751,13 @@ export function replaceMeasurements(
           m.equipment,
           m.lot,
           m.sample,
+          m.partId,
+          m.specimen,
+          m.destructive ? 1 : 0,
+          conditionToJson(m.condition),
+          m.refValue,
+          m.refUncertainty,
+          m.category,
           m.replicate,
           m.value,
           m.referenceValue ?? null,
@@ -650,8 +771,8 @@ export function replaceMeasurements(
       'measurements',
       'replace',
       actor,
-      { count: beforeCount },
-      { count: measurements.length },
+      { count: before.length, measurements: before },
+      { count: normalized.length, measurements: normalized },
       reason,
     );
   });
@@ -661,54 +782,79 @@ export function replaceMeasurements(
 export function addMeasurement(measurement: Measurement, actor = 'sistema'): Measurement {
   const validation = getValidation(measurement.validationId);
   if (validation?.locked) throw new Error('Validação bloqueada.');
+  const next = normalizeMeasurement(measurement);
+  assertMeasurementIdentities([next], methodFamilyForValidation(measurement.validationId));
   run(
-    `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, replicate, value, reference_value, text_value, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, part_id, specimen, destructive, condition_json, ref_value, ref_uncertainty, category, replicate, value, reference_value, text_value, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      measurement.id,
-      measurement.validationId,
-      measurement.runOrder,
-      measurement.level,
-      measurement.analyst,
-      measurement.day,
-      measurement.equipment,
-      measurement.lot,
-      measurement.sample,
-      measurement.replicate,
-      measurement.value,
-      measurement.referenceValue ?? null,
-      measurement.textValue,
-      measurement.notes,
+      next.id,
+      next.validationId,
+      next.runOrder,
+      next.level,
+      next.analyst,
+      next.day,
+      next.equipment,
+      next.lot,
+      next.sample,
+      next.partId,
+      next.specimen,
+      next.destructive ? 1 : 0,
+      conditionToJson(next.condition),
+      next.refValue,
+      next.refUncertainty,
+      next.category,
+      next.replicate,
+      next.value,
+      next.referenceValue ?? null,
+      next.textValue,
+      next.notes,
     ],
   );
-  logAudit(measurement.validationId, 'measurement', 'create', actor, null, measurement);
-  return measurement;
+  logAudit(measurement.validationId, 'measurement', 'create', actor, null, next);
+  return next;
 }
 
 export function updateMeasurement(measurement: Measurement, actor = 'sistema'): Measurement {
   assertUnlocked(measurement.validationId);
   const before = row('SELECT * FROM measurements WHERE id = ?', [measurement.id]);
+  const next = normalizeMeasurement(measurement);
+  assertMeasurementIdentities([next], methodFamilyForValidation(measurement.validationId));
   run(
-    `UPDATE measurements SET run_order=?, level=?, analyst=?, day=?, equipment=?, lot=?, sample=?, replicate=?, value=?, reference_value=?, text_value=?, notes=?
+    `UPDATE measurements SET run_order=?, level=?, analyst=?, day=?, equipment=?, lot=?, sample=?, part_id=?, specimen=?, destructive=?, condition_json=?, ref_value=?, ref_uncertainty=?, category=?, replicate=?, value=?, reference_value=?, text_value=?, notes=?
      WHERE id=?`,
     [
-      measurement.runOrder,
-      measurement.level,
-      measurement.analyst,
-      measurement.day,
-      measurement.equipment,
-      measurement.lot,
-      measurement.sample,
-      measurement.replicate,
-      measurement.value,
-      measurement.referenceValue ?? null,
-      measurement.textValue,
-      measurement.notes,
-      measurement.id,
+      next.runOrder,
+      next.level,
+      next.analyst,
+      next.day,
+      next.equipment,
+      next.lot,
+      next.sample,
+      next.partId,
+      next.specimen,
+      next.destructive ? 1 : 0,
+      conditionToJson(next.condition),
+      next.refValue,
+      next.refUncertainty,
+      next.category,
+      next.replicate,
+      next.value,
+      next.referenceValue ?? null,
+      next.textValue,
+      next.notes,
+      next.id,
     ],
   );
-  logAudit(measurement.validationId, 'measurement', 'update', actor, before ? mapMeasurement(before) : null, measurement);
-  return measurement;
+  logAudit(
+    measurement.validationId,
+    'measurement',
+    'update',
+    actor,
+    before ? mapMeasurement(before) : null,
+    next,
+  );
+  return next;
 }
 
 export function deleteMeasurement(measurement: Measurement, actor = 'sistema', reason = '') {
@@ -1061,9 +1207,15 @@ export function getValidationSummaries(): Array<{
         code: '',
         name: 'Método removido',
         type: 'other',
+        family: 'analytical',
         unit: '',
         rangeMin: null,
         rangeMax: null,
+        lsl: null,
+        usl: null,
+        resolution: null,
+        measurand: '',
+        toleranceUnit: '',
         equipment: '',
         referenceNorm: '',
         validationType: 'full',
