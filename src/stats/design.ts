@@ -16,6 +16,7 @@ import type {
 import { DEFAULT_PROFILE_ID, getProfile } from '../profiles/index';
 import type { MethodProfile } from '../profiles/types';
 import { mulberry32, shuffle } from './distributions';
+import { NESTED_DESTRUCTIVE_WARNING } from './nested';
 import {
   meanCIPrecision,
   planForParameter,
@@ -155,6 +156,37 @@ function buildRuns(input: DesignInput, total: number): { runs: RunRow[]; warning
       }
       break;
     }
+    case 'nested_destructive': {
+      const destructiveOperators = Math.max(2, Math.round(input.nAnalysts));
+      const destructiveSamples = Math.max(1, Math.round(input.nSamples));
+      let specimenIndex = 1;
+      for (let o = 1; o <= destructiveOperators; o++) {
+        for (let s = 1; s <= destructiveSamples; s++) {
+          for (let r = 1; r <= reps; r++) {
+            const specimen = `CP-${String(specimenIndex).padStart(3, '0')}`;
+            specimenIndex++;
+            push(
+              `Operador Op${o} · amostra A${s} · corpo de prova ${specimen}`,
+              {
+                lote: 'Lote',
+                operador: `Op${o}`,
+                amostra: `A${s}`,
+                corpo_de_prova: specimen,
+              },
+              '',
+              {
+                analyst: `Op${o}`,
+                lot: 'Lote',
+                sample: `A${s}`,
+                replicate: r,
+                specimen,
+              },
+            );
+          }
+        }
+      }
+      break;
+    }
     case 'crossed':
     default: {
       for (const level of levels) {
@@ -244,6 +276,14 @@ function buildSummary(
       `${Math.max(2, input.nLabs)} laboratórios × ${Math.max(2, input.nReplicates)} réplicas × ${input.levels.length} níveis`,
     );
   }
+  if (input.designType === 'nested_destructive') {
+    const operators = Math.max(2, Math.round(input.nAnalysts));
+    const samples = Math.max(1, Math.round(input.nSamples));
+    const replicates = Math.max(2, Math.round(input.nReplicates));
+    parts.push(
+      `${operators} operadores × ${samples} amostras × ${replicates} corpos de prova = ${operators * samples * replicates} corpos de prova a retirar do lote`,
+    );
+  }
   return `${parts.join('. ')}.`;
 }
 
@@ -303,7 +343,38 @@ export function buildDesign(
   if (input.designType === 'iso5725' && Math.max(2, input.nLabs) < 6) {
     warnings.push('ISO 5725-2 recomenda pelo menos 6 laboratórios.');
   }
+  if (input.designType === 'nested_destructive') {
+    warnings.push(NESTED_DESTRUCTIVE_WARNING);
+    if (Math.max(1, Math.round(input.nSamples)) < 2) {
+      warnings.push(
+        'Com uma amostra por operador (b = 1), a componente entre amostras não é estimável; use o modelo de dois níveis do ISO 5725-2.',
+      );
+    }
+    if (Math.max(2, Math.round(input.nReplicates)) < 3) {
+      warnings.push('Menos de 3 corpos de prova por amostra: a repetibilidade terá poucos graus de liberdade.');
+    }
+    assumptions.push(
+      'Ensaio destrutivo: cada corpo de prova é medido uma única vez e é consumido pelo ensaio',
+    );
+    assumptions.push(
+      'Amostras do mesmo lote são homogêneas; a repetibilidade inclui a variação entre corpos de prova',
+    );
+  }
   if (Math.max(2, input.nReplicates) < 2) warnings.push('Menos de 2 réplicas impede estimar repetibilidade.');
+  const specimenConsumption =
+    input.designType === 'nested_destructive'
+      ? (() => {
+          const operators = Math.max(2, Math.round(input.nAnalysts));
+          const samples = Math.max(1, Math.round(input.nSamples));
+          const replicates = Math.max(2, Math.round(input.nReplicates));
+          return {
+            operators,
+            samplesPerOperator: samples,
+            replicates,
+            total: operators * samples * replicates,
+          };
+        })()
+      : undefined;
   return {
     input: { ...input },
     parameterPlans: plans,
@@ -315,13 +386,17 @@ export function buildDesign(
       replicates: Math.max(2, Math.round(input.nReplicates)),
       labs: Math.max(2, Math.round(input.nLabs)),
       levels: Math.max(2, input.levels.length || input.nLevels),
-      samples: Math.max(2, Math.round(input.nSamples)),
+      samples:
+        input.designType === 'nested_destructive'
+          ? Math.max(1, Math.round(input.nSamples))
+          : Math.max(2, Math.round(input.nSamples)),
     },
     runs: capped,
     powerCurve,
     summary: buildSummary(input, plans, total, capped, profile),
     assumptions,
     warnings: [...new Set(warnings)],
+    specimenConsumption,
     createdAt: new Date().toISOString(),
   };
 }

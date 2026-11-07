@@ -728,7 +728,8 @@ function buildReducedAnova(anova: AnovaCore): ReducedAnova {
   };
 }
 
-function satterthwaite(
+/** Graus de liberdade efetivos de Satterthwaite para uma combinação linear de MS. */
+export function satterthwaite(
   terms: Array<{ ms: number; coefficient: number; df: number }>,
 ): number | null {
   let estimate = 0;
@@ -743,7 +744,8 @@ function satterthwaite(
   return (estimate * estimate) / denominator;
 }
 
-function chiSquareSdInterval(
+/** IC de um desvio-padrão por χ², com os graus de liberdade informados. */
+export function chiSquareSdInterval(
   variance: number,
   df: number | null,
   confidence: number,
@@ -764,7 +766,8 @@ function chiSquareSdInterval(
   };
 }
 
-function ratioPctInterval(
+/** IC percentual da razão entre uma variância de interesse e a variância total do estudo. */
+export function ratioPctInterval(
   grrVariance: number,
   partVariance: number,
   dfGrr: number | null,

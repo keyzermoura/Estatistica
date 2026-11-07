@@ -59,6 +59,7 @@ export type DesignType =
   | 'factorial'
   | 'crossed'
   | 'nested'
+  | 'nested_destructive'
   | 'iso5725';
 
 export type SampleSizeMethod =
@@ -69,6 +70,7 @@ export type SampleSizeMethod =
   | 'anova'
   | 'relative_sd'
   | 'iso5725'
+  | 'nested'
   | 'lod'
   | 'linearity'
   | 'guideline';
@@ -215,6 +217,8 @@ export interface RunRow {
   lot: string;
   sample: string;
   replicate: number;
+  /** Identificação do corpo de prova em delineamentos destrutivos. */
+  specimen?: string;
   combination: string;
   factorValues: Record<string, string>;
 }
@@ -237,6 +241,13 @@ export interface DesignPlan {
   summary: string;
   assumptions: string[];
   warnings: string[];
+  /** Plano de consumo de corpos de prova em delineamentos destrutivos. */
+  specimenConsumption?: {
+    operators: number;
+    samplesPerOperator: number;
+    replicates: number;
+    total: number;
+  };
   createdAt: string;
 }
 

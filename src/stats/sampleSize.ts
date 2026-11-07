@@ -14,6 +14,7 @@
  */
 
 import {
+  chi2Inv,
   fCdf,
   fInv,
   normalInv,
@@ -464,6 +465,228 @@ export function sampleSizeRelativeSd(
 export function sampleSizeRelativeMean(relativeError = 0.1, confidence = 0.95): number {
   const z = zCrit(1 - confidence, 2);
   return Math.max(2, Math.ceil((z / relativeError) ** 2));
+}
+
+export interface NestedDesignNInput {
+  /** Desvio-padrão de repetibilidade (s_r) assumido. */
+  sigmaRepeatability: number;
+  /** Desvio-padrão entre amostras dentro de operador. */
+  sigmaSample?: number;
+  /** Desvio-padrão entre operadores. */
+  sigmaOperator?: number;
+  /** Número de operadores; padrão 3. */
+  operators?: number;
+  /** Amostras por operador; padrão 10. */
+  samplesPerOperator?: number;
+  /** Largura-alvo (superior − inferior) do IC de σ_GRR, na unidade da resposta. */
+  targetCiWidth?: number | null;
+  /** Erro relativo-alvo de s_r (ex.: 0,2 = 20%). */
+  targetRelativeSdError?: number | null;
+  /** Confiança dos ICs; padrão 0,95. */
+  confidence?: number;
+  /** Réplicas mínimas por amostra; padrão 2. */
+  minReplicates?: number;
+  /** Réplicas máximas por amostra; padrão 1000. */
+  maxReplicates?: number;
+}
+
+export interface NestedDesignNResult extends SampleSizeResult {
+  /** Réplicas (corpos de prova) por amostra. */
+  replicates: number;
+  operators: number;
+  samplesPerOperator: number;
+  /** Total de corpos de prova a retirar do lote: a·b·n. */
+  totalSpecimens: number;
+  achievedCiWidth: number | null;
+  achievedRelativeSdError: number;
+  targetCiWidth: number | null;
+  targetRelativeSdError: number | null;
+  targetMet: boolean;
+  dofRepeatability: number;
+  dofGrr: number | null;
+  sigmaGrr: number;
+}
+
+/**
+ * Menor número de réplicas por amostra que atinge a largura-alvo do IC de
+ * σ_GRR ou o erro relativo-alvo de s_r, mantendo fixos o número de operadores
+ * e de amostras por operador.
+ *
+ * Planejamento por componentes esperados:
+ *   E[MS_E] = σ²_e
+ *   E[MS_B(A)] = σ²_e + n·σ²_B(A)
+ *   E[MS_A] = σ²_e + n·σ²_B(A) + b·n·σ²_A
+ *   σ²_GRR = σ²_e + σ²_A
+ * Os graus de liberdade de σ_GRR usam Satterthwaite; a largura do IC usa χ².
+ * EP(s_r)/s_r = 1/√(2·a·b·(n−1)).
+ */
+export function nestedDesignN(input: NestedDesignNInput): NestedDesignNResult {
+  const sigmaE = input.sigmaRepeatability;
+  if (!(sigmaE > 0) || !Number.isFinite(sigmaE)) {
+    throw new Error('nestedDesignN requer sigmaRepeatability > 0.');
+  }
+  const sigmaSample = Math.max(0, input.sigmaSample ?? 0);
+  const sigmaOperator = Math.max(0, input.sigmaOperator ?? 0);
+  if (!Number.isFinite(sigmaSample) || !Number.isFinite(sigmaOperator)) {
+    throw new Error('Os componentes de variância devem ser números não negativos.');
+  }
+  if (
+    input.operators !== undefined &&
+    (!Number.isInteger(input.operators) || input.operators < 2)
+  ) {
+    throw new Error('O número de operadores deve ser um inteiro ≥ 2.');
+  }
+  if (
+    input.samplesPerOperator !== undefined &&
+    (!Number.isInteger(input.samplesPerOperator) || input.samplesPerOperator < 1)
+  ) {
+    throw new Error('O número de amostras por operador deve ser um inteiro ≥ 1.');
+  }
+  if (
+    input.targetCiWidth !== undefined &&
+    input.targetCiWidth !== null &&
+    (!(input.targetCiWidth > 0) || !Number.isFinite(input.targetCiWidth))
+  ) {
+    throw new Error('A largura-alvo do IC de σ_GRR deve ser um número positivo.');
+  }
+  if (
+    input.targetRelativeSdError !== undefined &&
+    input.targetRelativeSdError !== null &&
+    (!(input.targetRelativeSdError > 0) || !Number.isFinite(input.targetRelativeSdError))
+  ) {
+    throw new Error('O erro relativo-alvo de s_r deve ser um número positivo (ex.: 0,2).');
+  }
+  const operators = Math.max(2, Math.round(input.operators ?? 3));
+  const samplesPerOperator = Math.max(1, Math.round(input.samplesPerOperator ?? 10));
+  const confidence = clampProb(input.confidence ?? DEFAULT_CONFIDENCE, DEFAULT_CONFIDENCE);
+  const targetCiWidth =
+    input.targetCiWidth !== null && input.targetCiWidth !== undefined && input.targetCiWidth > 0
+      ? input.targetCiWidth
+      : null;
+  const targetRelativeSdError =
+    input.targetRelativeSdError !== null &&
+    input.targetRelativeSdError !== undefined &&
+    input.targetRelativeSdError > 0
+      ? input.targetRelativeSdError
+      : null;
+  const effectiveTargetRel = targetRelativeSdError ?? (targetCiWidth === null ? 0.2 : null);
+  const minReplicates = Math.max(2, Math.round(input.minReplicates ?? 2));
+  const maxReplicates = Math.max(minReplicates, Math.round(input.maxReplicates ?? 1000));
+
+  const sigmaGrr = Math.sqrt(sigmaE * sigmaE + sigmaOperator * sigmaOperator);
+
+  const expected = (n: number) => {
+    const msE = sigmaE * sigmaE;
+    const msBA = msE + n * sigmaSample * sigmaSample;
+    const msA = msBA + samplesPerOperator * n * sigmaOperator * sigmaOperator;
+    const grr = msE + sigmaOperator * sigmaOperator;
+    let dfGrr: number;
+    if (samplesPerOperator >= 2) {
+      dfGrr =
+        (grr * grr) /
+        ((msA / (samplesPerOperator * n)) ** 2 / (operators - 1) +
+          (msE * msE) / (operators * samplesPerOperator * (n - 1)) +
+          (msBA / (samplesPerOperator * n)) ** 2 / (operators * (samplesPerOperator - 1)));
+    } else {
+      dfGrr =
+        (grr * grr) /
+        ((msA / n) ** 2 / (operators - 1) +
+          (((1 - 1 / n) * msE) ** 2) / (operators * (n - 1)));
+    }
+    return { msE, msBA, msA, grr, dfGrr };
+  };
+
+  const relativeError = (n: number) =>
+    1 / Math.sqrt(2 * operators * samplesPerOperator * Math.max(1, n - 1));
+
+  const ciWidth = (n: number) => {
+    const { grr, dfGrr } = expected(n);
+    if (!(grr > 0) || !(dfGrr > 0) || !Number.isFinite(dfGrr)) return Infinity;
+    const lowerTail = 1 - confidence;
+    const low = chi2Inv(lowerTail / 2, dfGrr);
+    const high = chi2Inv(1 - lowerTail / 2, dfGrr);
+    if (!(low > 0) || !(high > low)) return Infinity;
+    return Math.sqrt(grr) * Math.sqrt(dfGrr) * (1 / Math.sqrt(low) - 1 / Math.sqrt(high));
+  };
+
+  const score = (n: number) => {
+    const widthScore =
+      targetCiWidth === null ? 1 : 1 / (1 + ciWidth(n) / targetCiWidth);
+    const relativeScore =
+      effectiveTargetRel === null ? 1 : 1 / (1 + relativeError(n) / effectiveTargetRel);
+    return Math.min(widthScore, relativeScore);
+  };
+
+  const replicates = findN(score, 0.5, minReplicates, maxReplicates);
+  const achievedCiWidth = targetCiWidth === null ? null : ciWidth(replicates);
+  const achievedRelativeSdError = relativeError(replicates);
+  const targetMet =
+    (targetCiWidth === null || achievedCiWidth === null || achievedCiWidth <= targetCiWidth * (1 + 1e-12)) &&
+    (targetRelativeSdError === null ||
+      achievedRelativeSdError <= targetRelativeSdError * (1 + 1e-12));
+  const { dfGrr } = expected(replicates);
+  const dofRepeatability = operators * samplesPerOperator * (replicates - 1);
+  const totalSpecimens = operators * samplesPerOperator * replicates;
+
+  const notes = [
+    `Plano: ${operators} operadores × ${samplesPerOperator} amostras × ${replicates} corpos de prova = ${totalSpecimens} corpos de prova a retirar do lote.`,
+    `Erro relativo padrão de s_r = ${(achievedRelativeSdError * 100).toFixed(1)}% (ν_E = ${dofRepeatability}).`,
+  ];
+  if (targetCiWidth !== null && achievedCiWidth !== null) {
+    notes.push(
+      `Largura do IC de σ_GRR = ${achievedCiWidth.toPrecision(4)} (alvo ${targetCiWidth.toPrecision(4)}).`,
+    );
+  }
+  if (targetRelativeSdError !== null) {
+    notes.push(
+      `Erro relativo-alvo de s_r = ${(targetRelativeSdError * 100).toFixed(1)}%; alcançado = ${(achievedRelativeSdError * 100).toFixed(1)}%.`,
+    );
+  }
+  if (!targetMet) {
+    notes.push(
+      `O alvo não foi atingido com o máximo de ${maxReplicates} réplicas; aumente maxReplicates, o número de operadores ou de amostras.`,
+    );
+  }
+  if (samplesPerOperator === 1) {
+    notes.push(
+      'Com b = 1, a componente entre amostras não é estimável e o IC de σ_GRR usa o modelo de dois níveis do ISO 5725-2.',
+    );
+  }
+  notes.push(
+    'Os componentes assumidos devem vir de estudo piloto ou de dados históricos; o cálculo é um planejamento, não uma garantia.',
+  );
+
+  return {
+    method: 'nested',
+    nPerGroup: replicates,
+    groups: operators * samplesPerOperator,
+    total: totalSpecimens,
+    power: null,
+    precision: achievedRelativeSdError,
+    formula:
+      'ν_E = a·b·(n−1); EP(s_r)/s_r = 1/√(2ν_E); IC de σ_GRR por χ² com ν_GRR de Satterthwaite',
+    reference:
+      'Montgomery (2020), cap. 14; ISO 5725-2:2019; Satterthwaite (1946)',
+    assumptions: [
+      'Delineamento aninhado balanceado: Operador > Amostra(Operador) > Réplica',
+      'Componentes de variância conhecidos ou estimados por estudo piloto',
+      'Resíduos normais e independentes',
+      `Confiança de ${(confidence * 100).toFixed(1)}%`,
+    ],
+    notes,
+    replicates,
+    operators,
+    samplesPerOperator,
+    totalSpecimens,
+    achievedCiWidth,
+    achievedRelativeSdError,
+    targetCiWidth,
+    targetRelativeSdError,
+    targetMet,
+    dofRepeatability,
+    dofGrr: Number.isFinite(dfGrr) ? dfGrr : null,
+    sigmaGrr,
+  };
 }
 
 /**

@@ -96,6 +96,7 @@ estat2/
 │     ├─ variance.ts          ← Bartlett, Levene
 │     ├─ anova.ts             ← ANOVA 1/2 fatores + componentes
 │     ├─ gagerr.ts            ← Gage R&R cruzado por ANOVA
+│     ├─ nested.ts            ← ANOVA aninhada + Gage R&R destrutivo
 │     ├─ iso5725.ts           ← repetibilidade/reprodutibilidade
 │     ├─ regression.ts        ← linearidade, WLS, LOD/LOQ
 │     ├─ bias.ts              ← tendência, recuperação, z, En, TOST

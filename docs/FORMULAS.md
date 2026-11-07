@@ -124,6 +124,7 @@ cap. 13.
 | Erro relativo de `s` | `EP(s)/s ≈ 1/√(2(n−1))` ⇒ `n = 1 + 1/(2·erro_relativo²)` |
 | Média com erro relativo | `n = (z_{1−α/2}/erro_relativo)²` |
 | ISO 5725-2 | `ν_r = p(n−1)`; `ν_L = p−1`; erro relativo de `s_r ≈ 1/√(2ν_r)`; `s_R` por Welch–Satterthwaite com `σ_L/σ_r` informado; busca `p ∈ [6,30]` e `n ∈ [2,10]` que atende ao alvo com menor total |
+| Aninhado destrutivo | `ν_E = a·b·(n−1)`; `EP(s_r)/s_r = 1/√(2ν_E)`; IC de `σ_GRR` por χ² com `ν_GRR` de Satterthwaite; `findN` busca o menor `n` que atende à largura do IC ou ao erro relativo de `s_r` |
 | LD/LQ | orientação: ≥ 10 brancos ou ≥ 6 níveis baixos; curva com ≥ 5 níveis × 3 réplicas |
 | Linearidade | mínimo 5 níveis × 3 réplicas |
 | Seletividade | branco + fortificada, ≥ 3 réplicas por condição |
@@ -140,10 +141,12 @@ total = max(6, maior total entre os planos dos parâmetros selecionados)
 
 Se houver substituição manual (`manualOverride`), prevalece o total informado.
 O plano de execução é gerado conforme o desenho (CRD, blocos, fatorial,
-aninhado, cruzado ou ISO 5725-2) e a ordem é embaralhada por Fisher–Yates com
-um PRNG determinístico **mulberry32** e semente registrada. A mesma semente
-reproduz exatamente a mesma ordem. A curva de poder usa o poder do teste t de
-duas amostras para `n = 2…max`.
+aninhado, aninhado destrutivo, cruzado ou ISO 5725-2) e a ordem é embaralhada
+por Fisher–Yates com um PRNG determinístico **mulberry32** e semente
+registrada. A mesma semente reproduz exatamente a mesma ordem. No desenho
+`nested_destructive`, cada réplica é um corpo de prova identificado
+(`CP-001`, …) e o plano informa o total de corpos de prova a retirar do lote.
+A curva de poder usa o poder do teste t de duas amostras para `n = 2…max`.
 
 Referências: Montgomery (2020); ISO 5725-2:2019; Chow et al. (2008).
 
@@ -362,6 +365,110 @@ Referências: AIAG (2010), *Measurement Systems Analysis Reference Manual*,
 4. ed.; Montgomery (2020), cap. 13; Burdick, Borror & Montgomery (2003);
 Satterthwaite (1946); ISO 22514-7:2021.
 
+### 8.6 ANOVA aninhada e Gage R&R para ensaio destrutivo
+
+Arquivo: `src/stats/nested.ts`. Para ensaios em que o mesmo corpo de prova não
+pode ser medido duas vezes (tração, ruptura, encastoamento), o modelo aleatório
+balanceado de três níveis é
+
+```
+y_ijk = μ + A_i + B_j(i) + e_k(ij)
+```
+
+com `A_i ~ N(0, σ²_A)` (operador), `B_j(i) ~ N(0, σ²_B(A))` (amostra dentro de
+operador) e `e_k(ij) ~ N(0, σ²_e)` (réplica/corpo de prova), para `a`
+operadores, `b` amostras por operador e `n` réplicas por amostra. As somas de
+quadrados e graus de liberdade são
+
+```
+SS_A    = b·n·Σ_i(x̄_i·· − x̄)²
+SS_B(A) = n·Σ_iΣ_j(x̄_ij· − x̄_i··)²
+SS_E    = Σ_iΣ_jΣ_k(x_ijk − x̄_ij·)²
+gl_A = a−1; gl_B(A) = a(b−1); gl_E = a·b·(n−1)
+F_A = MS_A/MS_B(A); F_B(A) = MS_B(A)/MS_E
+```
+
+Componentes pelo método dos momentos, com truncamento em zero:
+
+```
+σ²_e    = MS_E
+σ²_B(A) = max(0, (MS_B(A) − MS_E)/n)
+σ²_A    = max(0, (MS_A − MS_B(A))/(b·n))
+```
+
+Com `b = 1` (Operador > Réplica), `σ²_B(A)` não é separável de `σ²_e`; o
+cálculo é delegado a `iso5725Analysis`, que fornece `s_r² = MS_E` e
+`s_L² = max(0, (MS_A − MS_E)/n)`. O resultado registra `twoLevel = true` e
+fixa a componente de amostragem em zero como não estimável.
+
+O Gage R&R aninhado separa a variação entre amostras como **variação de
+amostragem** e calcula
+
+```
+σ²_GRR   = σ²_e + σ²_A
+σ²_total = σ²_GRR + σ²_B(A)
+%GRR     = 100·σ_GRR/σ_total
+%P/T     = 100·k·σ_GRR/T, com T = USL − LSL e k = 6 por padrão
+ndc      = floor(1,41·σ_B(A)/σ_GRR)
+contribuição_i = 100·σ²_i/σ²_total
+```
+
+A componente entre amostras entra apenas no denominador de `%GRR` e em `ndc`;
+não compõe `σ²_GRR`. Os critérios padrão são os mesmos do Gage R&R cruzado
+(`≤ 10%` conforme, `> 10%` e `≤ 30%` atenção, `> 30%` não conforme;
+`ndc ≥ 5`) e são editáveis. Sem `T`, `%P/T` fica não avaliado. Os ICs usam
+Satterthwaite para os graus de liberdade efetivos, χ² para `σ_GRR` e a razão
+`σ²_GRR/σ²_B(A)` com quantis `F` para `%GRR`; `%P/T` é derivado do IC de
+`σ_GRR`. Células incompletas e `n = 1` falham claramente.
+
+**Aviso obrigatório:** em ensaio destrutivo a repetibilidade inclui a variação
+entre corpos de prova e a validade do estudo depende da homogeneidade do lote.
+O aviso acompanha `warnings`, `summary` e o relatório.
+
+`homogeneityCheck` avalia a homogeneidade do lote combinando três
+procedimentos, todos com nível `α` (padrão 0,05):
+
+```
+ANOVA entre amostras: F = MS_entre/MS_dentro, gl = (k−1, N−k)
+Cochran: C = s²_máx/Σs²_i; C_crítico ≈ 1/[1 + (k−1)·F_{α/k}(ν,ν)], ν = n−1
+Razão de variâncias: F = s²_máx/s²_mín, com α ajustado por Bonferroni
+```
+
+A aproximação do valor crítico de Cochran é a forma conservadora de Wilrich;
+o teste de Cochran não fornece p-valor e é sensível à não normalidade. A razão
+de variâncias usa o menor `n−1` quando os grupos têm tamanhos diferentes e
+corrige o nível por todos os pares. A homogeneidade é rejeitada se qualquer
+teste rejeitar; se rejeitada, é obrigatório registrar justificativa técnica
+para prosseguir, e o aceite fica registrado no resultado. Quando falta um dos
+testes, o veredito é “não avaliado”, nunca conforme por omissão.
+
+`nestedDesignN` mantém fixos operadores (`a`) e amostras por operador (`b`) e
+busca o menor número de réplicas `n` que atinja a largura-alvo do IC de
+`σ_GRR` ou o erro relativo-alvo de `s_r`, reutilizando `findN`:
+
+```
+E[MS_E]    = σ²_e
+E[MS_B(A)] = σ²_e + n·σ²_B(A)
+E[MS_A]    = σ²_e + n·σ²_B(A) + b·n·σ²_A
+σ²_GRR     = σ²_e + σ²_A
+EP(s_r)/s_r = 1/√(2·a·b·(n−1))
+largura do IC de σ_GRR = √σ²_GRR·[√(ν/χ²_{α/2,ν}) − √(ν/χ²_{1−α/2,ν})]
+```
+
+O plano reporta o total de corpos de prova a retirar do lote: `a·b·n`.
+
+No delineamento `nested_destructive` de `src/stats/design.ts`, o plano gera
+`a` operadores × `b` amostras × `n` corpos de prova, com identificação
+`CP-001`, `CP-002`, … e `factorValues.corpo_de_prova`, na ordem embaralhada
+por mulberry32 + Fisher–Yates com semente registrada. `specimenConsumption`
+totaliza os corpos de prova consumidos. Com `b = 1`, o plano alerta que a
+componente entre amostras não é estimável.
+
+Referências: Montgomery (2020), cap. 14; ISO 5725-2:2019, cláusulas 5–7;
+AIAG (2010), *Measurement Systems Analysis Reference Manual*, 4. ed.;
+Satterthwaite (1946); Cochran (1941); Wilrich (2010); Searle, Casella &
+McCulloch (1992).
+
 ## 9. Precisão ISO 5725-2
 
 Arquivo: `src/stats/iso5725.ts`. Para cada nível, com `p` laboratórios e `n`
@@ -571,11 +678,12 @@ são tratados por lista (listwise) e registrados.
 
 ## 15. Testes de referência
 
-`npm test` executa 28 casos: 19 casos estatísticos (18 referências numéricas de
-`stats.test.ts` e 1 teste de caracterização que congela a saída completa da
-análise analítica anterior à introdução dos perfis de método) e 9 testes de
-infraestrutura de dados (migração versionada, round-trip XLSX/CSV e validações
-do modelo v2). Os principais valores de referência estatísticos:
+`npm test` executa 76 casos: 67 casos estatísticos (18 referências numéricas de
+`stats.test.ts`, 15 de `gagerr.test.ts`, 33 de `nested.test.ts` e 1 teste de
+caracterização que congela a saída completa da análise analítica anterior à
+introdução dos perfis de método) e 9 testes de infraestrutura de dados
+(migração versionada, round-trip XLSX/CSV e validações do modelo v2). Os
+principais valores de referência estatísticos:
 
 | Caso | Referência | Tolerância |
 |---|---|---|
@@ -590,6 +698,12 @@ do modelo v2). Os principais valores de referência estatísticos:
 | Bartlett | `χ² = 1,8836933176`, `p = 0,3899071447` | 1e-6 |
 | OLS | `b = 1,93`, `a = 0,23`, `EP(b) = 0,0443471157` | 1e-9 |
 | GUM | `u_c = √(0,5² + (0,2/√3)²)` | 1e-9 |
+| Gage R&R cruzado | AIAG 10×3×3: componentes e %GRR conferidos com a tabela publicada | 1e-6 |
+| ANOVA aninhada | Montgomery Example 14-1: `SS_A = 15,0555555556`, `SS_B(A) = 69,9166666667`, `SS_E = 63,3333333333` | 1e-9 |
+| Gage R&R aninhado | `σ²_e = 2,6388888889`; `σ²_B(A) = 1,7098765432`; `%GRR = 77,8982248062` | 1e-9 |
+| Aninhado com `b = 1` | coincide com `iso5725Analysis` (`s_r²`, `s_L²`, `s_R²`) | 1e-9 |
+| Homogeneidade | Cochran `C = 1/3` para variâncias iguais; razão `F = 1` | 1e-12 |
+| `nestedDesignN` | menor `n` que atinge erro relativo e largura do IC; plano `a·b·n` | exata |
 | Aleatorização | mesma semente → mesma ordem; semente diferente → ordem diferente | exata |
 
 Os testes de referência ficam em `src/stats/__tests__/stats.test.ts`; a

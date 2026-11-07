@@ -222,6 +222,15 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
         <Stat label="Execuções" value={plan.runs.length} hint="ordem aleatorizada" icon={<Dices className="h-5 w-5" />} tone="neutral" />
         <Stat label="Níveis" value={plan.recommended.levels} hint={levelsText || '—'} icon={<Beaker className="h-5 w-5" />} />
         <Stat label="Semente" value={<span className="font-mono text-lg">{input.seed}</span>} hint="reproduz a ordem de execução" icon={<Sparkles className="h-5 w-5" />} tone="warning" />
+        {plan.specimenConsumption ? (
+          <Stat
+            label="Corpos de prova"
+            value={plan.specimenConsumption.total}
+            hint="total a retirar do lote"
+            icon={<Beaker className="h-5 w-5" />}
+            tone="neutral"
+          />
+        ) : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -459,6 +468,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
                 <th>Equipamento</th>
                 <th>Lote</th>
                 <th>Amostra</th>
+                {plan.runs.some((run) => run.specimen) ? <th>Corpo de prova</th> : null}
                 <th>Réplica</th>
                 <th>Combinação</th>
               </tr>
@@ -473,6 +483,9 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
                   <td>{run.equipment || '—'}</td>
                   <td>{run.lot || '—'}</td>
                   <td>{run.sample || '—'}</td>
+                  {plan.runs.some((item) => item.specimen) ? (
+                    <td className="font-mono text-xs">{run.specimen || '—'}</td>
+                  ) : null}
                   <td className="text-center font-mono text-xs">{run.replicate || '—'}</td>
                   <td className="max-w-[360px] truncate text-xs text-ink-500" title={run.combination}>{run.combination}</td>
                 </tr>

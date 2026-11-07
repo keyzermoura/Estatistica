@@ -182,6 +182,13 @@ const DESIGN_TEMPLATES: DesignTemplate[] = [
     description: 'Amostras dentro de lotes e réplicas dentro de amostras.',
   },
   {
+    id: 'nested_destructive',
+    designType: 'nested_destructive',
+    label: 'Aninhado destrutivo (operador → amostra → corpo de prova)',
+    description:
+      'Cada corpo de prova é medido uma única vez; amostras aninhadas em operadores e homogeneidade do lote verificada.',
+  },
+  {
     id: 'iso5725',
     designType: 'iso5725',
     label: 'ISO 5725-2 (p laboratórios × n réplicas × q níveis)',
