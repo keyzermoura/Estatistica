@@ -286,6 +286,82 @@ s²_dentro = MS_dentro
 s²_entre = max(0, (MS_entre − MS_dentro)/n₀)
 ```
 
+### 8.5 Gage R&R cruzado por ANOVA
+
+Arquivo: `src/stats/gagerr.ts`. Entrada `y[parte][operador][réplica]`, com
+`p` peças, `o` operadores e `r` réplicas. O modelo aleatório é
+
+```
+y_ijk = μ + P_i + O_j + (PO)_ij + e_ijk
+```
+
+com `P_i ~ N(0, σ²_peça)`, `O_j ~ N(0, σ²_oper)`,
+`(PO)_ij ~ N(0, σ²_inter)` e `e_ijk ~ N(0, σ²_rep)`. Para o desenho
+balanceado:
+
+```
+SS_P  = o·r·Σ(x̄_i·· − x̄)²
+SS_O  = p·r·Σ(x̄_·j· − x̄)²
+SS_PO = r·Σ(x̄_ij· − x̄_i·· − x̄_·j· + x̄)²
+SS_E  = ΣΣΣ(x_ijk − x̄_ij·)²
+gl_P = p−1; gl_O = o−1; gl_PO = (p−1)(o−1); gl_E = p·o·(r−1)
+```
+
+O teste da interação é `F = MS_PO/MS_E`, com `gl_PO` e `gl_E`. Se
+`p > limiar` (padrão 0,25, editável), adota-se o modelo sem interação:
+`SS_E,red = SS_PO + SS_E` e `gl_E,red = gl_PO + gl_E`. A decisão e o limiar
+ficam registrados no resultado. O modelo também pode ser fixado manualmente.
+
+Componentes pelo método dos momentos, com truncamento em zero:
+
+```
+σ²_rep   = MS_E
+σ²_inter = max(0, (MS_PO − MS_E)/r)
+σ²_oper  = max(0, (MS_O − MS_PO)/(p·r))
+σ²_peça  = max(0, (MS_P − MS_PO)/(o·r))
+σ²_GRR   = σ²_rep + σ²_oper + σ²_inter
+σ²_total = σ²_GRR + σ²_peça
+```
+
+No modelo reduzido, `MS_E` é substituído por `MS_E,red` e
+`σ²_inter = 0` (a interação foi agregada ao erro).
+
+Métricas e critérios padrão editáveis:
+
+```
+%GRR  = 100·σ_GRR/σ_total
+%P/T  = 100·k·σ_GRR/T, com T = USL − LSL e k = 6 por padrão
+ndc   = floor(1,41·σ_peça/σ_GRR)
+contribuição_i = 100·σ²_i/σ²_total
+```
+
+`%GRR` e `%P/T` usam `≤ 10%` conforme, `> 10%` e `≤ 30%` atenção e
+`> 30%` não conforme; `ndc ≥ 5` é conforme. Sem `T`, `%P/T` fica não
+avaliado. Nenhum critério é inventado quando o dado não existe.
+
+Os graus de liberdade efetivos seguem Satterthwaite:
+
+```
+ν = (Σ c_i·MS_i)² / Σ[(c_i·MS_i)²/gl_i]
+```
+
+O IC de `σ_GRR` usa `gl·σ²_GRR/χ²`; o IC de `%GRR` usa a razão
+`σ²_GRR/σ²_peça` com quantis `F(ν_GRR, ν_peça)` e a transformação
+`θ = R/(1+R)`, `%GRR = 100·√θ`. O IC de `%P/T` é derivado do IC de
+`σ_GRR`. Quando um componente é zero ou os graus de liberdade não são
+estimáveis, o IC fica explicitamente indisponível com alerta.
+
+Dados faltantes são descartados por lista (observações válidas restantes);
+o desenho passa a ser tratado como desbalanceado, com somas de quadrados
+sequenciais (peça → operador → interação), estimação por mínimos quadrados
+ponderados e `r_eff = N/células`. O resultado registra `N`, `r_eff`, o
+número de observações ausentes e alerta sobre a aproximação. `r = 1` falha
+claramente, pois não permite estimar a repetibilidade.
+
+Referências: AIAG (2010), *Measurement Systems Analysis Reference Manual*,
+4. ed.; Montgomery (2020), cap. 13; Burdick, Borror & Montgomery (2003);
+Satterthwaite (1946); ISO 22514-7:2021.
+
 ## 9. Precisão ISO 5725-2
 
 Arquivo: `src/stats/iso5725.ts`. Para cada nível, com `p` laboratórios e `n`

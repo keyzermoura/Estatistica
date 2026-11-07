@@ -10,6 +10,7 @@ export * from './outliers';
 export * from './normality';
 export * from './variance';
 export * from './anova';
+export * from './gagerr';
 export * from './iso5725';
 export * from './regression';
 export * from './bias';

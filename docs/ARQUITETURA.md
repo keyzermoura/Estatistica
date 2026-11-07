@@ -95,6 +95,7 @@ estat2/
 │     ├─ normality.ts         ← Shapiro-Wilk
 │     ├─ variance.ts          ← Bartlett, Levene
 │     ├─ anova.ts             ← ANOVA 1/2 fatores + componentes
+│     ├─ gagerr.ts            ← Gage R&R cruzado por ANOVA
 │     ├─ iso5725.ts           ← repetibilidade/reprodutibilidade
 │     ├─ regression.ts        ← linearidade, WLS, LOD/LOQ
 │     ├─ bias.ts              ← tendência, recuperação, z, En, TOST
