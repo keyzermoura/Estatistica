@@ -1,0 +1,130 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --surface: 248 250 252;
+  --surface-raised: 255 255 255;
+  --border: 226 232 240;
+  --text: 15 23 42;
+  --muted: 100 116 139;
+}
+
+.dark {
+  color-scheme: dark;
+  --surface: 2 6 23;
+  --surface-raised: 15 23 42;
+  --border: 30 41 59;
+  --text: 226 232 240;
+  --muted: 148 163 184;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-ink-50 text-ink-900 antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+  .dark body {
+    @apply bg-ink-950 text-ink-100;
+  }
+  * {
+    @apply border-ink-200;
+  }
+  .dark * {
+    @apply border-ink-800;
+  }
+  ::selection {
+    @apply bg-brand-200 text-brand-950;
+  }
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+}
+
+@layer components {
+  .surface {
+    @apply rounded-2xl border border-ink-200/80 bg-white shadow-soft;
+  }
+  .dark .surface {
+    @apply border-ink-800 bg-ink-900;
+  }
+  .field-label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-ink-500;
+  }
+  .dark .field-label {
+    @apply text-ink-400;
+  }
+  .section-title {
+    @apply font-display text-lg font-semibold tracking-tight text-ink-900;
+  }
+  .dark .section-title {
+    @apply text-white;
+  }
+  .muted {
+    @apply text-sm text-ink-500;
+  }
+  .dark .muted {
+    @apply text-ink-400;
+  }
+  .table-wrap {
+    @apply overflow-x-auto rounded-xl border border-ink-200;
+  }
+  .dark .table-wrap {
+    @apply border-ink-800;
+  }
+  .data-table {
+    @apply w-full border-collapse text-sm;
+  }
+  .data-table th {
+    @apply sticky top-0 z-10 whitespace-nowrap border-b border-ink-200 bg-ink-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-ink-500;
+  }
+  .dark .data-table th {
+    @apply border-ink-800 bg-ink-900 text-ink-400;
+  }
+  .data-table td {
+    @apply border-b border-ink-100 px-3 py-2 align-top;
+  }
+  .dark .data-table td {
+    @apply border-ink-800/70;
+  }
+  .data-table tr:last-child td {
+    @apply border-b-0;
+  }
+  .data-table tbody tr:hover {
+    @apply bg-brand-50/40;
+  }
+  .dark .data-table tbody tr:hover {
+    @apply bg-brand-950/20;
+  }
+}
+
+@media print {
+  .no-print,
+  nav,
+  header,
+  footer.app-footer {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .print-area {
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .surface {
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+  .page-break {
+    break-before: page;
+  }
+}
