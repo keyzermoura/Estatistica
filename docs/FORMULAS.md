@@ -141,12 +141,21 @@ total = max(6, maior total entre os planos dos parâmetros selecionados)
 
 Se houver substituição manual (`manualOverride`), prevalece o total informado.
 O plano de execução é gerado conforme o desenho (CRD, blocos, fatorial,
-aninhado, aninhado destrutivo, cruzado ou ISO 5725-2) e a ordem é embaralhada
+aninhado, aninhado destrutivo, cruzado, ISO 5725-2 ou concordância de atributo)
+e a ordem é embaralhada
 por Fisher–Yates com um PRNG determinístico **mulberry32** e semente
 registrada. A mesma semente reproduz exatamente a mesma ordem. No desenho
 `nested_destructive`, cada réplica é um corpo de prova identificado
 (`CP-001`, …) e o plano informa o total de corpos de prova a retirar do lote.
 A curva de poder usa o poder do teste t de duas amostras para `n = 2…max`.
+
+No desenho `attribute_agreement`, `nSamples` é o total de amostras **incluindo**
+as limítrofes (subconjunto `nBorderlineSamples`). O plano gera
+`amostras × avaliadores × réplicas` execuções, com referência conhecida,
+códigos cegos `A-###` (permutação aleatória reprodutível) e ordem global
+embaralhada pela semente; o avaliador não vê a referência nem a condição
+limítrofe. O template do perfil sugere 30 amostras (6 limítrofes), 3 avaliadores
+e 3 réplicas.
 
 Referências: Montgomery (2020); ISO 5725-2:2019; Chow et al. (2008).
 
@@ -709,7 +718,119 @@ e veredito não conforme, sem remover pontos.
 Referências: ASTM MNL 7; ISO 7870-2:2013; Montgomery & Runger, cap. 6; Nelson
 (1984); AIAG MSA 4th ed.
 
-## 12. Incerteza de medição — GUM
+## 12. Concordância para dados de atributo
+
+Arquivo: `src/stats/attribute.ts`. As categorias são tratadas como **nominais**
+por padrão. O kappa ponderado (linear ou quadrático) exige a ordem ordinal em
+`categories`; sem essa ordem o sistema recusa o cálculo, para não impor uma
+ordem arbitrária aos rótulos.
+
+### 12.1 Cohen — dois avaliadores
+
+Para uma tabela de contingência `n_ij` (avaliador 1 × avaliador 2) com `n`
+sujeitos e `k` categorias:
+
+```
+p_o = Σ_i n_ii / n
+p_e = Σ_i (n_i· · n_·i) / n²
+κ   = (p_o − p_e)/(1 − p_e)
+EP(κ) = √{[Σ_ij (e_ij/n)·(w_ij − (w_i· + w_·j))² − p_e²] / [n·(1 − p_e)²]}
+z   = κ/EP(κ);  p = 2·[1 − Φ(|z|)]
+IC  = κ ± z_{1−α/2}·EP(κ), truncado em [−1, 1]
+```
+
+com `e_ij = n_i· · n_·j/n` e `w_ij = 1` para `i = j` e `0` caso contrário. O
+erro-padrão segue Fleiss, Cohen & Everitt (1969) na parametrização do pacote R
+`irr::kappa2`; a orientação das margens foi validada contra `anxiety` e
+`diagnoses`. O IC é truncado no intervalo admissível de κ.
+
+### 12.2 Fleiss — dois ou mais avaliadores
+
+Cada item `i` tem `m_i` avaliações; `n_ij` é quantas vezes a categoria `j` foi
+atribuída ao item `i`:
+
+```
+P_i = [Σ_j n_ij·(n_ij − 1)]/[m_i·(m_i − 1)]        (nominal)
+P̄  = Σ_i P_i/N
+p_j = Σ_i n_ij / Σ_i m_i
+p_e = Σ_j p_j²
+κ   = (P̄ − p_e)/(1 − p_e)
+```
+
+Com número constante `m` de avaliadores e peso nominal, o EP analítico é
+
+```
+q_j = 1 − p_j;  S = Σ_j p_j·q_j
+EP(κ) = √{2·[S² − Σ_j p_j·q_j·(q_j − p_j)] / [S²·N·m·(m − 1)]}
+```
+
+Quando `m` varia entre itens ou há ponderação, não há fórmula fechada adotada:
+o EP é estimado por **jackknife delete-one** (recalcular κ excluindo um item por
+vez e usar `EP² = (N−1)/N·Σ(κ_(−i) − κ̄_(−·))²`). Com menos de 3 itens o EP fica
+indisponível e o IC não é calculado, com alerta.
+
+### 12.3 Kappa ponderado
+
+Para categorias ordinais `i = 0…k−1`:
+
+```
+w_ij = 1 − |i − j|/(k − 1)              (linear)
+w_ij = 1 − [(i − j)/(k − 1)]²           (quadrático)
+p_o,w = Σ_ij w_ij·n_ij/n
+p_e,w = Σ_ij w_ij·p_i·p_j               (Cohen)
+κ_w   = (p_o,w − p_e,w)/(1 − p_e,w)
+```
+
+Em Fleiss, com `n_i` = contagem da categoria `i` no item,
+`P_i,w = [Σ_ij w_ij·n_i·n_j − m_i]/[m_i(m_i − 1)]`; para pesos nominais isso
+reduz a `Σ_j n_j(n_j − 1)/[m_i(m_i − 1)]`.
+
+### 12.4 Estudo completo de concordância
+
+O estudo recebe observações `(item, avaliador, categoria, réplica, referência)`
+e calcula:
+
+| Componente | Regra |
+|---|---|
+| Interavaliadores | Cohen com 2 avaliadores; Fleiss com 3 ou mais, usando a réplica selecionada (`interRaterTrial`, padrão 1) e apenas itens completos |
+| Intra-avaliador | Fleiss entre as réplicas comuns a todos os itens de cada avaliador |
+| Com a referência | Cohen entre a classificação do avaliador e a referência conhecida, na réplica selecionada |
+| Eficácia | `acertos/observações com referência`, usando **todas** as réplicas |
+| FAR (falso aceite) | `falsos aceites/referências rejeitadas` |
+| FRR (falso rejeite) | `falsos rejeites/referências aceitas` |
+| Cobertura | `100·itens com referência/itens` |
+
+Eficácia, FAR e FRR usam IC de Wilson (seção 2). A categoria de aceitação é
+informada em `conformingCategories` ou inferida apenas para pares de rótulos
+reconhecidos (`conforme`/`não conforme`, `aprovado`/`reprovado`, `1`/`0`,
+`pass`/`fail`, etc.); se não for possível inferir, FAR e FRR ficam não avaliadas
+com alerta. A réplica selecionada ausente cai para a menor réplica disponível,
+com alerta; itens incompletos são excluídos do kappa interavaliadores e a
+quantidade é registrada.
+
+### 12.5 Veredito e critérios editáveis
+
+```
+κ ≥ kappaAccept                          → conforme
+kappaWarning ≤ κ < kappaAccept           → atenção
+κ < kappaWarning                         → não conforme
+κ indefinido (p_e = 1 ou dado ausente)   → não avaliado
+```
+
+Padrões: `kappaAccept = 0,75`, `kappaWarning = 0,40`, cobertura de referência
+mínima de 100%, e **sem limite** para eficácia, FAR e FRR até o usuário
+cadastrar um critério. A classificação de Landis & Koch (1977) é exibida apenas
+como orientação — não é norma e não substitui os limiares editáveis. Quando
+`p_e = 1` (todas as classificações na mesma categoria), κ é **indefinido**:
+valor nulo, veredito não avaliado e mensagem explícita, em vez de divisão por
+zero. Nenhuma observação é removida automaticamente; ausências são contadas e
+registradas.
+
+Referências: Cohen (1960); Fleiss (1971); Fleiss, Cohen & Everitt (1969);
+Landis & Koch (1977); AIAG MSA 4th ed.; `irr` 0.84.1 (`kappa2`,
+`kappam.fleiss`); `sklearn.metrics.cohen_kappa_score`.
+
+## 13. Incerteza de medição — GUM
 
 Arquivo: `src/stats/uncertainty.ts`.
 
@@ -730,7 +851,7 @@ Tipo A: `u = s/√n`, `ν = n−1`. Tipo B normal a partir de incerteza expandid
 usa `ν_eff = 10⁶` e `k ≈ 1,96`. Referências: JCGM 100:2008 (GUM), cláusulas 5
 e G; JCGM 101:2008; EURACHEM/CITAC (2012).
 
-## 13. Como cada parâmetro é calculado e julgado
+## 14. Como cada parâmetro é calculado e julgado
 
 Arquivo de orquestração: `src/stats/analysis.ts`. O critério é procurado pelo
 par `parameter + metric`; o operador pode ser `≥`, `≤` ou `entre`.
@@ -748,14 +869,14 @@ par `parameter + metric`; o operador pode ser `≥`, `≤` ou `entre`.
 | Robustez | maior efeito padronizado entre analista/dia/equipamento/lote e menor `p` | efeito ≤ 2; `p ≥ 0,05` |
 | Incerteza | `U` e `U_rel = 100·U/|x̄|` | `U_rel ≤ 5%`; `U ≤ limite` |
 
-### 13.1 Veredito de um parâmetro
+### 14.1 Veredito de um parâmetro
 
 1. Se não há critério cadastrado para as métricas disponíveis → **não avaliado**.
 2. Se alguma métrica aplicável falha → **não conforme**.
 3. Se todas as métricas aplicáveis passam → **conforme**.
 4. Casos intermediários (parte avaliada, parte sem dado) → **atenção**.
 
-### 13.2 Veredito global
+### 14.2 Veredito global
 
 ```
 se algum parâmetro = não conforme  → não conforme
@@ -768,7 +889,7 @@ O relatório sempre traz a fórmula, o valor, o critério e o veredito de cada
 métrica. O `n` efetivo é o número de medições numéricas válidas; dados ausentes
 são tratados por lista (listwise) e registrados.
 
-## 14. Decisões e suposições registradas
+## 15. Decisões e suposições registradas
 
 - **Confiança** padrão 95%; **poder** padrão 80%; **α** padrão 5% bilateral.
 - **σ esperado**: dado piloto; se ausente, `faixa/6`. É uma suposição explícita
@@ -791,19 +912,27 @@ são tratados por lista (listwise) e registrados.
 - **Resolução**: limite padrão de 10% de `T` ou de `σ_total`; se a resolução
   não for informada, é inferida pela menor diferença positiva entre valores
   distintos.
+- **Concordância de atributo**: κ padrão conforme em 0,75 e atenção em 0,40,
+  ambos editáveis; Landis & Koch é orientação, não norma. `p_e = 1` torna κ
+  indefinido (não avaliado). Eficácia, FAR e FRR só são julgadas com critério
+  cadastrado. Kappa interavaliadores e com a referência usam a primeira réplica
+  (ou a menor disponível, com alerta); eficácia/FAR/FRR usam todas as réplicas.
+  Kappa ponderado exige a ordem ordinal explícita das categorias. O
+  delineamento de atributo inclui amostras limítrofes, referência conhecida,
+  códigos cegos `A-###` e ordem embaralhada pela semente.
 - **Dados faltantes**: análise por lista, com `n` efetivo no relatório.
 - **Aleatorização**: mulberry32 + Fisher–Yates; a semente fica gravada.
 - **Incerteza**: entradas independentes; GUM com Welch–Satterthwaite.
 
-## 15. Testes de referência
+## 16. Testes de referência
 
-`npm test` executa 100 casos: 91 casos estatísticos (18 referências numéricas
+`npm test` executa 124 casos: 115 casos estatísticos (18 referências numéricas
 de `stats.test.ts`, 15 de `gagerr.test.ts`, 33 de `nested.test.ts`, 9 de
-`gageBiasLinearity.test.ts`, 15 de `stability.test.ts` e 1 teste de
-caracterização que congela a saída completa da análise analítica anterior à
-introdução dos perfis de método) e 9 testes de infraestrutura de dados
-(migração versionada, round-trip XLSX/CSV e validações do modelo v2). Os
-principais valores de referência estatísticos:
+`gageBiasLinearity.test.ts`, 15 de `stability.test.ts`, 24 de
+`attribute.test.ts` e 1 teste de caracterização que congela a saída completa da
+análise analítica anterior à introdução dos perfis de método) e 9 testes de
+infraestrutura de dados (migração versionada, round-trip XLSX/CSV e validações
+do modelo v2). Os principais valores de referência estatísticos:
 
 | Caso | Referência | Tolerância |
 |---|---|---|
@@ -833,8 +962,18 @@ principais valores de referência estatísticos:
 | Carta X̄-R | `x̄̄ = 10,2`; `R̄ = 2`; `LIC = 9,046`; `LSC = 11,354` para `n = 5` | 1e-9 |
 | Resolução | `1/10 = 10%` passa; `1/5 = 20%` falha; categorias distintas de MR/R registradas | exata |
 | Alarmes | 1 fora dos limites, 8 do mesmo lado e 6 em tendência, sem excluir pontos | exata |
+| Cohen 2×2 | `[[20,5],[10,15]]`: κ = 0,4; `p_o = 0,7`; `p_e = 0,5`; EP = 0,1385640646; z = 2,8867513460 | 1e-9 |
+| sklearn 3×3 | `[[2,0,0],[0,1,0],[1,0,1]]`: κ nominal 0,6875; linear 0,5833333333; quadrático 0,5 | 1e-9 |
+| `irr` anxiety | κ nominal 0,1194968553 (EP 0,1026815035); linear 0,1891891892; quadrático 0,2967651195 | 1e-9 |
+| `irr` diagnoses | κ = 0,6511627907; z = 6,9964707698 | 1e-9 |
+| Fleiss (1971) | 10 itens × 14 avaliadores × 5 categorias: κ = 0,2099307044; EP = 0,0169650692; z = 12,3742910592; IC (0,1766797797, 0,2431816291) | 1e-9 |
+| Fleiss ponderado | nominal 0,2424242424 (EP 0,1296318160); linear 0,2063492063 (EP jackknife 0,2303583134); quadrático 0,1666666667 (EP 0,3780652501) | 1e-9 |
+| Kappa intra-avaliador | 6 itens × 3 réplicas: κ = 0,325; EP = 0,2357022604; z = 1,3788582233 | 1e-8 |
+| Wilson | `18/20 = (0,6989663548, 0,9721335188)`; `20/20 = (0,8388748419, 1)` | 1e-9 |
+| `p_e = 1` | κ nulo, veredito não avaliado e mensagem explícita | exata |
+| Delineamento de atributo | 12 amostras × 3 avaliadores × 2 réplicas, códigos `A-###`, mesma semente reproduz a ordem | exata |
 
-Os testes de referência ficam em `src/stats/__tests__/stats.test.ts`; a
-caracterização da análise analítica fica em
+Os testes de referência ficam em `src/stats/__tests__/`; a caracterização da
+análise analítica fica em
 `src/stats/__tests__/analysis-characterization.test.ts` e é executada também
 pelo `scripts/setup.mjs`.

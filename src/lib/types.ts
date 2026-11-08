@@ -60,7 +60,8 @@ export type DesignType =
   | 'crossed'
   | 'nested'
   | 'nested_destructive'
-  | 'iso5725';
+  | 'iso5725'
+  | 'attribute_agreement';
 
 export type SampleSizeMethod =
   | 'mean_ci'
@@ -179,6 +180,8 @@ export interface DesignInput {
   nReplicates: number;
   nLabs: number;
   nSamples: number;
+  /** Amostras limítrofes incluídas no total de amostras (atributo). */
+  nBorderlineSamples: number;
   factors: string[];
   levels: string[];
   seed: number;
@@ -235,6 +238,8 @@ export interface DesignPlan {
     labs: number;
     levels: number;
     samples: number;
+    /** Amostras limítrofes no delineamento de concordância de atributo. */
+    borderlineSamples?: number;
   };
   runs: RunRow[];
   powerCurve: PowerPoint[];
@@ -546,6 +551,7 @@ export const DEFAULT_DESIGN_INPUT: DesignInput = {
   nReplicates: 3,
   nLabs: 8,
   nSamples: 10,
+  nBorderlineSamples: 3,
   factors: ['analista', 'dia', 'equipamento'],
   levels: ['baixo', 'médio', 'alto'],
   seed: 20261031,

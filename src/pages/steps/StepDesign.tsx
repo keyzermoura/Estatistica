@@ -56,9 +56,11 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
     margin: profile.defaultAssumptions.tostMargin,
     seed: Date.now() % 1000000,
   });
-  const [input, setInput] = useState<DesignInput>(
-    () => bundle.design?.input ?? defaultInput(),
-  );
+  const storedInput = (): DesignInput => {
+    const stored = bundle.design?.input;
+    return stored ? { ...DEFAULT_DESIGN_INPUT, ...stored } : defaultInput();
+  };
+  const [input, setInput] = useState<DesignInput>(storedInput);
   const [levelsText, setLevelsText] = useState(() => input.levels.join(', '));
   const [factorsText, setFactorsText] = useState(() => input.factors.join(', '));
   const [plan, setPlan] = useState<DesignPlan>(
@@ -72,7 +74,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
-    const nextInput = bundle.design?.input ?? defaultInput();
+    const nextInput = storedInput();
     setInput(nextInput);
     setLevelsText(nextInput.levels.join(', '));
     setFactorsText(nextInput.factors.join(', '));
@@ -96,6 +98,17 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
 
   const update = <K extends keyof DesignInput>(key: K, value: DesignInput[K]) => {
     setInput((prev) => ({ ...prev, [key]: value }));
+    setDirty(true);
+  };
+
+  const changeDesignType = (designType: DesignInput['designType']) => {
+    const template = profile.designTemplates.find(
+      (candidate) => candidate.designType === designType,
+    );
+    const defaults = template?.defaults ?? {};
+    setInput((prev) => ({ ...prev, designType, ...defaults }));
+    if (defaults.levels) setLevelsText(defaults.levels.join(', '));
+    if (defaults.factors) setFactorsText(defaults.factors.join(', '));
     setDirty(true);
   };
 
@@ -250,7 +263,9 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               <Select
                 value={input.designType}
                 disabled={locked}
-                onChange={(e) => update('designType', e.target.value as DesignInput['designType'])}
+                onChange={(e) =>
+                  changeDesignType(e.target.value as DesignInput['designType'])
+                }
               >
                 {profile.designTemplates.map((template) => (
                   <option key={template.id} value={template.designType}>
@@ -277,7 +292,29 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
             <Input label="Lotes" type="number" min="1" value={input.nLots} disabled={locked} onChange={(e) => update('nLots', Number(e.target.value))} />
             <Input label="Réplicas" type="number" min="2" value={input.nReplicates} disabled={locked} onChange={(e) => update('nReplicates', Number(e.target.value))} />
             <Input label="Laboratórios" type="number" min="2" value={input.nLabs} disabled={locked} onChange={(e) => update('nLabs', Number(e.target.value))} />
-            <Input label="Amostras (aninhado)" type="number" min="2" value={input.nSamples} disabled={locked} onChange={(e) => update('nSamples', Number(e.target.value))} />
+            <Input
+              label={
+                input.designType === 'attribute_agreement'
+                  ? 'Amostras (total, incluindo limítrofes)'
+                  : 'Amostras (aninhado)'
+              }
+              type="number"
+              min="2"
+              value={input.nSamples}
+              disabled={locked}
+              onChange={(e) => update('nSamples', Number(e.target.value))}
+            />
+            {input.designType === 'attribute_agreement' ? (
+              <Input
+                label="Amostras limítrofes (incluídas no total)"
+                type="number"
+                min="0"
+                max={input.nSamples}
+                value={input.nBorderlineSamples}
+                disabled={locked}
+                onChange={(e) => update('nBorderlineSamples', Number(e.target.value))}
+              />
+            ) : null}
             <Textarea
               label="Níveis experimentais"
               className="min-h-[64px]"
@@ -337,7 +374,9 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               <p>{plan.summary}</p>
               <div className="grid grid-cols-2 gap-2 text-xs">
                 <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
-                  <p className="text-ink-400">Analistas</p>
+                  <p className="text-ink-400">
+                    {input.designType === 'attribute_agreement' ? 'Avaliadores' : 'Analistas'}
+                  </p>
                   <p className="font-semibold">{plan.recommended.analysts}</p>
                 </div>
                 <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
@@ -352,6 +391,20 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
                   <p className="text-ink-400">Laboratórios</p>
                   <p className="font-semibold">{plan.recommended.labs}</p>
                 </div>
+                {input.designType === 'attribute_agreement' ? (
+                  <>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
+                      <p className="text-ink-400">Amostras</p>
+                      <p className="font-semibold">{plan.recommended.samples}</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
+                      <p className="text-ink-400">Limítrofes</p>
+                      <p className="font-semibold">
+                        {plan.recommended.borderlineSamples ?? 0}
+                      </p>
+                    </div>
+                  </>
+                ) : null}
               </div>
               <Button variant="outline" size="sm" className="w-full" onClick={recalculate}>
                 <RefreshCw className="h-3.5 w-3.5" /> Recalcular plano

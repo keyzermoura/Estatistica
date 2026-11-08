@@ -187,6 +187,35 @@ function buildRuns(input: DesignInput, total: number): { runs: RunRow[]; warning
       }
       break;
     }
+    case 'attribute_agreement': {
+      const raters = Math.max(2, Math.round(input.nAnalysts));
+      const samples = Math.max(2, Math.round(input.nSamples));
+      const width = Math.max(3, String(samples).length);
+      // Códigos cegos: uma permutação reprodutível dos rótulos 1..amostras.
+      // O avaliador vê apenas o código, nunca a referência ou o índice original.
+      const codes = shuffle(
+        Array.from({ length: samples }, (_, index) => index + 1),
+        input.seed + 7919,
+      ).map((code) => `A-${String(code).padStart(width, '0')}`);
+      for (const code of codes) {
+        for (let rater = 1; rater <= raters; rater++) {
+          for (let r = 1; r <= reps; r++) {
+            push(
+              `Amostra ${code} · avaliador Op${rater} · réplica ${r}`,
+              {
+                amostra: code,
+                avaliador: `Op${rater}`,
+                replica: String(r),
+                cego: 'sim',
+              },
+              '',
+              { analyst: `Op${rater}`, sample: code, replicate: r },
+            );
+          }
+        }
+      }
+      break;
+    }
     case 'crossed':
     default: {
       for (const level of levels) {
@@ -259,8 +288,12 @@ function buildSummary(
   profile: MethodProfile,
 ): string {
   const largest = plans.slice().sort((a, b) => b.total - a.total)[0];
+  const designLabel =
+    input.designType === 'attribute_agreement'
+      ? 'Concordância de atributo'
+      : input.designType.toUpperCase();
   const parts = [
-    `Delineamento ${input.designType.toUpperCase()} com ${total} medições recomendadas`,
+    `Delineamento ${designLabel} com ${total} medições recomendadas`,
     `${runs.length} execuções aleatorizadas (semente ${input.seed})`,
   ];
   if (largest) {
@@ -282,6 +315,18 @@ function buildSummary(
     const replicates = Math.max(2, Math.round(input.nReplicates));
     parts.push(
       `${operators} operadores × ${samples} amostras × ${replicates} corpos de prova = ${operators * samples * replicates} corpos de prova a retirar do lote`,
+    );
+  }
+  if (input.designType === 'attribute_agreement') {
+    const raters = Math.max(2, Math.round(input.nAnalysts));
+    const samples = Math.max(2, Math.round(input.nSamples));
+    const borderline = Math.min(
+      samples,
+      Math.max(0, Math.round(input.nBorderlineSamples ?? 0)),
+    );
+    const replicates = Math.max(2, Math.round(input.nReplicates));
+    parts.push(
+      `${samples} amostras (${borderline} limítrofes) × ${raters} avaliadores × ${replicates} réplicas, com referência conhecida e ordem/códigos cegados pela semente`,
     );
   }
   return `${parts.join('. ')}.`;
@@ -360,6 +405,45 @@ export function buildDesign(
       'Amostras do mesmo lote são homogêneas; a repetibilidade inclui a variação entre corpos de prova',
     );
   }
+  if (input.designType === 'attribute_agreement') {
+    const rawAnalysts = Math.round(input.nAnalysts);
+    const rawSamples = Math.round(input.nSamples);
+    const rawBorderline = Math.round(input.nBorderlineSamples ?? 0);
+    if (rawAnalysts < 2) {
+      warnings.push(
+        'O estudo de concordância exige pelo menos 2 avaliadores; o plano foi gerado com 2.',
+      );
+    }
+    if (rawSamples < 2) {
+      warnings.push(
+        'O estudo de concordância exige pelo menos 2 amostras; o plano foi gerado com 2.',
+      );
+    }
+    if (rawBorderline < 1) {
+      warnings.push(
+        'Nenhuma amostra limítrofe foi incluída; itens limítrofes são importantes para desafiar a discriminação entre categorias.',
+      );
+    }
+    if (rawBorderline > rawSamples) {
+      warnings.push(
+        `O número de amostras limítrofes (${rawBorderline}) excede o total de amostras (${rawSamples}); o plano limita a ${Math.max(0, rawSamples)}.`,
+      );
+    }
+    if (rawBorderline > 0 && rawBorderline === rawSamples) {
+      warnings.push(
+        'Todas as amostras são limítrofes; inclua também amostras claramente conformes e não conformes.',
+      );
+    }
+    assumptions.push(
+      'Estudo de concordância: cada avaliador classifica cada amostra sem conhecer a referência; a ordem de apresentação é aleatorizada pela semente',
+    );
+    assumptions.push(
+      'Os códigos das amostras são uma permutação aleatória; a referência e a condição limítrofe não são exibidas ao avaliador',
+    );
+    assumptions.push(
+      'As amostras incluem itens limítrofes, além de casos claramente conformes e não conformes',
+    );
+  }
   if (Math.max(2, input.nReplicates) < 2) warnings.push('Menos de 2 réplicas impede estimar repetibilidade.');
   const specimenConsumption =
     input.designType === 'nested_destructive'
@@ -390,6 +474,13 @@ export function buildDesign(
         input.designType === 'nested_destructive'
           ? Math.max(1, Math.round(input.nSamples))
           : Math.max(2, Math.round(input.nSamples)),
+      borderlineSamples:
+        input.designType === 'attribute_agreement'
+          ? Math.min(
+              Math.max(2, Math.round(input.nSamples)),
+              Math.max(0, Math.round(input.nBorderlineSamples ?? 0)),
+            )
+          : undefined,
     },
     runs: capped,
     powerCurve,

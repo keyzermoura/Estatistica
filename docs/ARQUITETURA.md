@@ -102,6 +102,7 @@ estat2/
 │     ├─ bias.ts              ← tendência, recuperação, z, En, TOST
 │     ├─ gageBiasLinearity.ts ← tendência por nível + linearidade AIAG
 │     ├─ stability.ts         ← cartas I-MR/X̄-R, alarmes e resolução
+│     ├─ attribute.ts         ← Cohen/Fleiss, kappa ponderado, FAR/FRR
 │     ├─ uncertainty.ts       ← GUM + Welch-Satterthwaite
 │     ├─ analysis.ts          ← orquestração genérica da análise
 │     ├─ analysis-types.ts    ← contratos de resultado

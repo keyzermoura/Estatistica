@@ -194,6 +194,19 @@ const DESIGN_TEMPLATES: DesignTemplate[] = [
     label: 'ISO 5725-2 (p laboratórios × n réplicas × q níveis)',
     description: 'Experimento interlaboratorial para precisão e reprodutibilidade.',
   },
+  {
+    id: 'attribute_agreement',
+    designType: 'attribute_agreement',
+    label: 'Concordância de atributo (amostras × avaliadores × réplicas)',
+    description:
+      'Amostras com referência conhecida, incluindo itens limítrofes; ordem e códigos cegados pela semente.',
+    defaults: {
+      nAnalysts: 3,
+      nReplicates: 3,
+      nSamples: 30,
+      nBorderlineSamples: 6,
+    },
+  },
 ];
 
 function suggestedParameters(

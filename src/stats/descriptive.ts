@@ -3,7 +3,7 @@
  * Referências: ISO 3534-1:2006; Montgomery & Runger, cap. 8.
  */
 
-import { tInv } from './distributions';
+import { normalInv, tInv } from './distributions';
 
 export interface DescriptiveStats {
   n: number;
@@ -127,8 +127,10 @@ export function ciProportion(
   confidence = 0.95,
 ): [number, number] {
   if (n <= 0) return [NaN, NaN];
-  const z = 1.959963984540054;
-  const zz = confidence === 0.95 ? z : 1.959963984540054;
+  const zz =
+    Math.abs(confidence - 0.95) < 1e-12
+      ? 1.959963984540054
+      : normalInv(0.5 + confidence / 2);
   const p = successes / n;
   const denom = 1 + (zz * zz) / n;
   const center = (p + (zz * zz) / (2 * n)) / denom;
