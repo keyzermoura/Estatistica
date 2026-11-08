@@ -598,6 +598,117 @@ k = z + (z²+1)/(2n) + (5z³+16z)/(12n²) + (3z⁵+19z³+17z)/(24n³)
 limites = x̄ ± k·s
 ```
 
+### 11.6 Tendência por nível e linearidade do instrumento (AIAG)
+
+Arquivo: `src/stats/gageBiasLinearity.ts`. A entrada é uma lista de níveis de
+referência, cada um com réplicas medidas no mesmo nível. A tolerância
+`T = USL − LSL` e a variação do processo `VP = 6σ_processo` são opcionais.
+
+Por nível:
+
+```
+bias_i = x̄_i − ref_i
+EP_i   = s_i/√n_i                         (sem incerteza do padrão)
+EP_i   = √(s_i²/n_i + u_ref_i²)           (com incerteza-padrão do padrão)
+t_i    = bias_i/EP_i
+ν_i    = n_i − 1                          (u_ref conhecida)
+ν_i    = (s_i²/n_i + u_ref_i²)² /
+         [(s_i²/n_i)²/(n_i−1) + (u_ref_i²)²/ν_ref]   (Welch–Satterthwaite)
+IC_i   = bias_i ± t_{1−α/2,ν_i}·EP_i
+tendência/T   = 100·bias_i/T
+tendência/ref = 100·bias_i/|ref_i|
+```
+
+A linearidade segue o método AIAG e reutiliza a regressão OLS de
+`regression.ts` sobre todos os pares individuais `(ref_i, bias_ij)`:
+
+```
+bias_ij = a + b·ref_i + e_ij
+b = S_xy/S_xx;  a = ȳ − b·x̄
+s_yx = √[Σe_ij²/(N−2)]
+EP(b) = s_yx/√S_xx;  EP(a) = s_yx·√(1/N + x̄²/S_xx)
+t_b = b/EP(b);  t_a = a/EP(a);  ν = N − 2
+linearidade   = |b|·VP
+%linearidade  = 100·|b| = 100·linearidade/VP
+%linearidade/T = 100·linearidade/T
+```
+
+O declive `b` e o intercepto `a` são testados bilateralmente. O estudo deve ter
+**pelo menos 5 níveis** e **pelo menos 3 réplicas por nível**, cobrindo a faixa
+de uso; essas condições entram como métricas de delineamento com veredito
+editável. Os critérios padrão de 5% (conforme) e 10% (atenção) para
+`|tendência|/T` e `%linearidade` são orientação AIAG, não norma, e podem ser
+alterados. Cada nível e cada métrica do resumo carrega fórmula, valor, critério
+e veredito; nenhum ponto é removido automaticamente.
+
+### 11.7 Estabilidade: cartas I-MR e X̄-R
+
+Arquivo: `src/stats/stability.ts`.
+
+Carta I-MR, para observações individuais em ordem cronológica:
+
+```
+MR_i = |x_i − x_{i−1}|
+LC_I = x̄;        LIC_I/LSC_I = x̄ ± 2,66·MR̄
+LC_MR = MR̄;      LIC_MR = 0;  LSC_MR = 3,267·MR̄
+σ_dentro = MR̄/1,128
+```
+
+Carta X̄-R, para subgrupos racionais de tamanho fixo `n` (2 a 10):
+
+```
+R_i = máx(subgrupo_i) − mín(subgrupo_i)
+x̄̄ = média das médias dos subgrupos;  R̄ = média das amplitudes
+LC_X = x̄̄;        LIC_X/LSC_X = x̄̄ ± A2·R̄
+LC_R = R̄;        LIC_R = D3·R̄;  LSC_R = D4·R̄
+σ_dentro = √[Σ(n_i−1)·s_i²/Σ(n_i−1)]
+```
+
+Constantes tabeladas (ASTM MNL 7):
+
+| n | A2 | D3 | D4 |
+|---|---|---|---|
+| 2 | 1,880 | 0 | 3,267 |
+| 3 | 1,023 | 0 | 2,574 |
+| 4 | 0,729 | 0 | 2,282 |
+| 5 | 0,577 | 0 | 2,114 |
+| 6 | 0,483 | 0 | 2,004 |
+| 7 | 0,419 | 0,076 | 1,924 |
+| 8 | 0,373 | 0,136 | 1,864 |
+| 9 | 0,337 | 0,184 | 1,816 |
+| 10 | 0,308 | 0,223 | 1,777 |
+
+Regras de alarme, aplicadas às cartas principal e secundária:
+
+1. **Ponto fora dos limites:** `valor < LIC` ou `valor > LSC`.
+2. **8 consecutivos do mesmo lado:** oito pontos estritamente acima ou
+   estritamente abaixo da linha central; um ponto exatamente na LC interrompe a
+   sequência.
+3. **6 em tendência:** seis pontos consecutivos estritamente crescentes ou
+   estritamente decrescentes.
+
+Cada alarme registra carta, regra, índices dos pontos, valor, LC, LIC, LSC e
+descrição. Todos os pontos permanecem nas cartas e nas tabelas; nenhum é
+excluído. O critério padrão de estabilidade é **zero alarmes**, com os
+comprimentos 8 e 6 editáveis.
+
+A resolução é verificada contra `T` ou, na ausência deste, contra `σ_total`:
+
+```
+resolução ≤ 10%·T          (T informado)
+resolução ≤ 10%·σ_total    (T ausente)
+%resolução = 100·resolução/T ou 100·resolução/σ_total
+```
+
+Se a resolução não for informada, ela é inferida pela menor diferença positiva
+entre valores distintos. O sistema também registra o número de categorias
+distintas de dados e de amplitudes (`MR` ou `R`), que evita superestimar a
+discriminação efetiva da carta de amplitudes. A violação do limite gera alerta
+e veredito não conforme, sem remover pontos.
+
+Referências: ASTM MNL 7; ISO 7870-2:2013; Montgomery & Runger, cap. 6; Nelson
+(1984); AIAG MSA 4th ed.
+
 ## 12. Incerteza de medição — GUM
 
 Arquivo: `src/stats/uncertainty.ts`.
@@ -672,14 +783,23 @@ são tratados por lista (listwise) e registrados.
   não paramétrico, sem bloquear automaticamente.
 - **Homogeneidade**: Levene é o teste de decisão; Bartlett é informativo.
 - **Outliers**: apenas sinalizados; nenhuma remoção automática.
+- **Tendência/linearidade**: limites padrão de 5% (conforme) e 10% (atenção)
+  para `|tendência|/T` e `%linearidade`, editáveis; são orientação AIAG, não
+  norma. O estudo AIAG exige ≥ 5 níveis e ≥ 3 réplicas por nível.
+- **Estabilidade**: zero alarmes como padrão; 8 pontos do mesmo lado e 6 em
+  tendência são os comprimentos padrão, editáveis. Nenhum ponto é excluído.
+- **Resolução**: limite padrão de 10% de `T` ou de `σ_total`; se a resolução
+  não for informada, é inferida pela menor diferença positiva entre valores
+  distintos.
 - **Dados faltantes**: análise por lista, com `n` efetivo no relatório.
 - **Aleatorização**: mulberry32 + Fisher–Yates; a semente fica gravada.
 - **Incerteza**: entradas independentes; GUM com Welch–Satterthwaite.
 
 ## 15. Testes de referência
 
-`npm test` executa 76 casos: 67 casos estatísticos (18 referências numéricas de
-`stats.test.ts`, 15 de `gagerr.test.ts`, 33 de `nested.test.ts` e 1 teste de
+`npm test` executa 100 casos: 91 casos estatísticos (18 referências numéricas
+de `stats.test.ts`, 15 de `gagerr.test.ts`, 33 de `nested.test.ts`, 9 de
+`gageBiasLinearity.test.ts`, 15 de `stability.test.ts` e 1 teste de
 caracterização que congela a saída completa da análise analítica anterior à
 introdução dos perfis de método) e 9 testes de infraestrutura de dados
 (migração versionada, round-trip XLSX/CSV e validações do modelo v2). Os
@@ -705,6 +825,14 @@ principais valores de referência estatísticos:
 | Homogeneidade | Cochran `C = 1/3` para variâncias iguais; razão `F = 1` | 1e-12 |
 | `nestedDesignN` | menor `n` que atinge erro relativo e largura do IC; plano `a·b·n` | exata |
 | Aleatorização | mesma semente → mesma ordem; semente diferente → ordem diferente | exata |
+| Tendência AIAG | ref. 7: `bias = 0,49`; `s = 0,1286683938`; `EP = 0,0406885187`; `t = 12,0427092316` | 1e-9 |
+| Linearidade AIAG | `b = −0,132`; `a = 1,408`; `s_yx = 0,2530480850`; `t_b = −10,4327997573` (gl 48) | 1e-9 |
+| Incerteza da referência | `EP = √(s²/n + u_ref²) = 0,5033222957`; Welch gl `10,2593250444` | 1e-9 |
+| Constantes X̄-R | ASTM MNL 7, `n = 2…10`: A2 `1,880…0,308`; D3 `0…0,223`; D4 `3,267…1,777` | exata |
+| Carta I-MR | `x̄ = 10,9`; `MR̄ = 1,2222222222`; `LIC = 7,6488888889`; `LSC = 14,1511111111` | 1e-9 |
+| Carta X̄-R | `x̄̄ = 10,2`; `R̄ = 2`; `LIC = 9,046`; `LSC = 11,354` para `n = 5` | 1e-9 |
+| Resolução | `1/10 = 10%` passa; `1/5 = 20%` falha; categorias distintas de MR/R registradas | exata |
+| Alarmes | 1 fora dos limites, 8 do mesmo lado e 6 em tendência, sem excluir pontos | exata |
 
 Os testes de referência ficam em `src/stats/__tests__/stats.test.ts`; a
 caracterização da análise analítica fica em

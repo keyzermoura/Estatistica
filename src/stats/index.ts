@@ -12,6 +12,8 @@ export * from './variance';
 export * from './anova';
 export * from './gagerr';
 export * from './nested';
+export * from './gageBiasLinearity';
+export * from './stability';
 export * from './iso5725';
 export * from './regression';
 export * from './bias';

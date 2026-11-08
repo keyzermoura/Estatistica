@@ -59,12 +59,80 @@ export function biasTest(
   alpha = 0.05,
   confidence = 0.95,
 ): BiasResult {
+  return biasCore(measured, reference, alpha, confidence, 0, null);
+}
+
+/**
+ * Teste t de tendência incorporando a incerteza-padrão do valor de referência:
+ *   EP = √(s²/n + u_ref²)
+ * Quando `referenceDof` é informado, os graus de liberdade usam
+ * Welch–Satterthwaite; caso contrário, assume-se u_ref conhecida (gl = n − 1).
+ */
+export function biasTestWithReferenceUncertainty(
+  measured: number[],
+  reference: number[],
+  alpha = 0.05,
+  confidence = 0.95,
+  referenceUncertainty = 0,
+  referenceDof: number | null = null,
+): BiasResult {
+  if (!(referenceUncertainty >= 0) || !Number.isFinite(referenceUncertainty)) {
+    throw new Error('A incerteza-padrão da referência deve ser um número não negativo.');
+  }
+  if (
+    referenceDof !== null &&
+    (!(referenceDof > 0) || !Number.isFinite(referenceDof))
+  ) {
+    throw new Error('Os graus de liberdade da referência devem ser positivos.');
+  }
+  return biasCore(measured, reference, alpha, confidence, referenceUncertainty, referenceDof);
+}
+
+function biasCore(
+  measured: number[],
+  reference: number[],
+  alpha: number,
+  confidence: number,
+  referenceUncertainty: number,
+  referenceDof: number | null,
+): BiasResult {
   const n = Math.min(measured.length, reference.length);
   if (n < 2) return emptyBias(alpha, 'São necessários pelo menos 2 pares medido/referência.');
   const diffs = Array.from({ length: n }, (_, i) => measured[i] - reference[i]);
   const md = mean(diffs);
   const sdd = sd(diffs);
   if (!(sdd > 0)) {
+    if (referenceUncertainty > 0) {
+      const df = referenceDof ?? n - 1;
+      const se = referenceUncertainty;
+      const t = md / se;
+      const p = 2 * (1 - tCdf(Math.abs(t), df));
+      const tCrit = tInv(1 - (1 - confidence) / 2, df);
+      const refMean = mean(reference);
+      return {
+        n,
+        meanDifference: md,
+        sdDifference: 0,
+        sem: se,
+        t,
+        df,
+        pValue: p,
+        alpha,
+        ciLow: md - tCrit * se,
+        ciHigh: md + tCrit * se,
+        biasPercent: refMean !== 0 ? (100 * md) / Math.abs(refMean) : null,
+        significant: p < alpha,
+        method: 'Teste t de tendência com incerteza do padrão (H₀: tendência = 0)',
+        reference: 'ISO 5725-4:2020; GUM/JCGM 100:2008; Montgomery & Runger, cap. 9',
+        interpretation:
+          p < alpha
+            ? `Tendência significativa de ${md.toPrecision(4)} incluindo a incerteza do padrão (p = ${p.toFixed(4)}).`
+            : `Não há evidência de tendência significativa incluindo a incerteza do padrão (p = ${p.toFixed(4)}).`,
+        warnings: [
+          'Desvio-padrão das diferenças igual a zero; intervalo baseado apenas na incerteza do padrão.',
+        ],
+      };
+    }
     return {
       n,
       meanDifference: md,
@@ -84,12 +152,31 @@ export function biasTest(
       warnings: ['Desvio-padrão das diferenças igual a zero.'],
     };
   }
-  const se = sdd / Math.sqrt(n);
+  const withinVariance = (sdd * sdd) / n;
+  const referenceVariance = referenceUncertainty * referenceUncertainty;
+  const se =
+    referenceVariance > 0 ? Math.sqrt(withinVariance + referenceVariance) : sdd / Math.sqrt(n);
+  let df = n - 1;
+  if (referenceUncertainty > 0 && referenceDof !== null && referenceDof > 0) {
+    df =
+      (withinVariance + referenceVariance) ** 2 /
+      (withinVariance ** 2 / (n - 1) + referenceVariance ** 2 / referenceDof);
+  }
   const t = md / se;
-  const df = n - 1;
   const p = 2 * (1 - tCdf(Math.abs(t), df));
   const tCrit = tInv(1 - (1 - confidence) / 2, df);
   const refMean = mean(reference);
+  const hasReferenceUncertainty = referenceUncertainty > 0;
+  const ciLow = md - tCrit * se;
+  const ciHigh = md + tCrit * se;
+  const warnings: string[] = [];
+  if (hasReferenceUncertainty) {
+    warnings.push(
+      'Incerteza do padrão incluída no erro-padrão da tendência; o IC reflete a calibração da referência.',
+    );
+  } else if (n < 6) {
+    warnings.push('Amostra pequena: baixo poder para detectar tendência.');
+  }
   return {
     n,
     meanDifference: md,
@@ -99,17 +186,24 @@ export function biasTest(
     df,
     pValue: p,
     alpha,
-    ciLow: md - tCrit * se,
-    ciHigh: md + tCrit * se,
+    ciLow,
+    ciHigh,
     biasPercent: refMean !== 0 ? (100 * md) / Math.abs(refMean) : null,
     significant: p < alpha,
-    method: 'Teste t pareado de tendência (H₀: tendência = 0)',
-    reference: 'ISO 5725-4:2020; Montgomery & Runger, cap. 9',
-    interpretation:
-      p < alpha
+    method: hasReferenceUncertainty
+      ? 'Teste t de tendência com incerteza do padrão (H₀: tendência = 0)'
+      : 'Teste t pareado de tendência (H₀: tendência = 0)',
+    reference: hasReferenceUncertainty
+      ? 'ISO 5725-4:2020; GUM/JCGM 100:2008; Montgomery & Runger, cap. 9'
+      : 'ISO 5725-4:2020; Montgomery & Runger, cap. 9',
+    interpretation: hasReferenceUncertainty
+      ? p < alpha
+        ? `Tendência significativa de ${md.toPrecision(4)} incluindo a incerteza do padrão (IC ${(confidence * 100).toFixed(0)}%: ${ciLow.toPrecision(4)} a ${ciHigh.toPrecision(4)}).`
+        : `Não há evidência de tendência significativa incluindo a incerteza do padrão (p = ${p.toFixed(4)}); IC ${(confidence * 100).toFixed(0)}%: ${ciLow.toPrecision(4)} a ${ciHigh.toPrecision(4)}.`
+      : p < alpha
         ? `Tendência significativa de ${md.toPrecision(4)} (IC ${(confidence * 100).toFixed(0)}%: ${(md - tCrit * se).toPrecision(4)} a ${(md + tCrit * se).toPrecision(4)}).`
         : `Não há evidência de tendência significativa (p = ${p.toFixed(4)}); IC ${(confidence * 100).toFixed(0)}%: ${(md - tCrit * se).toPrecision(4)} a ${(md + tCrit * se).toPrecision(4)}.`,
-    warnings: n < 6 ? ['Amostra pequena: baixo poder para detectar tendência.'] : [],
+    warnings,
   };
 }
 

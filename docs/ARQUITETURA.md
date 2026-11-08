@@ -100,6 +100,8 @@ estat2/
 │     ├─ iso5725.ts           ← repetibilidade/reprodutibilidade
 │     ├─ regression.ts        ← linearidade, WLS, LOD/LOQ
 │     ├─ bias.ts              ← tendência, recuperação, z, En, TOST
+│     ├─ gageBiasLinearity.ts ← tendência por nível + linearidade AIAG
+│     ├─ stability.ts         ← cartas I-MR/X̄-R, alarmes e resolução
 │     ├─ uncertainty.ts       ← GUM + Welch-Satterthwaite
 │     ├─ analysis.ts          ← orquestração genérica da análise
 │     ├─ analysis-types.ts    ← contratos de resultado
