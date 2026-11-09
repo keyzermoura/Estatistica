@@ -830,7 +830,93 @@ Referências: Cohen (1960); Fleiss (1971); Fleiss, Cohen & Everitt (1969);
 Landis & Koch (1977); AIAG MSA 4th ed.; `irr` 0.84.1 (`kappa2`,
 `kappam.fleiss`); `sklearn.metrics.cohen_kappa_score`.
 
-## 13. Incerteza de medição — GUM
+## 13. Conformidade, banda de guarda e riscos
+
+Arquivo: `src/stats/conformity.ts`. A entrada é o valor medido `x`, a
+incerteza-padrão `u`, o fator de abrangência `k`, os limites `LSL`/`USL` (um ou
+ambos) e a regra de decisão. A incerteza expandida é `U = k·u`; a tolerância
+bilateral é `T = USL − LSL`.
+
+### 13.1 Regras de decisão
+
+```
+1. Aceitação simples (w = 0):
+   conforme se LSL ≤ x ≤ USL; não conforme fora.
+
+2. Banda de guarda (w = r·U, r editável, padrão 1):
+   aceitação:    LSL + w ≤ x ≤ USL − w
+   rejeição:     x < LSL − w  ou  x > USL + w
+   indeterminado: demais casos (zona intermediária)
+   Se w > T/2, a zona de aceitação é vazia; o sistema alerta que nenhuma
+   aceitação é possível.
+
+3. Probabilidade de conformidade (normal):
+   P = Φ((USL − x)/u) − Φ((LSL − x)/u)
+   conforme se P ≥ p0; não conforme se P < p0 (p0 editável, padrão 0,95).
+```
+
+Em tolerância unilateral, usa-se `P = Φ((USL − x)/u)` (somente superior) ou
+`P = 1 − Φ((LSL − x)/u)` (somente inferior). Os limites são fechados: `x`
+exatamente em `LSL`, `USL`, `LSL + w` ou `USL − w` pertence à aceitação; `x`
+exatamente em `LSL − w` ou `USL + w` permanece indeterminado.
+
+### 13.2 Riscos específicos
+
+Sob `X_verdadeiro ~ N(x, u²)`, a probabilidade de conformidade condicional é
+
+```
+P_conf(x) = ∫_{LSL}^{USL} φ(t; x, u) dt
+```
+
+O risco específico de falso aceite (se a decisão for aceitar) e o de falso
+rejeite (se a decisão for rejeitar) são
+
+```
+P_FA = 1 − P_conf(x)
+P_FR = P_conf(x)
+```
+
+São riscos **específicos/condicionais** ao valor medido, como em JCGM 106. O
+risco global exigiria uma distribuição a priori do valor verdadeiro e não é
+estimado. Para `u = 0`, a distribuição é degenerada: `P_conf = 1` se `x` está
+dentro dos limites fechados e `0` caso contrário; os riscos tornam-se `0` ou
+`1` e o TUR não é definido.
+
+### 13.3 Métricas relativas à tolerância
+
+```
+TUR/TAR = T/(2U)
+%P/T    = 100·U/T
+U/T     = U/T
+```
+
+`src/lib/criteria.ts` expõe `toleranceMetrics`, as definições `pct_pt`,
+`u_over_t` e `tur` e os limiares sugeridos editáveis: `%P/T ≤ 10%`,
+`U/T ≤ 0,1` e `TUR ≥ 4`. O módulo de conformidade alerta quando `TUR < 4`,
+`U > T/4` ou `%P/T > 10%` (todos editáveis); esses alertas não alteram o
+veredito da regra, que é sempre o da decisão adotada. O `%P/T` desta seção é a
+incerteza expandida relativa à tolerância; ele **não** é o `%P/T` do Gage R&R
+(seção 8.5), calculado como `100·6·σ_GRR/T`.
+
+### 13.4 Veredito de três estados e relatório
+
+```
+conform       → pass
+nonconform    → fail
+indeterminate → warning
+sem dado      → not_evaluated
+```
+
+O bloco `report` do resultado (e as métricas/tabelas) registra a regra adotada,
+o valor `x`, `u`, `k`, `U`, os limites efetivos, a probabilidade `P`, os riscos,
+`TUR/TAR`, `%P/T`, `U/T` e o veredito de três estados. O laudo deve declarar a
+regra de decisão e a incerteza expandida, como exige a ISO/IEC 17025:2017,
+7.8.2.1.
+
+Referências: JCGM 106:2012; ILAC-G8:09/2019; ISO/IEC 17025:2017, 7.8.2.1;
+ISO 14253-1:2017.
+
+## 14. Incerteza de medição — GUM
 
 Arquivo: `src/stats/uncertainty.ts`.
 
@@ -851,7 +937,7 @@ Tipo A: `u = s/√n`, `ν = n−1`. Tipo B normal a partir de incerteza expandid
 usa `ν_eff = 10⁶` e `k ≈ 1,96`. Referências: JCGM 100:2008 (GUM), cláusulas 5
 e G; JCGM 101:2008; EURACHEM/CITAC (2012).
 
-## 14. Como cada parâmetro é calculado e julgado
+## 15. Como cada parâmetro é calculado e julgado
 
 Arquivo de orquestração: `src/stats/analysis.ts`. O critério é procurado pelo
 par `parameter + metric`; o operador pode ser `≥`, `≤` ou `entre`.
@@ -869,14 +955,14 @@ par `parameter + metric`; o operador pode ser `≥`, `≤` ou `entre`.
 | Robustez | maior efeito padronizado entre analista/dia/equipamento/lote e menor `p` | efeito ≤ 2; `p ≥ 0,05` |
 | Incerteza | `U` e `U_rel = 100·U/|x̄|` | `U_rel ≤ 5%`; `U ≤ limite` |
 
-### 14.1 Veredito de um parâmetro
+### 15.1 Veredito de um parâmetro
 
 1. Se não há critério cadastrado para as métricas disponíveis → **não avaliado**.
 2. Se alguma métrica aplicável falha → **não conforme**.
 3. Se todas as métricas aplicáveis passam → **conforme**.
 4. Casos intermediários (parte avaliada, parte sem dado) → **atenção**.
 
-### 14.2 Veredito global
+### 15.2 Veredito global
 
 ```
 se algum parâmetro = não conforme  → não conforme
@@ -889,7 +975,7 @@ O relatório sempre traz a fórmula, o valor, o critério e o veredito de cada
 métrica. O `n` efetivo é o número de medições numéricas válidas; dados ausentes
 são tratados por lista (listwise) e registrados.
 
-## 15. Decisões e suposições registradas
+## 16. Decisões e suposições registradas
 
 - **Confiança** padrão 95%; **poder** padrão 80%; **α** padrão 5% bilateral.
 - **σ esperado**: dado piloto; se ausente, `faixa/6`. É uma suposição explícita
@@ -920,19 +1006,29 @@ são tratados por lista (listwise) e registrados.
   Kappa ponderado exige a ordem ordinal explícita das categorias. O
   delineamento de atributo inclui amostras limítrofes, referência conhecida,
   códigos cegos `A-###` e ordem embaralhada pela semente.
+- **Conformidade**: regra explícita escolhida entre aceitação simples
+  (`w = 0`), banda de guarda (`w = r·U`, `r = 1` padrão) e probabilidade normal
+  (`P ≥ 0,95` padrão); todos os parâmetros são editáveis. Os limites são
+  fechados e a decisão tem três estados (`pass`, `fail`, `warning`). Os riscos
+  são específicos/condicionais ao valor medido (JCGM 106), não globais. Com
+  `u = 0`, os riscos degeneram em 0/1 e o `TUR` fica indefinido. Alertas
+  padrão, editáveis: `TUR/TAR < 4`, `U/T > 0,25` e `%P/T > 10%`. O `TUR/TAR`
+  usa a convenção `T/(2U)`. O `%P/T` da conformidade (`100·U/T`) não se
+  confunde com o `%P/T` do Gage R&R (`100·6·σ_GRR/T`).
 - **Dados faltantes**: análise por lista, com `n` efetivo no relatório.
 - **Aleatorização**: mulberry32 + Fisher–Yates; a semente fica gravada.
 - **Incerteza**: entradas independentes; GUM com Welch–Satterthwaite.
 
-## 16. Testes de referência
+## 17. Testes de referência
 
-`npm test` executa 124 casos: 115 casos estatísticos (18 referências numéricas
+`npm test` executa 150 casos: 136 casos estatísticos (18 referências numéricas
 de `stats.test.ts`, 15 de `gagerr.test.ts`, 33 de `nested.test.ts`, 9 de
 `gageBiasLinearity.test.ts`, 15 de `stability.test.ts`, 24 de
-`attribute.test.ts` e 1 teste de caracterização que congela a saída completa da
-análise analítica anterior à introdução dos perfis de método) e 9 testes de
-infraestrutura de dados (migração versionada, round-trip XLSX/CSV e validações
-do modelo v2). Os principais valores de referência estatísticos:
+`attribute.test.ts`, 21 de `conformity.test.ts` e 1 teste de caracterização que
+congela a saída completa da análise analítica anterior à introdução dos perfis
+de método) e 14 testes de infraestrutura de dados (migração versionada,
+round-trip XLSX/CSV, validações do modelo v2 e métricas relativas à
+tolerância). Os principais valores de referência estatísticos:
 
 | Caso | Referência | Tolerância |
 |---|---|---|
@@ -972,6 +1068,13 @@ do modelo v2). Os principais valores de referência estatísticos:
 | Wilson | `18/20 = (0,6989663548, 0,9721335188)`; `20/20 = (0,8388748419, 1)` | 1e-9 |
 | `p_e = 1` | κ nulo, veredito não avaliado e mensagem explícita | exata |
 | Delineamento de atributo | 12 amostras × 3 avaliadores × 2 réplicas, códigos `A-###`, mesma semente reproduz a ordem | exata |
+| Probabilidade de conformidade | `x = 10`, `u = 0,2`, `[9,5; 10,5]`: `P = Φ(2,5) − Φ(−2,5) = 0,9875806693` | 1e-6 |
+| Risco específico | falso aceite e falso rejeite conferidos por integração de Simpson independente (densidade normal própria) | 1e-6 |
+| Limite de decisão | `x` exatamente em `LSL`/`USL` é conforme; `P = 0,4999997133` na borda bilateral | 1e-6 |
+| Banda de guarda | `U = 0,4`, `r = 1`: `w = 0,4`; aceitação `[9,9; 10,1]`; rejeição fora de `[9,1; 10,9]` | 1e-9 |
+| Banda vazia | `w > T/2` deixa a zona de aceitação vazia e gera alerta de que nenhuma aceitação é possível | exata |
+| `u = 0` | distribuição degenerada: `P = 1` dentro dos limites fechados, `0` fora; riscos `0`/`1`; `TUR` nulo | exata |
+| Métricas de tolerância | `T = 2`, `U = 0,5`: `%P/T = 25%`, `U/T = 0,25`, `TUR/TAR = 2`; `U = 0` → métricas `0` e `TUR` nulo | 1e-12 |
 
 Os testes de referência ficam em `src/stats/__tests__/`; a caracterização da
 análise analítica fica em

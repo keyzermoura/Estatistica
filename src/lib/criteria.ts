@@ -17,6 +17,121 @@ import type {
 import type { MetricDefinition } from '../profiles/types';
 import { fmt } from '../stats/distributions';
 
+/**
+ * Métricas relativas à tolerância compartilhadas pelos perfis.
+ *
+ * `%P/T` e `U/T` medem a incerteza expandida em relação à largura de
+ * tolerância; `TUR/TAR` é a razão de tolerância pela incerteza expandida
+ * (convenção `T/(2U)`). Elas são aditivas: nenhuma métrica analítica existente
+ * é alterada. A distinção em relação ao `%P/T` do Gage R&R (baseado em
+ * `6·σ_GRR`) está registrada em `docs/FORMULAS.md`.
+ */
+export interface ToleranceMetricsInput {
+  /** Limite inferior de tolerância; nulo quando não se aplica. */
+  lsl: number | null | undefined;
+  /** Limite superior de tolerância; nulo quando não se aplica. */
+  usl: number | null | undefined;
+  /** Incerteza expandida U = k·u; nulo quando indisponível. */
+  expandedUncertainty: number | null | undefined;
+}
+
+export interface ToleranceMetrics {
+  /** T = USL − LSL; nulo quando a tolerância não é bilateral. */
+  tolerance: number | null;
+  /** %P/T = 100·U/T; nulo quando T ou U não estão disponíveis. */
+  pctPT: number | null;
+  /** U/T; nulo quando T ou U não estão disponíveis. */
+  uOverT: number | null;
+  /** TUR/TAR = T/(2U); nulo quando T não existe ou U = 0. */
+  tur: number | null;
+}
+
+/** Limiares sugeridos (editáveis) para as métricas relativas à tolerância. */
+export const DEFAULT_TOLERANCE_CRITERIA = Object.freeze({
+  /** %P/T máximo sugerido. */
+  pctPTMaximum: 10,
+  /** U/T máximo sugerido (equivalente a %P/T = 10%). */
+  uOverTMaximum: 0.1,
+  /** TUR/TAR mínimo sugerido, na convenção T/(2U). */
+  turMinimum: 4,
+});
+
+/**
+ * Definições das métricas relativas à tolerância para uso nos perfis.
+ * O perfil decide a quais parâmetros elas se aplicam e pode editar os limites.
+ */
+export const TOLERANCE_METRIC_DEFINITIONS: ReadonlyArray<MetricDefinition> = [
+  {
+    key: 'pct_pt',
+    label: '%P/T (U/T)',
+    unit: '%',
+    suggested: {
+      operator: '<=',
+      limit: DEFAULT_TOLERANCE_CRITERIA.pctPTMaximum,
+      unit: '%',
+    },
+  },
+  {
+    key: 'u_over_t',
+    label: 'U/T',
+    unit: '',
+    suggested: {
+      operator: '<=',
+      limit: DEFAULT_TOLERANCE_CRITERIA.uOverTMaximum,
+      unit: '',
+    },
+  },
+  {
+    key: 'tur',
+    label: 'TUR/TAR',
+    unit: '',
+    suggested: {
+      operator: '>=',
+      limit: DEFAULT_TOLERANCE_CRITERIA.turMinimum,
+      unit: '',
+    },
+  },
+];
+
+function finiteOrNull(value: number | null | undefined, label: string): number | null {
+  if (value === null || value === undefined) return null;
+  if (!Number.isFinite(value)) {
+    throw new Error(`A ${label} deve ser um número finito ou nula.`);
+  }
+  return value;
+}
+
+/**
+ * Calcula `T`, `%P/T`, `U/T` e `TUR/TAR`. Quando falta um dos limites (tolerância
+ * unilateral) ou a incerteza, as métricas que dependem do dado ausente ficam
+ * nulas — nunca se inventa denominador. `U = 0` é um caso limite válido:
+ * `%P/T = U/T = 0`, mas `TUR/TAR` é indefinido (divisão por zero) e fica nulo.
+ */
+export function toleranceMetrics(input: ToleranceMetricsInput): ToleranceMetrics {
+  const lsl = finiteOrNull(input.lsl, 'LSL');
+  const usl = finiteOrNull(input.usl, 'USL');
+  if (lsl !== null && usl !== null && !(lsl < usl)) {
+    throw new Error('A tolerância bilateral exige LSL < USL.');
+  }
+  const expanded = finiteOrNull(input.expandedUncertainty, 'incerteza expandida U');
+  if (expanded !== null && expanded < 0) {
+    throw new Error('A incerteza expandida U não pode ser negativa.');
+  }
+
+  const tolerance = lsl !== null && usl !== null ? usl - lsl : null;
+  if (tolerance === null || expanded === null) {
+    return { tolerance, pctPT: null, uOverT: null, tur: null };
+  }
+
+  const uOverT = expanded / tolerance;
+  return {
+    tolerance,
+    pctPT: 100 * uOverT,
+    uOverT,
+    tur: expanded > 0 ? tolerance / (2 * expanded) : null,
+  };
+}
+
 export function makeCriterion(
   parameter: ParamKey,
   definition: MetricDefinition,

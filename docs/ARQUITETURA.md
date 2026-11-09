@@ -79,8 +79,8 @@ estat2/
 │  │  ├─ seed.ts              ← método/validação de exemplo
 │  │  ├─ export.ts            ← XLSX, CSV, DOCX, PDF, ZIP
 │  │  ├─ report.ts            ← composição do relatório
-│  │  ├─ criteria.ts          ← avaliação de critérios de aceitação
-│  │  ├─ __tests__/           ← migração, planilhas e validações
+│  │  ├─ criteria.ts          ← critérios de aceitação + métricas de tolerância
+│  │  ├─ __tests__/           ← migração, planilhas, validações e critérios
 │  │  └─ utils.ts
 │  ├─ profiles/
 │  │  ├─ types.ts             ← contrato MethodProfile
@@ -103,6 +103,7 @@ estat2/
 │     ├─ gageBiasLinearity.ts ← tendência por nível + linearidade AIAG
 │     ├─ stability.ts         ← cartas I-MR/X̄-R, alarmes e resolução
 │     ├─ attribute.ts         ← Cohen/Fleiss, kappa ponderado, FAR/FRR
+│     ├─ conformity.ts        ← regra de decisão, banda de guarda e riscos
 │     ├─ uncertainty.ts       ← GUM + Welch-Satterthwaite
 │     ├─ analysis.ts          ← orquestração genérica da análise
 │     ├─ analysis-types.ts    ← contratos de resultado
@@ -134,6 +135,13 @@ Desde a migração v2, `methods.family` registra a família do ensaio
 estiverem implementados, `getProfileForMethod` usa o perfil analítico como
 fallback para não quebrar telas; métodos migrados de versões anteriores são
 lidos como `analytical`.
+
+O módulo `src/stats/conformity.ts` é autônomo e entrega um bloco `report` com
+regra, valor, `U`, `k`, limites efetivos e veredito. Ele ainda não altera
+`ValidationAnalysis` nem os perfis existentes; a integração por perfil e a
+seção de conformidade do laudo entram nos Prompts 8–10. As métricas `%P/T`,
+`U/T` e `TUR/TAR` ficam em `src/lib/criteria.ts` e são aditivas: nenhuma
+métrica analítica anterior muda.
 
 ## 3. Modelo de dados (SQLite)
 
@@ -231,6 +239,10 @@ registrada no relatório. Os padrões abaixo são apenas recomendações iniciai
 | Componentes de variância | método dos momentos (ANOVA) para balanceado; REML para 1 fator | Coincide com ISO 5725-2 no caso balanceado |
 | ISO 5725-2 | p laboratórios × n replicatas × q níveis, balanceado | s_r² = MSW; s_L² = (MSB−MSW)/n; s_R² = s_r²+s_L²; pooling por nível |
 | Incerteza | GUM, entradas independentes | Tipo A = s/√n; Tipo B conforme distribuição; k=2 ou t(ν_eff) |
+| Conformidade | aceitação simples, banda de guarda (`r=1`) ou probabilidade normal (`P≥0,95`) | Regra explícita e editável (ISO/IEC 17025, 7.8.2.1); limites fechados; três estados (conforme/não conforme/indeterminado). Riscos são específicos ao valor medido (JCGM 106), não globais |
+| Alertas de tolerância | `TUR/TAR ≥ 4`, `U/T ≤ 0,25`, `%P/T ≤ 10%` | Limiares editáveis e apenas informativos; não mudam a decisão da regra. `TUR/TAR = T/(2U)`; `%P/T = 100·U/T` é distinto do `%P/T` do Gage R&R |
+| Banda de guarda | `w = r·U`; se `w > T/2`, alerta de zona de aceitação vazia | `x` em `LSL+w`/`USL−w` é conforme; em `LSL−w`/`USL+w` é indeterminado; nenhum valor é corrigido automaticamente |
+| `u = 0` na conformidade | riscos degenerados (0 ou 1); `TUR` nulo | Caso limite registrado, com alerta explícito; não se inventa denominador |
 | Dados faltantes | análise por lista (listwise) com aviso | O delineamento e o relatório registram o n efetivo |
 | Aleatorização | PRNG determinístico (mulberry32) com semente | Semente fica gravada; mesma semente → mesma ordem |
 | z-score / En | z = (x−x_ref)/σ_pt; En = (x−x_ref)/√(u_lab²+u_ref²) | Quando aplicável a proficiência (ISO 17043/13528) |
@@ -269,6 +281,11 @@ critério cadastrado).
 - Shapiro-Wilk, Grubbs, Bartlett/Levene contra valores publicados;
 - regressão linear e LD/LQ contra cálculo manual;
 - orçamento GUM (exemplo de incerteza combinada e Welch-Satterthwaite);
+- conformidade contra valores exatos de Φ, com riscos específicos conferidos por
+  integração numérica independente (tolerância 1e-6), incluindo bordas `x` no
+  limite, `u = 0` e banda de guarda maior que a tolerância;
+- métricas `%P/T`, `U/T` e `TUR/TAR` contra cálculo direto e casos sem
+  denominador;
 - aleatorização reprodutível (mesma semente → mesma sequência);
 - caracterização da saída analítica original (snapshot completo, sem `-u`),
   protegendo o comportamento existente durante a evolução por perfis;
