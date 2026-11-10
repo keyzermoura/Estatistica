@@ -5,6 +5,7 @@ import type { ValidationBundle } from '../lib/types';
 import { STATUS_LABELS } from '../lib/types';
 import { getBundle, setValidationStep } from '../lib/repository';
 import { analyzeValidation } from '../stats/analysis';
+import { getProfileForMethod } from '../profiles/index';
 import { useApp } from '../lib/app-context';
 import { formatDate } from '../lib/utils';
 import { Stepper, WIZARD_STEPS } from '../components/wizard';
@@ -86,6 +87,8 @@ export function ValidationWizard() {
 
   const analysis = useMemo(() => {
     if (!bundle) return null;
+    const profile = getProfileForMethod(bundle.method);
+    const dimensional = profile.id === 'dimensional';
     return analyzeValidation(
       bundle.parameters,
       bundle.measurements,
@@ -98,6 +101,19 @@ export function ValidationWizard() {
         uncertaintyItems: bundle.uncertainty,
         rangeMin: bundle.method.rangeMin,
         rangeMax: bundle.method.rangeMax,
+        profileId: profile.id,
+        lsl: bundle.method.lsl,
+        usl: bundle.method.usl,
+        resolution: bundle.method.resolution,
+        unit: bundle.method.unit,
+        conformity: dimensional
+          ? {
+              rule: 'guard_band',
+              coverageFactor: 2,
+              guardBandFactor: 1,
+              probabilityThreshold: 0.95,
+            }
+          : undefined,
       },
     );
   }, [bundle]);

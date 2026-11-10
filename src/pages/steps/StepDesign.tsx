@@ -12,7 +12,12 @@ import {
 import type { DesignInput, DesignPlan } from '../../lib/types';
 import { DEFAULT_DESIGN_INPUT } from '../../lib/types';
 import { getProfileForMethod } from '../../profiles/index';
-import { buildDesign, rerandomize, sigmaFromRange } from '../../stats/design';
+import {
+  buildDesign,
+  rerandomize,
+  sigmaFromRange,
+  sigmaFromTolerance,
+} from '../../stats/design';
 import { saveDesign, updateValidation } from '../../lib/repository';
 import { fmt } from '../../stats/distributions';
 import { PowerCurveChart } from '../../components/charts';
@@ -46,16 +51,27 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
   const toast = useToast();
   const locked = bundle.validation.locked;
   const profile = getProfileForMethod(bundle.method);
-  const defaultInput = (): DesignInput => ({
-    ...DEFAULT_DESIGN_INPUT,
-    confidence: profile.defaultAssumptions.confidence,
-    power: profile.defaultAssumptions.power,
-    alpha: profile.defaultAssumptions.alpha,
-    sigma: profile.defaultAssumptions.sigma,
-    effect: profile.defaultAssumptions.minimumEffect,
-    margin: profile.defaultAssumptions.tostMargin,
-    seed: Date.now() % 1000000,
-  });
+  const defaultInput = (): DesignInput => {
+    const template = profile.defaultDesignType
+      ? profile.designTemplates.find(
+          (candidate) => candidate.designType === profile.defaultDesignType,
+        )
+      : undefined;
+    return {
+      ...DEFAULT_DESIGN_INPUT,
+      ...(template?.defaults ?? {}),
+      ...(profile.defaultDesignType
+        ? { designType: profile.defaultDesignType }
+        : {}),
+      confidence: profile.defaultAssumptions.confidence,
+      power: profile.defaultAssumptions.power,
+      alpha: profile.defaultAssumptions.alpha,
+      sigma: profile.defaultAssumptions.sigma,
+      effect: profile.defaultAssumptions.minimumEffect,
+      margin: profile.defaultAssumptions.tostMargin,
+      seed: Date.now() % 1000000,
+    };
+  };
   const storedInput = (): DesignInput => {
     const stored = bundle.design?.input;
     return stored ? { ...DEFAULT_DESIGN_INPUT, ...stored } : defaultInput();
@@ -68,6 +84,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
       bundle.design?.plan ??
       buildDesign(input, {
         selected: bundle.parameters.filter((parameter) => parameter.selected).map((parameter) => parameter.key),
+        profileId: profile.id,
       }),
   );
   const [saving, setSaving] = useState(false);
@@ -84,6 +101,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
           selected: bundle.parameters
             .filter((parameter) => parameter.selected)
             .map((parameter) => parameter.key),
+          profileId: profile.id,
         }),
     );
     setDirty(false);
@@ -126,29 +144,54 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
   const recalculate = () => {
     const normalized = normalizedInput();
     setInput(normalized);
-    setPlan(buildDesign(normalized, { selected: selectedKeys }));
+    setPlan(buildDesign(normalized, { selected: selectedKeys, profileId: profile.id }));
     setDirty(true);
     toast.push('Plano recalculado. Salve para registrar esta versão.');
   };
 
   const applyRangeSigma = () => {
+    const divisor = profile.defaultAssumptions.sigmaFromRangeDivisor;
     const sigma = sigmaFromRange(
       bundle.method.rangeMin,
       bundle.method.rangeMax,
-      profile.defaultAssumptions.sigmaFromRangeDivisor,
+      divisor,
     );
     if (sigma === null) {
       toast.push('Informe a faixa mínima e máxima do método para estimar σ.', 'danger');
       return;
     }
-    update('sigma', Number(sigma.toPrecision(4)));
+    setInput((prev) => ({
+      ...prev,
+      sigma: Number(sigma.toPrecision(4)),
+      sigmaSource: `faixa/${divisor} (${fmt(bundle.method.rangeMin)} – ${fmt(bundle.method.rangeMax)} ${bundle.method.unit})`,
+    }));
+    setDirty(true);
     toast.push(`σ estimado pela faixa: ${fmt(sigma)}. Recalcule o plano.`);
+  };
+
+  const applyToleranceSigma = () => {
+    const divisor = profile.sigmaFromToleranceDivisor ?? 6;
+    const sigma = sigmaFromTolerance(bundle.method.lsl, bundle.method.usl, divisor);
+    if (sigma === null) {
+      toast.push('Informe LSL e USL (com USL > LSL) para estimar σ = T/6.', 'danger');
+      return;
+    }
+    setInput((prev) => ({
+      ...prev,
+      sigma: Number(sigma.toPrecision(4)),
+      sigmaSource: `T/${divisor} (T = ${fmt((bundle.method.usl ?? 0) - (bundle.method.lsl ?? 0))} ${bundle.method.unit})`,
+    }));
+    setDirty(true);
+    toast.push(`σ estimado pela tolerância: ${fmt(sigma)}. Recalcule o plano.`);
   };
 
   const persist = (): boolean => {
     if (locked) return false;
     const normalized = normalizedInput();
-    const nextPlan = buildDesign(normalized, { selected: selectedKeys });
+    const nextPlan = buildDesign(normalized, {
+      selected: selectedKeys,
+      profileId: profile.id,
+    });
     setSaving(true);
     try {
       saveDesign(
@@ -187,16 +230,31 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
       description="Converta o objetivo estatístico em um plano executável: confiança, poder, σ, efeito mínimo, margem, fatores, níveis e aleatorização reprodutível."
       locked={locked}
       help={
-        <>
-          <p>
-            σ é o desvio-padrão esperado do método. Se ainda não houver dado piloto, use faixa/6 e
-            registre essa suposição no relatório.
-          </p>
-          <p className="mt-1">
-            O cálculo usa poder para teste t bilateral, precisão do IC da média, TOST, razão de
-            variâncias e ISO 5725-2, conforme o parâmetro.
-          </p>
-        </>
+        profile.id === 'dimensional' ? (
+          <>
+            <p>
+              O delineamento recomendado é o <strong>Gage R&amp;R cruzado</strong>: as mesmas peças
+              são medidas por todos os operadores, com réplicas independentes e ordem
+              aleatorizada pela semente.
+            </p>
+            <p className="mt-1">
+              Use <strong>10 peças</strong> cobrindo a variação real do processo, 3 operadores e
+              2–3 réplicas. Se ainda não houver dado piloto, estime σ por{' '}
+              <strong>T/6</strong> — a suposição fica registrada no relatório.
+            </p>
+          </>
+        ) : (
+          <>
+            <p>
+              σ é o desvio-padrão esperado do método. Se ainda não houver dado piloto, use
+              faixa/6 e registre essa suposição no relatório.
+            </p>
+            <p className="mt-1">
+              O cálculo usa poder para teste t bilateral, precisão do IC da média, TOST, razão de
+              variâncias e ISO 5725-2, conforme o parâmetro.
+            </p>
+          </>
+        )
       }
       aside={
         <div className="flex flex-wrap gap-2">
@@ -235,6 +293,15 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
         <Stat label="Execuções" value={plan.runs.length} hint="ordem aleatorizada" icon={<Dices className="h-5 w-5" />} tone="neutral" />
         <Stat label="Níveis" value={plan.recommended.levels} hint={levelsText || '—'} icon={<Beaker className="h-5 w-5" />} />
         <Stat label="Semente" value={<span className="font-mono text-lg">{input.seed}</span>} hint="reproduz a ordem de execução" icon={<Sparkles className="h-5 w-5" />} tone="warning" />
+        {input.designType === 'gage_rr' ? (
+          <Stat
+            label="Peças"
+            value={plan.recommended.samples}
+            hint={`${plan.recommended.analysts} operadores · ${plan.recommended.replicates} réplicas`}
+            icon={<Beaker className="h-5 w-5" />}
+            tone="neutral"
+          />
+        ) : null}
         {plan.specimenConsumption ? (
           <Stat
             label="Corpos de prova"
@@ -253,9 +320,16 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
             description="Os padrões são recomendações; qualquer alteração fica registrada."
             icon={<Calculator className="h-4 w-4" />}
             action={
-              <Button variant="outline" size="sm" onClick={applyRangeSigma}>
-                σ = faixa/{profile.defaultAssumptions.sigmaFromRangeDivisor}
-              </Button>
+              <div className="flex flex-wrap gap-1.5">
+                <Button variant="outline" size="sm" onClick={applyRangeSigma}>
+                  σ = faixa/{profile.defaultAssumptions.sigmaFromRangeDivisor}
+                </Button>
+                {profile.sigmaFromToleranceDivisor ? (
+                  <Button variant="outline" size="sm" onClick={applyToleranceSigma}>
+                    σ = T/{profile.sigmaFromToleranceDivisor}
+                  </Button>
+                ) : null}
+              </div>
             }
           />
           <CardBody className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -278,7 +352,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
             <Input label="Confiança" type="number" step="0.01" min="0.5" max="0.999" value={input.confidence} disabled={locked} onChange={(e) => update('confidence', Number(e.target.value))} />
             <Input label="Poder" type="number" step="0.01" min="0.5" max="0.99" value={input.power} disabled={locked} onChange={(e) => update('power', Number(e.target.value))} />
             <Input label="α (bilateral)" type="number" step="0.01" min="0.001" max="0.2" value={input.alpha} disabled={locked} onChange={(e) => update('alpha', Number(e.target.value))} />
-            <Input label="σ esperado" type="number" step="any" value={input.sigma} disabled={locked} onChange={(e) => update('sigma', Number(e.target.value))} />
+            <Input label="σ esperado" type="number" step="any" value={input.sigma} disabled={locked} onChange={(e) => update('sigma', Number(e.target.value))} hint={input.sigmaSource ? `Origem: ${input.sigmaSource}` : 'Dado piloto; sem piloto use T/6 ou faixa/6 e registre.'} />
             <Input label="Efeito mínimo detectável" type="number" step="any" value={input.effect} disabled={locked} onChange={(e) => update('effect', Number(e.target.value))} />
             <Input label="Margem de equivalência (TOST)" type="number" step="any" value={input.margin} disabled={locked} onChange={(e) => update('margin', Number(e.target.value))} />
             <Input label="Precisão alvo (semi-amplitude)" type="number" step="any" value={input.targetPrecision} disabled={locked} onChange={(e) => update('targetPrecision', Number(e.target.value))} />
@@ -296,13 +370,20 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               label={
                 input.designType === 'attribute_agreement'
                   ? 'Amostras (total, incluindo limítrofes)'
-                  : 'Amostras (aninhado)'
+                  : input.designType === 'gage_rr'
+                    ? 'Peças (Gage R&R)'
+                    : 'Amostras (aninhado)'
               }
               type="number"
               min="2"
               value={input.nSamples}
               disabled={locked}
               onChange={(e) => update('nSamples', Number(e.target.value))}
+              hint={
+                input.designType === 'gage_rr'
+                  ? 'Use 10 peças cobrindo a variação real do processo, não só a tolerância.'
+                  : undefined
+              }
             />
             {input.designType === 'attribute_agreement' ? (
               <Input
@@ -446,7 +527,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               onClick={() => {
                 const nextSeed = Math.floor(Math.random() * 1_000_000);
                 const next = { ...plan, input: { ...plan.input, seed: nextSeed } };
-                setPlan(rerandomize(next, nextSeed));
+                setPlan(rerandomize(next, nextSeed, profile.id));
                 setInput((prev) => ({ ...prev, seed: nextSeed }));
                 setDirty(true);
                 toast.push(`Nova ordem aleatorizada com semente ${nextSeed}.`);
@@ -521,6 +602,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
                 <th>Equipamento</th>
                 <th>Lote</th>
                 <th>Amostra</th>
+                {plan.runs.some((run) => run.partId) ? <th>Peça</th> : null}
                 {plan.runs.some((run) => run.specimen) ? <th>Corpo de prova</th> : null}
                 <th>Réplica</th>
                 <th>Combinação</th>
@@ -536,6 +618,9 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
                   <td>{run.equipment || '—'}</td>
                   <td>{run.lot || '—'}</td>
                   <td>{run.sample || '—'}</td>
+                  {plan.runs.some((item) => item.partId) ? (
+                    <td className="font-mono text-xs">{run.partId || '—'}</td>
+                  ) : null}
                   {plan.runs.some((item) => item.specimen) ? (
                     <td className="font-mono text-xs">{run.specimen || '—'}</td>
                   ) : null}

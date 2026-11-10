@@ -51,7 +51,13 @@ export type ParamKey =
   | 'reproducibility'
   | 'accuracy'
   | 'robustness'
-  | 'uncertainty';
+  | 'uncertainty'
+  // Parâmetros do perfil dimensional (Prompt 8). `linearity`, `repeatability`,
+  // `reproducibility` e `uncertainty` são compartilhados com o perfil analítico.
+  | 'resolution'
+  | 'bias'
+  | 'stability'
+  | 'conformity';
 
 export type DesignType =
   | 'crd'
@@ -61,7 +67,9 @@ export type DesignType =
   | 'nested'
   | 'nested_destructive'
   | 'iso5725'
-  | 'attribute_agreement';
+  | 'attribute_agreement'
+  /** Gage R&R cruzado: peças × operadores × réplicas (Prompt 8). */
+  | 'gage_rr';
 
 export type SampleSizeMethod =
   | 'mean_ci'
@@ -166,6 +174,8 @@ export interface DesignInput {
   alpha: number;
   beta: number;
   sigma: number;
+  /** Origem do σ (dado piloto, T/6, manual); registrada nos pressupostos. */
+  sigmaSource?: string;
   effect: number;
   margin: number;
   targetPrecision: number;
@@ -220,6 +230,8 @@ export interface RunRow {
   lot: string;
   sample: string;
   replicate: number;
+  /** Peça/parte do estudo Gage R&R (delineamento dimensional). */
+  partId?: string;
   /** Identificação do corpo de prova em delineamentos destrutivos. */
   specimen?: string;
   combination: string;

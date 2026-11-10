@@ -7,6 +7,7 @@ import type {
   ValidationParameter,
 } from '../../lib/types';
 import { analyzeValidation } from '../analysis';
+import type { AnalyticalParamKey } from '../../profiles/analytical';
 
 /**
  * Caracterização do comportamento anterior à introdução dos perfis de método.
@@ -65,7 +66,7 @@ function fixtureMeasurements(): Measurement[] {
 }
 
 function fixtureParameters(): ValidationParameter[] {
-  const selected: ParamKey[] = [
+  const selected: AnalyticalParamKey[] = [
     'selectivity',
     'linearity',
     'working_range',
@@ -77,7 +78,7 @@ function fixtureParameters(): ValidationParameter[] {
     'robustness',
     'uncertainty',
   ];
-  const criteriaByParameter: Record<ParamKey, AcceptanceCriterion[]> = {
+  const criteriaByParameter: Record<AnalyticalParamKey, AcceptanceCriterion[]> = {
     selectivity: criteria('selectivity', [
       ['interferenceRecovery', 'between', 90, 110],
       ['resolution', '>=', 1.5],

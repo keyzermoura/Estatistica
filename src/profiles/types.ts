@@ -84,4 +84,8 @@ export interface MethodProfile {
   suggestedParameters: (methodType: MethodType, validationType: ValidationType) => ParamKey[];
   /** Critérios iniciais para um método criado pelo painel. */
   defaultMethodCriteria: AcceptanceCriterion[];
+  /** Divisor de T = USL − LSL para estimar σ quando não há dado piloto. */
+  sigmaFromToleranceDivisor?: number;
+  /** Tipo de delineamento sugerido ao criar o plano do perfil. */
+  defaultDesignType?: DesignType;
 }

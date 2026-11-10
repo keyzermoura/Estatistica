@@ -15,7 +15,7 @@ import {
   VALIDATION_TYPE_LABELS,
 } from '../../lib/types';
 import { saveMethod, updateValidation } from '../../lib/repository';
-import { getProfileForMethod } from '../../profiles/index';
+import { getProfileForFamily } from '../../profiles/index';
 import { parseNumber } from '../../lib/utils';
 import { CriteriaTable } from '../../components/CriteriaTable';
 import { StepShell } from '../../components/wizard';
@@ -36,9 +36,9 @@ import type { StepProps } from './types';
 export function StepMethod({ bundle, goTo, reload }: StepProps) {
   const toast = useToast();
   const locked = bundle.validation.locked;
-  const profile = getProfileForMethod(bundle.method);
   const [method, setMethod] = useState<Method>(bundle.method);
   const [validation, setValidation] = useState<Validation>(bundle.validation);
+  const profile = getProfileForFamily(method.family);
   const [criteriaParameter, setCriteriaParameter] = useState<ParamKey>(
     profile.defaultMethodCriteria[0]?.parameter ?? profile.parameters[0]!.key,
   );
@@ -49,12 +49,26 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
     setValidation(bundle.validation);
   }, [bundle.method, bundle.validation]);
 
+  useEffect(() => {
+    if (!profile.parameters.some((parameter) => parameter.key === criteriaParameter)) {
+      setCriteriaParameter(
+        profile.defaultMethodCriteria[0]?.parameter ?? profile.parameters[0]!.key,
+      );
+    }
+  }, [profile, criteriaParameter]);
+
   const methodCriteria = useMemo(
     () => method.criteria.filter((criterion) => criterion.parameter === criteriaParameter),
     [method.criteria, criteriaParameter],
   );
 
   const showTolerance = method.family !== 'analytical' && method.family !== 'attribute';
+  const tolerance =
+    method.lsl !== null &&
+    method.usl !== null &&
+    method.usl > method.lsl
+      ? method.usl - method.lsl
+      : null;
 
   const setCriteria = (criteria: AcceptanceCriterion[]) => {
     setMethod((prev) => ({
@@ -151,6 +165,26 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
         </Alert>
       ) : null}
 
+      {method.family === 'dimensional' ? (
+        <Alert tone="info" title="Perfil dimensional: o que preencher">
+          <p>
+            <strong>LSL</strong> e <strong>USL</strong> são os limites de tolerância da peça
+            (menor e maior valor aceitável). A tolerância é{' '}
+            <strong>T = USL − LSL</strong>
+            {tolerance === null ? '; informe os dois limites para calculá-la.' : ` = ${tolerance}.`}
+          </p>
+          <p className="mt-1">
+            A <strong>resolução</strong> é a menor diferença que o instrumento consegue mostrar
+            (por exemplo, 0,01 mm). Ela deve ser no máximo 10% da tolerância; caso contrário, o
+            sistema não distingue peças conformes de não conformes com segurança.
+          </p>
+          <p className="mt-1">
+            A <strong>unidade</strong> deve ser a mesma de LSL, USL, resolução e das medições
+            (por exemplo, mm). O relatório usa essa unidade em todas as tabelas.
+          </p>
+        </Alert>
+      ) : null}
+
       <Card>
         <CardHeader
           title="Identificação do método"
@@ -227,6 +261,11 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
             disabled={locked}
             onChange={(e) => setMethod({ ...method, unit: e.target.value })}
             placeholder="mg/L"
+            hint={
+              method.family === 'dimensional'
+                ? 'Use a mesma unidade de LSL, USL, resolução e medições (ex.: mm).'
+                : undefined
+            }
           />
           <Input
             label="Equipamento principal"
@@ -267,7 +306,11 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
                 value={method.lsl ?? ''}
                 disabled={locked}
                 onChange={(e) => setMethod({ ...method, lsl: parseNumber(e.target.value) })}
-                hint="Deve ser menor que o USL."
+                hint={
+                  method.family === 'dimensional'
+                    ? 'Menor valor aceitável da peça. Deve ser menor que o USL.'
+                    : 'Deve ser menor que o USL.'
+                }
               />
               <Input
                 label="USL — limite superior"
@@ -276,6 +319,11 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
                 value={method.usl ?? ''}
                 disabled={locked}
                 onChange={(e) => setMethod({ ...method, usl: parseNumber(e.target.value) })}
+                hint={
+                  method.family === 'dimensional'
+                    ? `Maior valor aceitável da peça. T = USL − LSL${tolerance === null ? '' : ` = ${tolerance}`}.`
+                    : undefined
+                }
               />
               <Input
                 label="Resolução"
@@ -286,7 +334,11 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
                 onChange={(e) =>
                   setMethod({ ...method, resolution: parseNumber(e.target.value) })
                 }
-                hint="Menor incremento distinguível do instrumento."
+                hint={
+                  method.family === 'dimensional'
+                    ? 'Menor incremento mostrado pelo instrumento; deve ser ≤ 10% de T.'
+                    : 'Menor incremento distinguível do instrumento.'
+                }
               />
               <Input
                 label="Unidade da tolerância"

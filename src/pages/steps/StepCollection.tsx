@@ -52,7 +52,7 @@ function blankMeasurement(bundle: StepProps['bundle'], index: number): Measureme
     equipment: run?.equipment ?? '',
     lot: run?.lot ?? '',
     sample: run?.sample ?? '',
-    partId: '',
+    partId: run?.partId ?? '',
     specimen: '',
     destructive: false,
     condition: null,
@@ -70,6 +70,7 @@ function blankMeasurement(bundle: StepProps['bundle'], index: number): Measureme
 export function StepCollection({ bundle, goTo, reload }: StepProps) {
   const toast = useToast();
   const locked = bundle.validation.locked;
+  const dimensional = bundle.method.family === 'dimensional';
   const [measurements, setMeasurements] = useState<Measurement[]>(bundle.measurements);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -114,8 +115,25 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
     }
     const counts = [...byAnalyst.values()];
     const unbalanced = counts.length > 1 && Math.max(...counts) !== Math.min(...counts);
-    return { numeric, textual, missing, levels, references, outside, byAnalyst, unbalanced };
-  }, [measurements, bundle.method.rangeMin, bundle.method.rangeMax]);
+    const missingParts = dimensional
+      ? numeric.filter(
+          (row) =>
+            !(row.partId ?? '').trim() &&
+            (row.refValue === null || row.refValue === undefined),
+        ).length
+      : 0;
+    return {
+      numeric,
+      textual,
+      missing,
+      levels,
+      references,
+      outside,
+      byAnalyst,
+      unbalanced,
+      missingParts,
+    };
+  }, [measurements, bundle.method.rangeMin, bundle.method.rangeMax, dimensional]);
 
   const fillFromPlan = () => {
     if (!bundle.design?.plan.runs.length) {
@@ -132,7 +150,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
       equipment: run.equipment,
       lot: run.lot,
       sample: run.sample,
-      partId: '',
+      partId: run.partId ?? '',
       specimen: '',
       destructive: false,
       condition: null,
@@ -217,6 +235,14 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
             A referência tem prioridade sobre o nível numérico na avaliação de tendência e
             recuperação.
           </p>
+          {dimensional ? (
+            <p className="mt-1">
+              No perfil dimensional, <strong>Peça</strong> identifica a peça do Gage R&amp;R e{' '}
+              <strong>Valor de referência</strong> é o valor aceito do padrão (usado em
+              tendência/linearidade e estabilidade). A coluna “Referência” continua disponível
+              para o valor nominal de exatidão.
+            </p>
+          ) : null}
         </>
       }
       aside={
@@ -224,6 +250,9 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
           <Badge tone="brand">{measurements.length} registro(s)</Badge>
           {quality.missing ? <Badge tone="warning">{quality.missing} sem valor</Badge> : null}
           {quality.outside.length ? <Badge tone="danger">{quality.outside.length} fora da faixa</Badge> : null}
+          {dimensional && quality.missingParts ? (
+            <Badge tone="warning">{quality.missingParts} sem peça</Badge>
+          ) : null}
         </div>
       }
       footer={
@@ -259,6 +288,14 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
         <Alert tone="warning" title="Desbalanceamento entre analistas/laboratórios">
           {[...quality.byAnalyst.entries()].map(([name, count]) => `${name}: ${count}`).join(' · ')}. A ANOVA e a
           decomposição de variância podem exigir aproximação; o relatório registrará a limitação.
+        </Alert>
+      ) : null}
+
+      {dimensional && quality.missingParts ? (
+        <Alert tone="warning" title="Medições sem peça">
+          {quality.missingParts} medição(ões) numérica(s) não têm identificação de peça e não
+          entram no Gage R&amp;R. Preencha a coluna “Peça” ou use um valor de referência se a
+          linha for de tendência/estabilidade.
         </Alert>
       ) : null}
 
@@ -306,7 +343,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
           }
         />
         <div className="max-h-[620px] overflow-auto">
-          <table className="w-full min-w-[1180px] border-collapse text-xs">
+          <table className={`w-full ${dimensional ? 'min-w-[1560px]' : 'min-w-[1320px]'} border-collapse text-xs`}>
             <thead className="sticky top-0 z-10 bg-ink-50 dark:bg-ink-900">
               <tr className="text-left text-[10px] uppercase tracking-wide text-ink-500">
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Ordem</th>
@@ -316,9 +353,16 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Equip.</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Lote</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Amostra</th>
+                <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Peça</th>
                 <th className="border-b border-ink-200 px-2 py-2 text-center dark:border-ink-800">Rep.</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Valor</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Referência</th>
+                {dimensional ? (
+                  <>
+                    <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Valor ref. padrão</th>
+                    <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Incerteza ref.</th>
+                  </>
+                ) : null}
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Texto</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Notas</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800" />
@@ -327,7 +371,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
             <tbody>
               {measurements.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="px-3 py-10 text-center text-sm text-ink-500">
+                  <td colSpan={dimensional ? 16 : 14} className="px-3 py-10 text-center text-sm text-ink-500">
                     Nenhum dado. Adicione uma linha, preencha pelo plano ou importe uma planilha.
                   </td>
                 </tr>
@@ -362,6 +406,9 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                       <input className={`${inputClass} w-28`} value={row.sample} disabled={locked} onChange={(e) => patch(row.id, { sample: e.target.value })} />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
+                      <input className={`${inputClass} w-20 font-mono`} value={row.partId ?? ''} disabled={locked} onChange={(e) => patch(row.id, { partId: e.target.value })} placeholder="P-01" />
+                    </td>
+                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input
                         type="number"
                         className={`${inputClass} w-14 text-center`}
@@ -391,6 +438,34 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                         placeholder="—"
                       />
                     </td>
+                    {dimensional ? (
+                      <>
+                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
+                          <input
+                            type="number"
+                            step="any"
+                            className={`${inputClass} w-24`}
+                            value={row.refValue ?? ''}
+                            disabled={locked}
+                            onChange={(e) => patch(row.id, { refValue: parseNumber(e.target.value) })}
+                            placeholder="—"
+                          />
+                        </td>
+                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
+                          <input
+                            type="number"
+                            step="any"
+                            className={`${inputClass} w-24`}
+                            value={row.refUncertainty ?? ''}
+                            disabled={locked}
+                            onChange={(e) =>
+                              patch(row.id, { refUncertainty: parseNumber(e.target.value) })
+                            }
+                            placeholder="U_ref"
+                          />
+                        </td>
+                      </>
+                    ) : null}
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input className={`${inputClass} w-32`} value={row.textValue} disabled={locked} onChange={(e) => patch(row.id, { textValue: e.target.value })} placeholder="positivo/negativo" />
                     </td>

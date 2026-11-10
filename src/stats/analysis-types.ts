@@ -21,6 +21,7 @@ import type { RegressionResult } from './regression';
 import type { NormalityResult } from './normality';
 import type { HomogeneityResult } from './variance';
 import type { UncertaintyResult } from './uncertainty';
+import type { ConformityCriteria, ConformityRule } from './conformity';
 
 export interface AnalysisMetric {
   key: string;
@@ -107,6 +108,38 @@ export interface AnalysisOptions {
   rangeMax?: number | null;
   /** Perfil de método ativo. Ausente = perfil analítico. */
   profileId?: string;
+  /** Limite inferior de tolerância (dimensional). */
+  lsl?: number | null;
+  /** Limite superior de tolerância (dimensional). */
+  usl?: number | null;
+  /** Menor incremento distinguível do sistema de medição. */
+  resolution?: number | null;
+  /** Unidade do mensurando, usada apenas para exibição. */
+  unit?: string;
+  /** Variação do processo (6σ), quando conhecida. */
+  processVariation?: number | null;
+  /** Regra de decisão de conformidade e dados do valor medido. */
+  conformity?: DimensionalConformityOptions;
+}
+
+/** Parâmetros da avaliação de conformidade do perfil dimensional. */
+export interface DimensionalConformityOptions {
+  rule?: ConformityRule;
+  /** Fator de abrangência k; U = k·u. Padrão 2. */
+  coverageFactor?: number;
+  /** r em w = r·U (regra de banda de guarda). */
+  guardBandFactor?: number;
+  /** Limiar de probabilidade (regra de probabilidade). */
+  probabilityThreshold?: number;
+  /** Limiares de alerta e de decisão editáveis. */
+  criteria?: Partial<ConformityCriteria>;
+  /** Valor medido; ausente = média das medições de peças. */
+  value?: number | null;
+  /** Incerteza-padrão; ausente = incerteza combinada do orçamento GUM. */
+  standardUncertainty?: number | null;
+  /** Limites que sobrepõem `lsl`/`usl` globais. */
+  lsl?: number | null;
+  usl?: number | null;
 }
 
 /**

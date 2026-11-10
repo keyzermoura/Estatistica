@@ -50,6 +50,7 @@ export type {
   AnalysisModuleInput,
   AnalysisOptions,
   AnalysisTable,
+  DimensionalConformityOptions,
   ParameterAnalysis,
   QcSummary,
   ValidationAnalysis,

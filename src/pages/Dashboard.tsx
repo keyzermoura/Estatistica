@@ -27,7 +27,7 @@ import {
   VALIDATION_TYPE_LABELS,
 } from '../lib/types';
 import { formatDate, uid } from '../lib/utils';
-import { DEFAULT_PROFILE_ID, getProfile } from '../profiles/index';
+import { getProfileForFamily } from '../profiles/index';
 import {
   Alert,
   Badge,
@@ -130,7 +130,7 @@ export function Dashboard() {
     try {
       const id = uid('method');
       const now = new Date().toISOString();
-      const profile = getProfile(DEFAULT_PROFILE_ID);
+      const profile = getProfileForFamily(form.family);
       const method: Method = {
         id,
         code: form.code.trim(),

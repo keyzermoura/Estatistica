@@ -23,7 +23,7 @@ import {
   tCdf,
   tInv,
 } from './distributions';
-import type { SampleSizeMethod } from '../lib/types';
+import type { DesignType, SampleSizeMethod } from '../lib/types';
 
 export type TestDesign = 'one_sample' | 'two_sample' | 'paired';
 
@@ -902,6 +902,128 @@ export function sampleSizeGuideline(
   };
 }
 
+/** Plano Gage R&R: peças × operadores × réplicas. */
+function sampleSizeGageRR(
+  key: 'repeatability' | 'reproducibility',
+  opts: { nSamples: number; nAnalysts: number; nReplicates: number },
+): SampleSizeResult {
+  const parts = Math.max(2, Math.round(opts.nSamples));
+  const operators = Math.max(2, Math.round(opts.nAnalysts));
+  const replicates = Math.max(2, Math.round(opts.nReplicates));
+  const total = parts * operators * replicates;
+  const isRepeatability = key === 'repeatability';
+  return {
+    method: 'guideline',
+    nPerGroup: replicates,
+    groups: parts * operators,
+    total,
+    power: null,
+    precision: null,
+    formula: isRepeatability
+      ? 'σ²_rep = MS_E no modelo cruzado peça × operador; n = peças × operadores × réplicas'
+      : 'σ²_oper = (MS_O − MS_PO)/(peças × réplicas); σ²_GRR = σ²_rep + σ²_oper + σ²_inter',
+    reference: 'AIAG MSA (2010); ISO 22514-7:2021; Montgomery (2020), cap. 13',
+    assumptions: [
+      'Peças aleatórias cobrindo a variação real do processo',
+      'Operadores aleatórios e treinados no método',
+      'Réplicas independentes e ordem de execução aleatorizada',
+    ],
+    notes: [
+      `Plano padrão: ${parts} peças × ${operators} operadores × ${replicates} réplicas = ${total} medições.`,
+      isRepeatability
+        ? 'A repetibilidade usa a variação dentro da mesma peça × operador.'
+        : 'A reprodutibilidade representa a variação entre operadores; não exige laboratórios distintos.',
+    ],
+  };
+}
+
+/** Orientações de tamanho para parâmetros exclusivos do perfil dimensional. */
+function sampleSizeDimensional(
+  key: 'resolution' | 'bias' | 'stability' | 'conformity',
+  opts: { nLevels: number; nReplicates: number; nDays: number },
+): SampleSizeResult {
+  if (key === 'bias') {
+    const levels = Math.max(3, Math.round(opts.nLevels));
+    const reps = Math.max(2, Math.round(opts.nReplicates));
+    return {
+      method: 'guideline',
+      nPerGroup: reps,
+      groups: levels,
+      total: levels * reps,
+      power: null,
+      precision: null,
+      formula: 'Tendência por nível: d_i = x̄_i − ref_i; regressão d = a + b·ref para linearidade',
+      reference: 'AIAG MSA (2010); ISO 22514-7:2021',
+      assumptions: [
+        'Padrões de referência com valor aceito e incerteza declarada',
+        'Níveis distribuídos ao longo da faixa de uso',
+      ],
+      notes: [
+        `Sugestão: ${levels} níveis de referência × ${reps} réplicas = ${levels * reps} medições.`,
+        'Inclua níveis próximos aos limites de tolerância; não use apenas o centro da faixa.',
+      ],
+    };
+  }
+  if (key === 'stability') {
+    const reps = Math.max(2, Math.round(opts.nReplicates));
+    const days = Math.max(5, Math.round(opts.nDays));
+    return {
+      method: 'guideline',
+      nPerGroup: reps,
+      groups: days,
+      total: days * reps,
+      power: null,
+      precision: null,
+      formula: 'Carta de controle (I-MR ou X̄-R) com centro e limites calculados dos dados',
+      reference: 'AIAG MSA (2010); ISO 7870-2; Montgomery (2020)',
+      assumptions: [
+        'Medições repetidas do mesmo padrão ao longo do tempo',
+        'Condições ambientais registradas',
+      ],
+      notes: [
+        `Sugestão: ${days} ocasiões × ${reps} réplicas = ${days * reps} medições ao longo do estudo.`,
+        'A estabilidade exige tendência temporal; não basta repetir tudo no mesmo dia.',
+      ],
+    };
+  }
+  if (key === 'resolution') {
+    const reps = Math.max(10, Math.round(opts.nReplicates));
+    return {
+      method: 'guideline',
+      nPerGroup: reps,
+      groups: 1,
+      total: reps,
+      power: null,
+      precision: null,
+      formula: 'Resolução ≤ 10%·T; verificar o menor incremento distinguível nas leituras',
+      reference: 'AIAG MSA (2010); ISO 22514-7:2021',
+      assumptions: ['Padrão estável medido repetidamente', 'Leituras registradas sem arredondamento adicional'],
+      notes: [
+        `Sugestão: pelo menos ${reps} leituras do mesmo padrão para evidenciar a resolução.`,
+      ],
+    };
+  }
+  const reps = Math.max(10, Math.round(opts.nReplicates));
+  return {
+    method: 'guideline',
+    nPerGroup: reps,
+    groups: 1,
+    total: reps,
+    power: null,
+    precision: null,
+    formula: 'Conformidade: x, u e limites LSL/USL; regra de decisão declarada',
+    reference: 'JCGM 106:2012; ILAC-G8:09/2019; ISO/IEC 17025:2017, 7.8.2.1',
+    assumptions: [
+      'Incerteza e regra de decisão documentadas antes da medição',
+      'Valor medido representativo do mensurando',
+    ],
+    notes: [
+      `Sugestão: pelo menos ${reps} medições para estimar u e o valor medido.`,
+      'A decisão de conformidade é condicional ao valor medido e à incerteza.',
+    ],
+  };
+}
+
 /** Retorna o n de um parâmetro a partir da chave e dos parâmetros do delineamento. */
 export function planForParameter(
   key: string,
@@ -920,9 +1042,22 @@ export function planForParameter(
     nAnalysts: number;
     nDays: number;
     nLabs: number;
+    nSamples?: number;
+    /** Tipo de delineamento; usado para distinguir o plano Gage R&R. */
+    designType?: DesignType;
+    /** Perfil de método ativo; o dimensional tem orientações próprias. */
+    profileId?: string;
   },
 ): SampleSizeResult {
   const common = { alpha: opts.alpha, power: opts.power };
+  const dimensional = opts.profileId === 'dimensional';
+  if (dimensional && opts.designType === 'gage_rr' && (key === 'repeatability' || key === 'reproducibility')) {
+    return sampleSizeGageRR(key, {
+      nSamples: opts.nSamples ?? 10,
+      nAnalysts: opts.nAnalysts,
+      nReplicates: opts.nReplicates,
+    });
+  }
   switch (key) {
     case 'selectivity':
       return sampleSizeGuideline('selectivity', opts.nReplicates);
@@ -987,6 +1122,13 @@ export function planForParameter(
       return sampleSizeGuideline('robustness', opts.nReplicates);
     case 'uncertainty':
       return sampleSizeGuideline('uncertainty', opts.nReplicates);
+    case 'resolution':
+    case 'bias':
+    case 'stability':
+    case 'conformity':
+      return dimensional
+        ? sampleSizeDimensional(key, opts)
+        : sampleSizeGuideline('uncertainty', opts.nReplicates);
     default:
       return sampleSizeMeanCI(opts.sigma, opts.effect || opts.margin, opts.confidence);
   }

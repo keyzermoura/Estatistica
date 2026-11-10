@@ -26,7 +26,17 @@ import { accuracyAnalysisModule } from '../stats/parameters/accuracy';
 import { robustnessAnalysis } from '../stats/parameters/robustness';
 import { uncertaintyAnalysis } from '../stats/parameters/uncertainty';
 
-const METRICS: Record<ParamKey, MetricDefinition[]> = {
+/**
+ * Parâmetros cobertos pelo perfil analítico. O `ParamKey` global também inclui
+ * parâmetros exclusivos do perfil dimensional; os mapas abaixo são exaustivos
+ * apenas para este subconjunto, preservando a saída analítica original.
+ */
+export type AnalyticalParamKey = Exclude<
+  ParamKey,
+  'resolution' | 'bias' | 'stability' | 'conformity'
+>;
+
+const METRICS: Record<AnalyticalParamKey, MetricDefinition[]> = {
   selectivity: [
     { key: 'interferenceRecovery', label: 'Recuperação na presença de interferente', unit: '%', suggested: { operator: 'between', limit: 90, limit2: 110 } },
     { key: 'resolution', label: 'Resolução crítica', unit: '', suggested: { operator: '>=', limit: 1.5 } },
@@ -72,7 +82,7 @@ const METRICS: Record<ParamKey, MetricDefinition[]> = {
   ],
 };
 
-const LABELS: Record<ParamKey, string> = {
+const LABELS: Record<AnalyticalParamKey, string> = {
   selectivity: 'Seletividade / especificidade',
   linearity: 'Linearidade',
   working_range: 'Faixa de trabalho',
@@ -85,7 +95,7 @@ const LABELS: Record<ParamKey, string> = {
   uncertainty: 'Incerteza de medição',
 };
 
-const SHORT: Record<ParamKey, string> = {
+const SHORT: Record<AnalyticalParamKey, string> = {
   selectivity: 'Demonstra que o método mede o analito sem interferentes.',
   linearity: 'Verifica se a resposta é proporcional à concentração.',
   working_range: 'Define a faixa em que o método é válido.',
@@ -98,7 +108,7 @@ const SHORT: Record<ParamKey, string> = {
   uncertainty: 'Faixa de valores provável para o resultado, conforme GUM.',
 };
 
-const REFERENCES: Record<ParamKey, string> = {
+const REFERENCES: Record<AnalyticalParamKey, string> = {
   selectivity: 'ISO/IEC 17025:2017, 7.2.2; ICH Q2(R2); EURACHEM',
   linearity: 'ISO/IEC 17025:2017, 7.2.2; ISO 8466-1; ICH Q2(R2)',
   working_range: 'ISO/IEC 17025:2017, 7.2.2; ICH Q2(R2)',
@@ -111,7 +121,7 @@ const REFERENCES: Record<ParamKey, string> = {
   uncertainty: 'GUM / JCGM 100:2008; ISO/IEC 17025:2017, 7.6',
 };
 
-const DEFAULT_SELECTED = new Set<ParamKey>([
+const DEFAULT_SELECTED = new Set<AnalyticalParamKey>([
   'selectivity',
   'linearity',
   'working_range',
@@ -122,7 +132,7 @@ const DEFAULT_SELECTED = new Set<ParamKey>([
   'uncertainty',
 ]);
 
-const PARAMETERS: ParameterDef[] = (Object.keys(LABELS) as ParamKey[]).map((key) => ({
+const PARAMETERS: ParameterDef[] = (Object.keys(LABELS) as AnalyticalParamKey[]).map((key) => ({
   key,
   label: LABELS[key],
   shortDescription: SHORT[key],
