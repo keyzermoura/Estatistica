@@ -1,598 +1,535 @@
 /**
- * Módulo 3 — Delineamentos amostrais, mapa de execução e curva de poder.
+ * Delineamento amostral: converte parâmetros estatísticos em um plano
+ * executável, com aleatorização reprodutível e curva de poder.
  *
- * O desenho é sempre balanceado por construção. Quando o usuário impõe um
- * total manual, o número de réplicas é ajustado para cima para preservar o
- * balanceamento; a diferença é registrada como aviso e no relatório.
+ * Referências: Montgomery (2020); ISO 5725-2:2019; Chow, Shao & Wang (2008).
  */
 
-import {
-  DEFAULT_DESIGN_INPUT,
-  PARAMETER_LABELS,
-  type DesignInput,
-  type DesignPlan,
-  type DesignType,
-  type ParameterPlan,
-  type ParamKey,
-  type PowerPoint,
-  type RunRow,
+import type {
+  DesignInput,
+  DesignPlan,
+  ParamKey,
+  ParameterPlan,
+  PowerPoint,
+  RunRow,
 } from '../lib/types';
+import { DEFAULT_PROFILE_ID, getProfile } from '../profiles/index';
+import type { MethodProfile } from '../profiles/types';
 import { mulberry32, shuffle } from './distributions';
+import { NESTED_DESTRUCTIVE_WARNING } from './nested';
 import {
-  iso5725SampleSize,
   meanCIPrecision,
   planForParameter,
   powerTTest,
-  powerTOST,
-  sampleSizeAnova,
+  type SampleSizeResult,
 } from './sampleSize';
 
-export interface BuildDesignOptions {
-  /** Parâmetros selecionados no checklist. */
-  selectedParameters?: ParamKey[];
-  /** Momento de criação (permite testes determinísticos). */
-  now?: string;
+export interface DesignBuildOptions {
+  selected?: ParamKey[];
+  maxRuns?: number;
+  /** Perfil de método ativo. Ausente = perfil analítico. */
+  profileId?: string;
 }
 
-const LEVEL_NAMES = ['Baixo', 'Médio', 'Alto', 'Muito alto', 'Extremo'];
-
-function sanitize(input: DesignInput): DesignInput {
-  const merged: DesignInput = { ...DEFAULT_DESIGN_INPUT, ...input };
+export function sampleResultToParameterPlan(
+  key: ParamKey,
+  result: SampleSizeResult,
+): ParameterPlan {
   return {
-    ...merged,
-    confidence: clamp(merged.confidence, 0.5, 0.999),
-    power: clamp(merged.power, 0.5, 0.999),
-    alpha: clamp(merged.alpha, 0.001, 0.2),
-    beta: clamp(merged.beta, 0.001, 0.5),
-    sigma: Math.max(0, merged.sigma),
-    effect: Math.max(0, merged.effect),
-    margin: Math.max(0, merged.margin),
-    targetPrecision: Math.max(0, merged.targetPrecision),
-    relativeSdError: clamp(merged.relativeSdError, 0.01, 1),
-    varianceRatio: Math.max(1.001, merged.varianceRatio),
-    betweenLabRatio: Math.max(0, merged.betweenLabRatio),
-    nLevels: int(merged.nLevels, 2, 12),
-    nAnalysts: int(merged.nAnalysts, 1, 20),
-    nDays: int(merged.nDays, 1, 30),
-    nEquipments: int(merged.nEquipments, 1, 10),
-    nLots: int(merged.nLots, 1, 30),
-    nReplicates: int(merged.nReplicates, 1, 20),
-    nLabs: int(merged.nLabs, 3, 50),
-    nSamples: int(merged.nSamples, 1, 50),
-    factors:
-      merged.factors && merged.factors.length >= 2
-        ? merged.factors.filter(Boolean).slice(0, 6)
-        : DEFAULT_DESIGN_INPUT.factors,
-    levels:
-      merged.levels && merged.levels.length >= 2
-        ? merged.levels.filter(Boolean).slice(0, 12)
-        : LEVEL_NAMES.slice(0, Math.max(2, merged.nLevels)),
-    seed: Math.abs(Math.round(merged.seed)) || 1,
-    manualTotal:
-      merged.manualTotal !== null && Number.isFinite(merged.manualTotal)
-        ? Math.max(1, Math.round(merged.manualTotal))
-        : null,
+    key,
+    method: result.method,
+    n: result.nPerGroup ?? result.total,
+    nPerGroup: result.nPerGroup,
+    groups: result.groups,
+    total: result.total,
+    achievedPower: result.power,
+    achievedPrecision: result.precision,
+    formula: result.formula,
+    reference: result.reference,
+    assumptions: result.assumptions,
+    notes: result.notes,
   };
 }
 
-function clamp(x: number, lo: number, hi: number): number {
-  if (!Number.isFinite(x)) return lo;
-  return Math.min(hi, Math.max(lo, x));
-}
+function buildRuns(input: DesignInput, total: number): { runs: RunRow[]; warnings: string[] } {
+  const warnings: string[] = [];
+  const reps = Math.max(2, Math.round(input.nReplicates));
+  const levels = input.levels.length ? input.levels : ['baixo', 'médio', 'alto'];
+  const analysts = Math.max(2, Math.round(input.nAnalysts));
+  const days = Math.max(2, Math.round(input.nDays));
+  const equipment = Math.max(1, Math.round(input.nEquipments));
+  const lots = Math.max(1, Math.round(input.nLots));
+  const labs = Math.max(2, Math.round(input.nLabs));
+  const samples = Math.max(2, Math.round(input.nSamples));
+  const rows: Omit<RunRow, 'runOrder'>[] = [];
 
-function int(x: number, lo: number, hi: number): number {
-  return Math.round(clamp(x, lo, hi));
-}
-
-function makeLevels(input: DesignInput): string[] {
-  const count = Math.max(2, input.nLevels);
-  const provided = input.levels.filter(Boolean);
-  if (provided.length >= count) return provided.slice(0, count);
-  return Array.from({ length: count }, (_, i) =>
-    provided[i] ?? `Nível ${i + 1}`,
-  );
-}
-
-function product(values: number[]): number {
-  return values.reduce((a, b) => a * b, 1);
-}
-
-function makeRows(
-  designType: DesignType,
-  input: DesignInput,
-  reps: number,
-): RunRow[] {
-  const levels = makeLevels(input);
-  const rows: RunRow[] = [];
-  const push = (r: Omit<RunRow, 'runOrder'>) => {
-    rows.push({ ...r, runOrder: rows.length + 1 });
+  const push = (
+    combination: string,
+    factorValues: Record<string, string>,
+    level = '',
+    extra: Partial<RunRow> = {},
+  ) => {
+    rows.push({
+      level,
+      analyst: factorValues.analista ?? '',
+      day: factorValues.dia ?? '',
+      equipment: factorValues.equipamento ?? '',
+      lot: factorValues.lote ?? '',
+      sample: factorValues.amostra ?? '',
+      replicate: 0,
+      combination,
+      factorValues,
+      ...extra,
+    });
   };
 
-  if (designType === 'crd') {
-    for (const level of levels) {
-      for (let r = 1; r <= reps; r++) {
-        push({
-          level,
-          analyst: 'A1',
-          day: 'D1',
-          equipment: 'E1',
-          lot: 'L1',
-          sample: `Amostra ${level}`,
-          replicate: r,
-          combination: `${level} · réplica ${r}`,
-          factorValues: { nível: level },
-        });
-      }
-    }
-    return rows;
-  }
-
-  if (designType === 'rbd') {
-    for (let d = 1; d <= input.nDays; d++) {
+  switch (input.designType) {
+    case 'crd': {
+      const perLevel = Math.max(1, Math.ceil(total / levels.length));
       for (const level of levels) {
-        for (let r = 1; r <= reps; r++) {
-          push({
-            level,
-            analyst: 'A1',
-            day: `Dia ${d}`,
-            equipment: 'E1',
-            lot: 'L1',
-            sample: `Amostra ${level}`,
+        for (let r = 1; r <= perLevel; r++) {
+          push(`Nível ${level} · réplica ${r}`, { nivel: level }, level, { replicate: r });
+        }
+      }
+      break;
+    }
+    case 'rbd': {
+      const perBlock = Math.max(1, Math.ceil(total / days));
+      for (const day of Array.from({ length: days }, (_, i) => `D${i + 1}`)) {
+        for (let r = 1; r <= perBlock; r++) {
+          const level = levels[r % levels.length];
+          push(`Bloco ${day} · ${level} · réplica ${r}`, { bloco: day, nivel: level }, level, {
+            day,
             replicate: r,
-            combination: `Dia ${d} · ${level} · réplica ${r}`,
-            factorValues: { bloco: `Dia ${d}`, tratamento: level },
           });
         }
       }
+      break;
     }
-    return rows;
-  }
-
-  if (designType === 'factorial') {
-    const factors = input.factors.slice(0, 6);
-    const k = factors.length;
-    const combos = 2 ** k;
-    for (let c = 0; c < combos; c++) {
-      const factorValues: Record<string, string> = {};
-      factors.forEach((f, i) => {
-        factorValues[f] = (c >> i) & 1 ? 'alto' : 'baixo';
-      });
-      for (let r = 1; r <= reps; r++) {
-        push({
-          level: 'Robustez',
-          analyst: 'A1',
-          day: 'D1',
-          equipment: 'E1',
-          lot: 'L1',
-          sample: 'Amostra de robustez',
-          replicate: r,
-          combination: `${factors.map((f) => `${f}=${factorValues[f]}`).join(' · ')} · r${r}`,
-          factorValues,
+    case 'factorial': {
+      const factors = input.factors.length ? input.factors : ['A', 'B', 'C'];
+      const combos = 1 << factors.length;
+      for (let mask = 0; mask < combos; mask++) {
+        const fv: Record<string, string> = {};
+        factors.forEach((f, i) => {
+          fv[f] = (mask >> i) & 1 ? '+1' : '−1';
         });
+        for (let r = 1; r <= reps; r++) {
+          push(
+            `${factors.map((f) => `${f}=${fv[f]}`).join(' · ')} · réplica ${r}`,
+            fv,
+            '',
+            { replicate: r },
+          );
+        }
       }
+      break;
     }
-    return rows;
-  }
-
-  if (designType === 'crossed') {
-    for (let a = 1; a <= input.nAnalysts; a++) {
-      for (let d = 1; d <= input.nDays; d++) {
-        for (let e = 1; e <= input.nEquipments; e++) {
-          for (const level of levels) {
-            for (let r = 1; r <= reps; r++) {
-              push({
-                level,
-                analyst: `Analista ${a}`,
-                day: `Dia ${d}`,
-                equipment: `Equip. ${e}`,
-                lot: 'Lote 1',
-                sample: `Amostra ${level}`,
+    case 'nested': {
+      for (let l = 1; l <= lots; l++) {
+        for (let s = 1; s <= samples; s++) {
+          for (let r = 1; r <= reps; r++) {
+            const level = levels[(l - 1) % levels.length];
+            push(
+              `Lote L${l} · amostra A${s} · réplica ${r}`,
+              { lote: `L${l}`, amostra: `A${s}`, nivel: level },
+              level,
+              { lot: `L${l}`, sample: `A${s}`, replicate: r },
+            );
+          }
+        }
+      }
+      break;
+    }
+    case 'iso5725': {
+      for (const level of levels) {
+        for (let lab = 1; lab <= labs; lab++) {
+          for (let r = 1; r <= reps; r++) {
+            push(
+              `Lab ${lab} · ${level} · réplica ${r}`,
+              { laboratorio: `Lab ${lab}`, nivel: level },
+              level,
+              { analyst: `Lab ${lab}`, replicate: r },
+            );
+          }
+        }
+      }
+      break;
+    }
+    case 'nested_destructive': {
+      const destructiveOperators = Math.max(2, Math.round(input.nAnalysts));
+      const destructiveSamples = Math.max(1, Math.round(input.nSamples));
+      let specimenIndex = 1;
+      for (let o = 1; o <= destructiveOperators; o++) {
+        for (let s = 1; s <= destructiveSamples; s++) {
+          for (let r = 1; r <= reps; r++) {
+            const specimen = `CP-${String(specimenIndex).padStart(3, '0')}`;
+            specimenIndex++;
+            push(
+              `Operador Op${o} · amostra A${s} · corpo de prova ${specimen}`,
+              {
+                lote: 'Lote',
+                operador: `Op${o}`,
+                amostra: `A${s}`,
+                corpo_de_prova: specimen,
+              },
+              '',
+              {
+                analyst: `Op${o}`,
+                lot: 'Lote',
+                sample: `A${s}`,
                 replicate: r,
-                combination: `A${a} · D${d} · E${e} · ${level} · r${r}`,
-                factorValues: {
-                  analista: `A${a}`,
-                  dia: `D${d}`,
-                  equipamento: `E${e}`,
-                  nível: level,
-                },
-              });
+                specimen,
+              },
+            );
+          }
+        }
+      }
+      break;
+    }
+    case 'attribute_agreement': {
+      const raters = Math.max(2, Math.round(input.nAnalysts));
+      const samples = Math.max(2, Math.round(input.nSamples));
+      const width = Math.max(3, String(samples).length);
+      // Códigos cegos: uma permutação reprodutível dos rótulos 1..amostras.
+      // O avaliador vê apenas o código, nunca a referência ou o índice original.
+      const codes = shuffle(
+        Array.from({ length: samples }, (_, index) => index + 1),
+        input.seed + 7919,
+      ).map((code) => `A-${String(code).padStart(width, '0')}`);
+      for (const code of codes) {
+        for (let rater = 1; rater <= raters; rater++) {
+          for (let r = 1; r <= reps; r++) {
+            push(
+              `Amostra ${code} · avaliador Op${rater} · réplica ${r}`,
+              {
+                amostra: code,
+                avaliador: `Op${rater}`,
+                replica: String(r),
+                cego: 'sim',
+              },
+              '',
+              { analyst: `Op${rater}`, sample: code, replicate: r },
+            );
+          }
+        }
+      }
+      break;
+    }
+    case 'crossed':
+    default: {
+      for (const level of levels) {
+        for (let a = 1; a <= analysts; a++) {
+          for (let d = 1; d <= days; d++) {
+            for (let e = 1; e <= equipment; e++) {
+              for (let r = 1; r <= reps; r++) {
+                push(
+                  `${level} · analista A${a} · dia D${d} · equip. E${e} · réplica ${r}`,
+                  {
+                    nivel: level,
+                    analista: `A${a}`,
+                    dia: `D${d}`,
+                    equipamento: `E${e}`,
+                  },
+                  level,
+                  {
+                    analyst: `A${a}`,
+                    day: `D${d}`,
+                    equipment: `E${e}`,
+                    replicate: r,
+                  },
+                );
+              }
             }
           }
         }
       }
+      break;
     }
-    return rows;
   }
 
-  if (designType === 'nested') {
-    for (let lot = 1; lot <= input.nLots; lot++) {
-      for (let s = 1; s <= input.nSamples; s++) {
-        for (let r = 1; r <= reps; r++) {
-          push({
-            level: `Lote ${lot}`,
-            analyst: 'A1',
-            day: 'D1',
-            equipment: 'E1',
-            lot: `Lote ${lot}`,
-            sample: `Amostra ${lot}-${s}`,
-            replicate: r,
-            combination: `Lote ${lot} · Amostra ${s} · r${r}`,
-            factorValues: { lote: `Lote ${lot}`, amostra: `Amostra ${s}` },
-          });
-        }
-      }
-    }
-    return rows;
+  if (rows.length > total * 1.5 && total > 0) {
+    warnings.push(
+      `O desenho gera ${rows.length} execuções, acima do total calculado (${total}); avalie reduzir níveis/fatores.`,
+    );
   }
-
-  // ISO 5725-2: p laboratórios × q níveis × n réplicas
-  for (let lab = 1; lab <= input.nLabs; lab++) {
-    for (const level of levels) {
-      for (let r = 1; r <= reps; r++) {
-        push({
-          level,
-          analyst: `Laboratório ${lab}`,
-          day: 'D1',
-          equipment: 'E1',
-          lot: 'Lote 1',
-          sample: `Material ${level}`,
-          replicate: r,
-          combination: `Lab ${lab} · ${level} · r${r}`,
-          factorValues: { laboratorio: `Lab ${lab}`, nível: level },
-        });
-      }
-    }
-  }
-  return rows;
+  const randomized = shuffle(
+    rows.map((r, i) => ({ ...r, _i: i })),
+    input.seed,
+  ).map((r, i) => ({ ...r, runOrder: i + 1 }));
+  return { runs: randomized, warnings };
 }
 
-function baseCells(designType: DesignType, input: DesignInput): number {
-  const levels = Math.max(2, input.nLevels);
-  switch (designType) {
-    case 'crd':
-      return levels;
-    case 'rbd':
-      return input.nDays * levels;
-    case 'factorial':
-      return 2 ** Math.min(6, Math.max(2, input.factors.length));
-    case 'crossed':
-      return input.nAnalysts * input.nDays * input.nEquipments * levels;
-    case 'nested':
-      return input.nLots * input.nSamples;
-    case 'iso5725':
-      return input.nLabs * levels;
-    default:
-      return levels;
-  }
-}
-
-/** Monta os planos individuais de tamanho de amostra por parâmetro. */
-export function buildParameterPlans(
-  input: DesignInput,
-  selectedParameters: ParamKey[],
-): ParameterPlan[] {
-  const keys: ParamKey[] =
-    selectedParameters.length > 0
-      ? selectedParameters
-      : ['repeatability', 'accuracy'];
-  return keys.map((key) => {
-    const result = planForParameter(key, {
-      sigma: input.sigma,
-      effect: input.effect,
-      margin: input.margin,
-      confidence: input.confidence,
-      power: input.power,
+function buildPowerCurve(input: DesignInput, maxN: number): PowerPoint[] {
+  const sigma = input.sigma > 0 ? input.sigma : 1;
+  const effect = input.effect > 0 ? input.effect : sigma / 2;
+  const max = Math.max(12, Math.min(120, maxN || 40));
+  const curve: PowerPoint[] = [];
+  for (let n = 2; n <= max; n++) {
+    const power = powerTTest(n, effect, sigma, {
       alpha: input.alpha,
-      relativeSdError: input.relativeSdError,
-      varianceRatio: input.varianceRatio,
-      betweenLabRatio: input.betweenLabRatio,
-      nLevels: input.nLevels,
-      nReplicates: input.nReplicates,
-      nAnalysts: input.nAnalysts,
-      nDays: input.nDays,
-      nLabs: input.nLabs,
+      sides: 2,
+      design: 'two_sample',
     });
-    return {
-      key,
-      method: result.method,
-      n: result.nPerGroup ?? result.total,
-      nPerGroup: result.nPerGroup,
-      groups: result.groups,
-      total: result.total,
-      achievedPower: result.power,
-      achievedPrecision: result.precision,
-      formula: result.formula,
-      reference: result.reference,
-      assumptions: result.assumptions,
-      notes: result.notes,
-    };
-  });
-}
-
-function recommendTotal(
-  input: DesignInput,
-  parameterPlans: ParameterPlan[],
-): { reps: number; total: number; manualAdjusted: boolean } {
-  const maxParamTotal = Math.max(
-    1,
-    ...parameterPlans.map((p) => (Number.isFinite(p.total) ? p.total : 0)),
-  );
-  const cells = Math.max(1, baseCells(input.designType, input));
-  let reps = Math.max(
-    2,
-    input.nReplicates,
-    Math.ceil(maxParamTotal / cells),
-  );
-  if (input.designType === 'iso5725') reps = Math.max(2, reps);
-
-  let manualAdjusted = false;
-  if (input.manualOverride && input.manualTotal) {
-    const targetReps = Math.max(1, Math.ceil(input.manualTotal / cells));
-    if (targetReps !== reps) manualAdjusted = true;
-    reps = targetReps;
+    curve.push({
+      n,
+      power,
+      precision: meanCIPrecision(n, sigma, input.confidence),
+    });
   }
-  return { reps, total: cells * reps, manualAdjusted };
+  return curve;
 }
 
-function buildPowerCurve(
+function buildSummary(
   input: DesignInput,
+  plans: ParameterPlan[],
   total: number,
-  selected: ParamKey[],
-): PowerPoint[] {
-  const maxN = Math.max(20, Math.min(500, total || 20));
-  const step = Math.max(1, Math.floor(maxN / 30));
-  const useTost = selected.includes('accuracy') && input.margin > 0;
-  const points: PowerPoint[] = [];
-  for (let n = 3; n <= maxN + step; n += step) {
-    const nn = Math.min(n, maxN);
-    const power = useTost
-      ? powerTOST(nn, input.margin, input.sigma, {
-          alpha: input.alpha,
-          design: 'one_sample',
-        })
-      : powerTTest(nn, input.effect, input.sigma, {
-          alpha: input.alpha,
-          design: 'one_sample',
-        });
-    points.push({
-      n: nn,
-      power: Number.isFinite(power) ? power : 0,
-      precision: meanCIPrecision(nn, input.sigma, input.confidence),
-    });
-    if (nn >= maxN) break;
+  runs: RunRow[],
+  profile: MethodProfile,
+): string {
+  const largest = plans.slice().sort((a, b) => b.total - a.total)[0];
+  const designLabel =
+    input.designType === 'attribute_agreement'
+      ? 'Concordância de atributo'
+      : input.designType.toUpperCase();
+  const parts = [
+    `Delineamento ${designLabel} com ${total} medições recomendadas`,
+    `${runs.length} execuções aleatorizadas (semente ${input.seed})`,
+  ];
+  if (largest) {
+    const label =
+      profile.parameters.find((parameter) => parameter.key === largest.key)?.label ??
+      largest.key;
+    parts.push(
+      `O parâmetro mais exigente é ${label} (${largest.total} medições)`,
+    );
   }
-  if (points.length === 0) {
-    points.push({ n: 3, power: 0, precision: meanCIPrecision(3, input.sigma, input.confidence) });
+  if (input.designType === 'iso5725') {
+    parts.push(
+      `${Math.max(2, input.nLabs)} laboratórios × ${Math.max(2, input.nReplicates)} réplicas × ${input.levels.length} níveis`,
+    );
   }
-  return points;
+  if (input.designType === 'nested_destructive') {
+    const operators = Math.max(2, Math.round(input.nAnalysts));
+    const samples = Math.max(1, Math.round(input.nSamples));
+    const replicates = Math.max(2, Math.round(input.nReplicates));
+    parts.push(
+      `${operators} operadores × ${samples} amostras × ${replicates} corpos de prova = ${operators * samples * replicates} corpos de prova a retirar do lote`,
+    );
+  }
+  if (input.designType === 'attribute_agreement') {
+    const raters = Math.max(2, Math.round(input.nAnalysts));
+    const samples = Math.max(2, Math.round(input.nSamples));
+    const borderline = Math.min(
+      samples,
+      Math.max(0, Math.round(input.nBorderlineSamples ?? 0)),
+    );
+    const replicates = Math.max(2, Math.round(input.nReplicates));
+    parts.push(
+      `${samples} amostras (${borderline} limítrofes) × ${raters} avaliadores × ${replicates} réplicas, com referência conhecida e ordem/códigos cegados pela semente`,
+    );
+  }
+  return `${parts.join('. ')}.`;
 }
 
-/** Resumo em linguagem simples, adequado a usuários não estatísticos. */
-export function explainDesign(plan: DesignPlan): string {
-  const r = plan.recommended;
-  if (plan.input.designType === 'iso5725') {
-    return `Você precisará de ${r.total} medições: ${r.labs} laboratórios × ${r.levels} níveis × ${r.replicates} réplicas.`;
-  }
-  if (plan.input.designType === 'factorial') {
-    return `Você precisará de ${r.total} medições: ${2 ** Math.min(6, plan.input.factors.length)} combinações de fatores × ${r.replicates} réplicas.`;
-  }
-  if (plan.input.designType === 'nested') {
-    return `Você precisará de ${r.total} medições: ${plan.input.nLots} lotes × ${plan.input.nSamples} amostras × ${r.replicates} réplicas.`;
-  }
-  if (plan.input.designType === 'crd') {
-    return `Você precisará de ${r.total} medições: ${r.levels} níveis × ${r.replicates} réplicas.`;
-  }
-  if (plan.input.designType === 'rbd') {
-    return `Você precisará de ${r.total} medições: ${r.days} dias (blocos) × ${r.levels} níveis × ${r.replicates} réplicas.`;
-  }
-  return `Você precisará de ${r.total} medições: ${r.analysts} analistas × ${r.days} dias × ${r.equipments} equipamento(s) × ${r.levels} níveis × ${r.replicates} réplicas.`;
-}
-
-/**
- * Constrói o plano completo do Módulo 3.
- * A ordem dos ensaios é aleatorizada com semente reprodutível.
- */
-export function buildDesignPlan(
-  rawInput: DesignInput,
-  options: BuildDesignOptions = {},
+export function buildDesign(
+  input: DesignInput,
+  options: DesignBuildOptions = {},
 ): DesignPlan {
-  const input = sanitize(rawInput);
-  const selected = options.selectedParameters ?? [];
-  const parameterPlans = buildParameterPlans(input, selected);
-  const { reps, total, manualAdjusted } = recommendTotal(input, parameterPlans);
-  const rows = makeRows(input.designType, input, reps);
-  const randomized = shuffle(rows, input.seed).map((row, index) => ({
-    ...row,
-    runOrder: index + 1,
-  }));
-  const finalTotal = randomized.length;
-  const levels = Math.max(2, input.nLevels);
-
-  const warnings: string[] = [];
-  if (input.sigma <= 0) {
-    warnings.push(
-      'O desvio-padrão esperado (σ) é zero ou inválido. Informe um valor piloto ou use a sugestão baseada na faixa de trabalho.',
-    );
+  const profile = getProfile(options.profileId ?? DEFAULT_PROFILE_ID);
+  const selected =
+    options.selected && options.selected.length
+      ? options.selected
+      : profile.parameters
+          .filter((parameter) => parameter.defaultSelected)
+          .map((parameter) => parameter.key);
+  const plans = selected.map((key) =>
+    sampleResultToParameterPlan(
+      key,
+      planForParameter(key, {
+        sigma: input.sigma,
+        effect: input.effect,
+        margin: input.margin,
+        confidence: input.confidence,
+        power: input.power,
+        alpha: input.alpha,
+        relativeSdError: input.relativeSdError,
+        varianceRatio: input.varianceRatio,
+        betweenLabRatio: input.betweenLabRatio,
+        nLevels: input.nLevels,
+        nReplicates: input.nReplicates,
+        nAnalysts: input.nAnalysts,
+        nDays: input.nDays,
+        nLabs: input.nLabs,
+      }),
+    ),
+  );
+  const calculatedTotal = Math.max(6, ...plans.map((p) => p.total));
+  const total =
+    input.manualOverride && input.manualTotal && input.manualTotal > 0
+      ? Math.round(input.manualTotal)
+      : calculatedTotal;
+  const { runs, warnings } = buildRuns(input, total);
+  const capped = runs.slice(0, options.maxRuns ?? 2000);
+  if (capped.length < runs.length) {
+    warnings.push(`Lista de execuções limitada a ${capped.length} linhas para desempenho.`);
   }
-  if (input.effect <= 0 && selected.some((k) => ['accuracy', 'repeatability', 'intermediate_precision'].includes(k))) {
-    warnings.push(
-      'A diferença mínima detectável é zero. Sem ela, o poder do teste não pode ser calculado.',
-    );
+  const powerCurve = buildPowerCurve(input, Math.max(total, input.nReplicates * 10));
+  const assumptions = [
+    `Confiança de ${(input.confidence * 100).toFixed(1)}% e poder de ${(input.power * 100).toFixed(0)}%`,
+    `σ assumido = ${input.sigma}${input.sigma === 0.5 ? ' (padrão; substitua por dado piloto)' : ''}`,
+    `Efeito mínimo detectável = ${input.effect}; margem = ${input.margin}`,
+    'Observações independentes; aleatorização executada na ordem gerada',
+    'Dados faltantes serão tratados por análise de casos completos, com registro do n efetivo',
+  ];
+  if (input.sigma === 0.5) {
+    warnings.push('σ = 0,5 é apenas um valor inicial. Use o desvio-padrão piloto do método.');
   }
-  if (selected.includes('accuracy') && input.margin <= 0) {
-    warnings.push(
-      'A margem de equivalência (TOST) não foi definida. O sistema usará o limite de aceitação de exatidão, se cadastrado.',
-    );
+  if (input.designType === 'iso5725' && Math.max(2, input.nLabs) < 6) {
+    warnings.push('ISO 5725-2 recomenda pelo menos 6 laboratórios.');
   }
-  if (selected.includes('linearity') && input.nLevels < 5) {
-    warnings.push(
-      'Linearidade requer pelo menos 5 níveis de concentração. O plano foi ajustado para 5 níveis.',
-    );
-  }
-  if (input.designType === 'iso5725' && (input.nLabs < 6 || reps < 2)) {
-    warnings.push(
-      'A ISO 5725-2 recomenda pelo menos 6 laboratórios e 2 réplicas por nível. Revise o delineamento.',
-    );
-  }
-  if (manualAdjusted) {
-    warnings.push(
-      `O total manual (${input.manualTotal}) não é múltiplo do número de células do desenho. Para manter o balanceamento, o total foi ajustado para ${finalTotal} (${reps} réplicas por célula).`,
-    );
-  }
-  if (finalTotal > 500) {
-    warnings.push(
-      `O plano tem ${finalTotal} medições. Verifique a viabilidade operacional; considere reduzir níveis, dias ou réplicas e recalcular o poder.`,
-    );
-  }
-  if (reps < 3 && selected.some((k) => ['repeatability', 'intermediate_precision', 'reproducibility'].includes(k))) {
-    warnings.push(
-      'Menos de 3 réplicas por célula limita a estimativa de variabilidade. O sistema recomenda pelo menos 3.',
-    );
-  }
-  for (const p of parameterPlans) {
-    if (p.achievedPower !== null && p.achievedPower < input.power - 1e-9) {
+  if (input.designType === 'nested_destructive') {
+    warnings.push(NESTED_DESTRUCTIVE_WARNING);
+    if (Math.max(1, Math.round(input.nSamples)) < 2) {
       warnings.push(
-        `O poder alcançado para ${PARAMETER_LABELS[p.key]} é ${(p.achievedPower * 100).toFixed(1)}%, abaixo do alvo de ${(input.power * 100).toFixed(0)}%.`,
+        'Com uma amostra por operador (b = 1), a componente entre amostras não é estimável; use o modelo de dois níveis do ISO 5725-2.',
       );
     }
-  }
-
-  const assumptions = [
-    `Confiança de ${(input.confidence * 100).toFixed(1)}% e poder de ${(input.power * 100).toFixed(0)}% (α = ${input.alpha}, β = ${(1 - input.power).toFixed(2)}).`,
-    input.sigma > 0
-      ? `σ esperado = ${input.sigma} (informado ou estimado por dados piloto).`
-      : 'σ esperado não informado; o poder não pode ser calculado sem uma estimativa.',
-    `Diferença mínima detectável = ${input.effect}; margem de equivalência = ${input.margin}.`,
-    `Ordem dos ensaios aleatorizada com semente ${input.seed}; a mesma semente reproduz exatamente o mesmo mapa.`,
-    'Delineamento balanceado; réplicas independentes dentro de cada condição.',
-    'Arredondamento de n para cima, garantindo o poder nominal.',
-    'Normalidade e independência assumidas para os cálculos de poder; verifique-as após a coleta.',
-  ];
-  if (input.designType === 'iso5725') {
+    if (Math.max(2, Math.round(input.nReplicates)) < 3) {
+      warnings.push('Menos de 3 corpos de prova por amostra: a repetibilidade terá poucos graus de liberdade.');
+    }
     assumptions.push(
-      `Delineamento ISO 5725-2: ${input.nLabs} laboratórios × ${levels} níveis × ${reps} réplicas; componentes s_r², s_L² e s_R².`,
+      'Ensaio destrutivo: cada corpo de prova é medido uma única vez e é consumido pelo ensaio',
+    );
+    assumptions.push(
+      'Amostras do mesmo lote são homogêneas; a repetibilidade inclui a variação entre corpos de prova',
     );
   }
-  if (input.designType === 'crossed') {
+  if (input.designType === 'attribute_agreement') {
+    const rawAnalysts = Math.round(input.nAnalysts);
+    const rawSamples = Math.round(input.nSamples);
+    const rawBorderline = Math.round(input.nBorderlineSamples ?? 0);
+    if (rawAnalysts < 2) {
+      warnings.push(
+        'O estudo de concordância exige pelo menos 2 avaliadores; o plano foi gerado com 2.',
+      );
+    }
+    if (rawSamples < 2) {
+      warnings.push(
+        'O estudo de concordância exige pelo menos 2 amostras; o plano foi gerado com 2.',
+      );
+    }
+    if (rawBorderline < 1) {
+      warnings.push(
+        'Nenhuma amostra limítrofe foi incluída; itens limítrofes são importantes para desafiar a discriminação entre categorias.',
+      );
+    }
+    if (rawBorderline > rawSamples) {
+      warnings.push(
+        `O número de amostras limítrofes (${rawBorderline}) excede o total de amostras (${rawSamples}); o plano limita a ${Math.max(0, rawSamples)}.`,
+      );
+    }
+    if (rawBorderline > 0 && rawBorderline === rawSamples) {
+      warnings.push(
+        'Todas as amostras são limítrofes; inclua também amostras claramente conformes e não conformes.',
+      );
+    }
     assumptions.push(
-      'Modelo cruzado com fatores analista, dia, equipamento e nível; componentes de variância por ANOVA/REML.',
+      'Estudo de concordância: cada avaliador classifica cada amostra sem conhecer a referência; a ordem de apresentação é aleatorizada pela semente',
+    );
+    assumptions.push(
+      'Os códigos das amostras são uma permutação aleatória; a referência e a condição limítrofe não são exibidas ao avaliador',
+    );
+    assumptions.push(
+      'As amostras incluem itens limítrofes, além de casos claramente conformes e não conformes',
     );
   }
-  if (input.designType === 'nested') {
-    assumptions.push(
-      'Estrutura aninhada lote → amostra → réplica; amostras são únicas dentro de cada lote.',
-    );
-  }
-  if (input.designType === 'factorial') {
-    assumptions.push(
-      'Fatores em dois níveis (baixo/alto); efeitos principais e interações estimáveis com o fatorial completo.',
-    );
-  }
-  assumptions.push(...parameterPlans.flatMap((p) => p.assumptions));
-  assumptions.push('As suposições devem ser confirmadas na análise; desvios são registrados no relatório.');
-
-  const plan: DesignPlan = {
-    input,
-    parameterPlans,
+  if (Math.max(2, input.nReplicates) < 2) warnings.push('Menos de 2 réplicas impede estimar repetibilidade.');
+  const specimenConsumption =
+    input.designType === 'nested_destructive'
+      ? (() => {
+          const operators = Math.max(2, Math.round(input.nAnalysts));
+          const samples = Math.max(1, Math.round(input.nSamples));
+          const replicates = Math.max(2, Math.round(input.nReplicates));
+          return {
+            operators,
+            samplesPerOperator: samples,
+            replicates,
+            total: operators * samples * replicates,
+          };
+        })()
+      : undefined;
+  return {
+    input: { ...input },
+    parameterPlans: plans,
     recommended: {
-      total: finalTotal,
-      analysts: input.nAnalysts,
-      days: input.nDays,
-      equipments: input.nEquipments,
-      replicates: reps,
-      labs: input.nLabs,
-      levels,
-      samples: input.nSamples,
+      total,
+      analysts: Math.max(2, Math.round(input.nAnalysts)),
+      days: Math.max(2, Math.round(input.nDays)),
+      equipments: Math.max(1, Math.round(input.nEquipments)),
+      replicates: Math.max(2, Math.round(input.nReplicates)),
+      labs: Math.max(2, Math.round(input.nLabs)),
+      levels: Math.max(2, input.levels.length || input.nLevels),
+      samples:
+        input.designType === 'nested_destructive'
+          ? Math.max(1, Math.round(input.nSamples))
+          : Math.max(2, Math.round(input.nSamples)),
+      borderlineSamples:
+        input.designType === 'attribute_agreement'
+          ? Math.min(
+              Math.max(2, Math.round(input.nSamples)),
+              Math.max(0, Math.round(input.nBorderlineSamples ?? 0)),
+            )
+          : undefined,
     },
-    runs: randomized,
-    powerCurve: buildPowerCurve(input, finalTotal, selected),
-    summary: '',
+    runs: capped,
+    powerCurve,
+    summary: buildSummary(input, plans, total, capped, profile),
     assumptions,
-    warnings,
-    createdAt: options.now ?? new Date().toISOString(),
+    warnings: [...new Set(warnings)],
+    specimenConsumption,
+    createdAt: new Date().toISOString(),
   };
-  plan.summary = explainDesign(plan);
-  return plan;
 }
 
-/**
- * Calcula o poder para um total informado manualmente, sem reconstruir o mapa.
- * Usado no ajuste manual com recálculo imediato.
- */
-export function powerForManualTotal(
-  input: DesignInput,
-  total: number,
-  selected: ParamKey[],
-): number {
-  if (total <= 0) return 0;
-  const useTost = selected.includes('accuracy') && input.margin > 0;
-  return useTost
-    ? powerTOST(total, input.margin, input.sigma, {
-        alpha: input.alpha,
-        design: 'one_sample',
-      })
-    : powerTTest(total, input.effect, input.sigma, {
-        alpha: input.alpha,
-        design: 'one_sample',
-      });
+/** Estimativa rápida de σ a partir da faixa (faixa/6 por padrão). */
+export function sigmaFromTolerance(lsl: number | null | undefined, usl: number | null | undefined, divisor = 6): number | null {
+  if (lsl === null || lsl === undefined || usl === null || usl === undefined || !(usl > lsl)) return null;
+  return (usl - lsl) / divisor;
 }
 
-/** Estimativa rápida de ANOVA para a etapa de robustez (opcional na UI). */
-export function robustnessAnovaPower(
-  nPerGroup: number,
-  levels: number,
-  effectSize: number,
-  alpha: number,
-): number {
-  const result = sampleSizeAnova(levels, effectSize, alpha, 0.8);
-  if (!result.nPerGroup) return 0;
-  return Math.min(1, nPerGroup / result.nPerGroup);
+export function sigmaFromRange(
+  rangeMin: number | null,
+  rangeMax: number | null,
+  divisor = getProfile(DEFAULT_PROFILE_ID).defaultAssumptions.sigmaFromRangeDivisor,
+): number | null {
+  if (rangeMin === null || rangeMax === null || !(rangeMax > rangeMin)) return null;
+  return (rangeMax - rangeMin) / divisor;
 }
 
-/** Informação do delineamento para exibição no relatório. */
-export function designNarrative(plan: DesignPlan): string {
-  const i = plan.input;
-  const r = plan.recommended;
-  const base = `${plan.summary} O desenho é ${i.designType === 'iso5725' ? 'balanceado entre laboratórios' : 'balanceado'}, com ordem de execução aleatorizada (semente ${i.seed}).`;
-  const power = plan.powerCurve.length
-    ? ` A curva de poder mostra o poder do teste para diferentes totais, considerando σ = ${i.sigma} e diferença mínima detectável = ${i.effect}.`
-    : '';
-  const iso = plan.parameterPlans.find((p) => p.method === 'iso5725');
-  const isoText = iso
-    ? ` Para reprodutibilidade, a ISO 5725-2 estima s_r² = MSW, s_L² = (MSB − MSW)/n e s_R² = s_r² + s_L².`
-    : '';
-  return `${base}${power}${isoText} Total de ${r.total} medições em ${plan.runs.length} linhas de execução.`;
+/** Reamostra a ordem de execução mantendo o mesmo conjunto de combinações. */
+export function rerandomize(
+  plan: DesignPlan,
+  seed: number,
+  profileId = DEFAULT_PROFILE_ID,
+): DesignPlan {
+  const runs = shuffle(plan.runs, seed).map((r, i) => ({ ...r, runOrder: i + 1 }));
+  return {
+    ...plan,
+    input: { ...plan.input, seed },
+    runs,
+    summary: buildSummary(
+      plan.input,
+      plan.parameterPlans,
+      plan.recommended.total,
+      runs,
+      getProfile(profileId),
+    ),
+  };
 }
 
-/** Exporta o mapa de execução em formato matricial para XLSX/CSV. */
-export function runsToMatrix(plan: DesignPlan): Array<Array<string | number>> {
-  const header = [
-    'ordem_ensaio',
-    'nivel',
-    'analista',
-    'dia',
-    'equipamento',
-    'lote',
-    'amostra',
-    'replica',
-    'combinacao',
-  ];
-  const rows = plan.runs.map((r) => [
-    r.runOrder,
-    r.level,
-    r.analyst,
-    r.day,
-    r.equipment,
-    r.lot,
-    r.sample,
-    r.replicate,
-    r.combination,
-  ]);
-  return [header, ...rows];
-}
-
-/** PRNG exportado para testes de reprodutibilidade. */
-export function seededSequence(seed: number, n: number): number[] {
+/** Gera um vetor reprodutível de números uniformes (para simulações). */
+export function reproducibleUniforms(n: number, seed: number): number[] {
   const rand = mulberry32(seed);
   return Array.from({ length: n }, () => rand());
 }
