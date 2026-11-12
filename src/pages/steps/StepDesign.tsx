@@ -51,6 +51,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
   const toast = useToast();
   const locked = bundle.validation.locked;
   const profile = getProfileForMethod(bundle.method);
+  const attribute = profile.id === 'attribute';
   const defaultInput = (): DesignInput => {
     const template = profile.defaultDesignType
       ? profile.designTemplates.find(
@@ -227,7 +228,11 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
     <StepShell
       step={2}
       title="Delineamento e tamanho de amostra"
-      description="Converta o objetivo estatístico em um plano executável: confiança, poder, σ, efeito mínimo, margem, fatores, níveis e aleatorização reprodutível."
+      description={
+        attribute
+          ? 'Defina itens, avaliadores, réplicas e categorias de referência; a ordem e os códigos das amostras são aleatorizados por uma semente reproduzível.'
+          : 'Converta o objetivo estatístico em um plano executável: confiança, poder, σ, efeito mínimo, margem, fatores, níveis e aleatorização reprodutível.'
+      }
       locked={locked}
       help={
         profile.id === 'dimensional' ? (
@@ -241,6 +246,20 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               Use <strong>10 peças</strong> cobrindo a variação real do processo, 3 operadores e
               2–3 réplicas. Se ainda não houver dado piloto, estime σ por{' '}
               <strong>T/6</strong> — a suposição fica registrada no relatório.
+            </p>
+          </>
+        ) : attribute ? (
+          <>
+            <p>
+              O delineamento recomendado é o de <strong>concordância de atributo</strong>: todos os
+              avaliadores classificam os mesmos itens, sem conhecer a referência, em réplicas
+              independentes. A ordem e os códigos das amostras são aleatorizados pela semente.
+            </p>
+            <p className="mt-1">
+              O padrão AIAG MSA sugere <strong>30 itens</strong>, <strong>3 avaliadores</strong> e
+              2–3 réplicas, incluindo itens limítrofes. O total é o produto
+              itens × avaliadores × réplicas; a precisão do κ depende também da prevalência das
+              categorias.
             </p>
           </>
         ) : (
@@ -258,7 +277,9 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
       }
       aside={
         <div className="flex flex-wrap gap-2">
-          <Badge tone="brand">{plan.recommended.total} medições</Badge>
+          <Badge tone="brand">
+            {plan.recommended.total} {attribute ? 'classificações' : 'medições'}
+          </Badge>
           <Badge tone="outline">{plan.runs.length} execuções</Badge>
           {dirty ? <Badge tone="warning">não salvo</Badge> : null}
         </div>
@@ -289,10 +310,44 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
       }
     >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Total recomendado" value={plan.recommended.total} hint="maior exigência entre parâmetros" icon={<Calculator className="h-5 w-5" />} />
-        <Stat label="Execuções" value={plan.runs.length} hint="ordem aleatorizada" icon={<Dices className="h-5 w-5" />} tone="neutral" />
-        <Stat label="Níveis" value={plan.recommended.levels} hint={levelsText || '—'} icon={<Beaker className="h-5 w-5" />} />
-        <Stat label="Semente" value={<span className="font-mono text-lg">{input.seed}</span>} hint="reproduz a ordem de execução" icon={<Sparkles className="h-5 w-5" />} tone="warning" />
+        {attribute ? (
+          <>
+            <Stat
+              label="Classificações"
+              value={plan.recommended.total}
+              hint="itens × avaliadores × réplicas"
+              icon={<Calculator className="h-5 w-5" />}
+            />
+            <Stat
+              label="Itens"
+              value={plan.recommended.samples}
+              hint={`${plan.recommended.borderlineSamples ?? 0} limítrofes`}
+              icon={<Beaker className="h-5 w-5" />}
+              tone="neutral"
+            />
+            <Stat
+              label="Avaliadores"
+              value={plan.recommended.analysts}
+              hint={`${plan.recommended.replicates} réplicas por avaliador`}
+              icon={<Dices className="h-5 w-5" />}
+              tone="neutral"
+            />
+            <Stat
+              label="Semente"
+              value={<span className="font-mono text-lg">{input.seed}</span>}
+              hint="reproduz códigos e ordem"
+              icon={<Sparkles className="h-5 w-5" />}
+              tone="warning"
+            />
+          </>
+        ) : (
+          <>
+            <Stat label="Total recomendado" value={plan.recommended.total} hint="maior exigência entre parâmetros" icon={<Calculator className="h-5 w-5" />} />
+            <Stat label="Execuções" value={plan.runs.length} hint="ordem aleatorizada" icon={<Dices className="h-5 w-5" />} tone="neutral" />
+            <Stat label="Níveis" value={plan.recommended.levels} hint={levelsText || '—'} icon={<Beaker className="h-5 w-5" />} />
+            <Stat label="Semente" value={<span className="font-mono text-lg">{input.seed}</span>} hint="reproduz a ordem de execução" icon={<Sparkles className="h-5 w-5" />} tone="warning" />
+          </>
+        )}
         {input.designType === 'gage_rr' ? (
           <Stat
             label="Peças"
@@ -320,16 +375,18 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
             description="Os padrões são recomendações; qualquer alteração fica registrada."
             icon={<Calculator className="h-4 w-4" />}
             action={
-              <div className="flex flex-wrap gap-1.5">
-                <Button variant="outline" size="sm" onClick={applyRangeSigma}>
-                  σ = faixa/{profile.defaultAssumptions.sigmaFromRangeDivisor}
-                </Button>
-                {profile.sigmaFromToleranceDivisor ? (
-                  <Button variant="outline" size="sm" onClick={applyToleranceSigma}>
-                    σ = T/{profile.sigmaFromToleranceDivisor}
+              attribute ? undefined : (
+                <div className="flex flex-wrap gap-1.5">
+                  <Button variant="outline" size="sm" onClick={applyRangeSigma}>
+                    σ = faixa/{profile.defaultAssumptions.sigmaFromRangeDivisor}
                   </Button>
-                ) : null}
-              </div>
+                  {profile.sigmaFromToleranceDivisor ? (
+                    <Button variant="outline" size="sm" onClick={applyToleranceSigma}>
+                      σ = T/{profile.sigmaFromToleranceDivisor}
+                    </Button>
+                  ) : null}
+                </div>
+              )
             }
           />
           <CardBody className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -349,75 +406,101 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               </Select>
             </Field>
             <Input label="Semente" type="number" value={input.seed} disabled={locked} onChange={(e) => update('seed', Number(e.target.value))} />
-            <Input label="Confiança" type="number" step="0.01" min="0.5" max="0.999" value={input.confidence} disabled={locked} onChange={(e) => update('confidence', Number(e.target.value))} />
-            <Input label="Poder" type="number" step="0.01" min="0.5" max="0.99" value={input.power} disabled={locked} onChange={(e) => update('power', Number(e.target.value))} />
-            <Input label="α (bilateral)" type="number" step="0.01" min="0.001" max="0.2" value={input.alpha} disabled={locked} onChange={(e) => update('alpha', Number(e.target.value))} />
-            <Input label="σ esperado" type="number" step="any" value={input.sigma} disabled={locked} onChange={(e) => update('sigma', Number(e.target.value))} hint={input.sigmaSource ? `Origem: ${input.sigmaSource}` : 'Dado piloto; sem piloto use T/6 ou faixa/6 e registre.'} />
-            <Input label="Efeito mínimo detectável" type="number" step="any" value={input.effect} disabled={locked} onChange={(e) => update('effect', Number(e.target.value))} />
-            <Input label="Margem de equivalência (TOST)" type="number" step="any" value={input.margin} disabled={locked} onChange={(e) => update('margin', Number(e.target.value))} />
-            <Input label="Precisão alvo (semi-amplitude)" type="number" step="any" value={input.targetPrecision} disabled={locked} onChange={(e) => update('targetPrecision', Number(e.target.value))} />
-            <Input label="Erro relativo admitido em s" type="number" step="0.01" value={input.relativeSdError} disabled={locked} onChange={(e) => update('relativeSdError', Number(e.target.value))} />
-            <Input label="Razão de variâncias" type="number" step="0.1" value={input.varianceRatio} disabled={locked} onChange={(e) => update('varianceRatio', Number(e.target.value))} />
-            <Input label="Razão entre laboratórios" type="number" step="0.1" value={input.betweenLabRatio} disabled={locked} onChange={(e) => update('betweenLabRatio', Number(e.target.value))} />
-            <Input label="Níveis (n)" type="number" min="2" value={input.nLevels} disabled={locked} onChange={(e) => update('nLevels', Number(e.target.value))} />
-            <Input label="Analistas" type="number" min="1" value={input.nAnalysts} disabled={locked} onChange={(e) => update('nAnalysts', Number(e.target.value))} />
-            <Input label="Dias" type="number" min="1" value={input.nDays} disabled={locked} onChange={(e) => update('nDays', Number(e.target.value))} />
-            <Input label="Equipamentos" type="number" min="1" value={input.nEquipments} disabled={locked} onChange={(e) => update('nEquipments', Number(e.target.value))} />
-            <Input label="Lotes" type="number" min="1" value={input.nLots} disabled={locked} onChange={(e) => update('nLots', Number(e.target.value))} />
-            <Input label="Réplicas" type="number" min="2" value={input.nReplicates} disabled={locked} onChange={(e) => update('nReplicates', Number(e.target.value))} />
-            <Input label="Laboratórios" type="number" min="2" value={input.nLabs} disabled={locked} onChange={(e) => update('nLabs', Number(e.target.value))} />
-            <Input
-              label={
-                input.designType === 'attribute_agreement'
-                  ? 'Amostras (total, incluindo limítrofes)'
-                  : input.designType === 'gage_rr'
-                    ? 'Peças (Gage R&R)'
-                    : 'Amostras (aninhado)'
-              }
-              type="number"
-              min="2"
-              value={input.nSamples}
-              disabled={locked}
-              onChange={(e) => update('nSamples', Number(e.target.value))}
-              hint={
-                input.designType === 'gage_rr'
-                  ? 'Use 10 peças cobrindo a variação real do processo, não só a tolerância.'
-                  : undefined
-              }
-            />
-            {input.designType === 'attribute_agreement' ? (
-              <Input
-                label="Amostras limítrofes (incluídas no total)"
-                type="number"
-                min="0"
-                max={input.nSamples}
-                value={input.nBorderlineSamples}
-                disabled={locked}
-                onChange={(e) => update('nBorderlineSamples', Number(e.target.value))}
-              />
-            ) : null}
-            <Textarea
-              label="Níveis experimentais"
-              className="min-h-[64px]"
-              value={levelsText}
-              disabled={locked}
-              onChange={(e) => {
-                setLevelsText(e.target.value);
-                setDirty(true);
-              }}
-              hint="Separe por vírgula. Use valores numéricos quando o parâmetro exigir níveis quantitativos."
-            />
-            <Textarea
-              label="Fatores (fatorial)"
-              className="min-h-[64px]"
-              value={factorsText}
-              disabled={locked}
-              onChange={(e) => {
-                setFactorsText(e.target.value);
-                setDirty(true);
-              }}
-              hint="Ex.: temperatura, pH, fluxo."
-            />
+            <Input label="Confiança" type="number" step="0.01" min="0.5" max="0.999" value={input.confidence} disabled={locked} onChange={(e) => update('confidence', Number(e.target.value))} hint={attribute ? 'Usada nos intervalos de κ.' : undefined} />
+            {attribute ? (
+              <>
+                <Input label="Avaliadores" type="number" min="2" value={input.nAnalysts} disabled={locked} onChange={(e) => update('nAnalysts', Number(e.target.value))} hint="AIAG MSA recomenda pelo menos 3." />
+                <Input label="Réplicas por avaliador" type="number" min="2" value={input.nReplicates} disabled={locked} onChange={(e) => update('nReplicates', Number(e.target.value))} hint="Permite estimar a concordância intra-avaliador." />
+                <Input
+                  label="Itens (amostras)"
+                  type="number"
+                  min="2"
+                  value={input.nSamples}
+                  disabled={locked}
+                  onChange={(e) => update('nSamples', Number(e.target.value))}
+                  hint="Inclua casos claros de cada categoria e itens limítrofes."
+                />
+                <Input
+                  label="Itens limítrofes (incluídos no total)"
+                  type="number"
+                  min="0"
+                  max={input.nSamples}
+                  value={input.nBorderlineSamples}
+                  disabled={locked}
+                  onChange={(e) => update('nBorderlineSamples', Number(e.target.value))}
+                  hint="Itens próximos do limite entre categorias."
+                />
+                <Textarea
+                  label="Categorias de referência"
+                  className="min-h-[64px]"
+                  value={levelsText}
+                  disabled={locked}
+                  onChange={(e) => {
+                    setLevelsText(e.target.value);
+                    setDirty(true);
+                  }}
+                  hint="Separe por vírgula. Ex.: conforme, não conforme. A referência de cada item será registrada na coleta."
+                />
+              </>
+            ) : (
+              <>
+                <Input label="Poder" type="number" step="0.01" min="0.5" max="0.99" value={input.power} disabled={locked} onChange={(e) => update('power', Number(e.target.value))} />
+                <Input label="α (bilateral)" type="number" step="0.01" min="0.001" max="0.2" value={input.alpha} disabled={locked} onChange={(e) => update('alpha', Number(e.target.value))} />
+                <Input label="σ esperado" type="number" step="any" value={input.sigma} disabled={locked} onChange={(e) => update('sigma', Number(e.target.value))} hint={input.sigmaSource ? `Origem: ${input.sigmaSource}` : 'Dado piloto; sem piloto use T/6 ou faixa/6 e registre.'} />
+                <Input label="Efeito mínimo detectável" type="number" step="any" value={input.effect} disabled={locked} onChange={(e) => update('effect', Number(e.target.value))} />
+                <Input label="Margem de equivalência (TOST)" type="number" step="any" value={input.margin} disabled={locked} onChange={(e) => update('margin', Number(e.target.value))} />
+                <Input label="Precisão alvo (semi-amplitude)" type="number" step="any" value={input.targetPrecision} disabled={locked} onChange={(e) => update('targetPrecision', Number(e.target.value))} />
+                <Input label="Erro relativo admitido em s" type="number" step="0.01" value={input.relativeSdError} disabled={locked} onChange={(e) => update('relativeSdError', Number(e.target.value))} />
+                <Input label="Razão de variâncias" type="number" step="0.1" value={input.varianceRatio} disabled={locked} onChange={(e) => update('varianceRatio', Number(e.target.value))} />
+                <Input label="Razão entre laboratórios" type="number" step="0.1" value={input.betweenLabRatio} disabled={locked} onChange={(e) => update('betweenLabRatio', Number(e.target.value))} />
+                <Input label="Níveis (n)" type="number" min="2" value={input.nLevels} disabled={locked} onChange={(e) => update('nLevels', Number(e.target.value))} />
+                <Input label="Analistas" type="number" min="1" value={input.nAnalysts} disabled={locked} onChange={(e) => update('nAnalysts', Number(e.target.value))} />
+                <Input label="Dias" type="number" min="1" value={input.nDays} disabled={locked} onChange={(e) => update('nDays', Number(e.target.value))} />
+                <Input label="Equipamentos" type="number" min="1" value={input.nEquipments} disabled={locked} onChange={(e) => update('nEquipments', Number(e.target.value))} />
+                <Input label="Lotes" type="number" min="1" value={input.nLots} disabled={locked} onChange={(e) => update('nLots', Number(e.target.value))} />
+                <Input label="Réplicas" type="number" min="2" value={input.nReplicates} disabled={locked} onChange={(e) => update('nReplicates', Number(e.target.value))} />
+                <Input label="Laboratórios" type="number" min="2" value={input.nLabs} disabled={locked} onChange={(e) => update('nLabs', Number(e.target.value))} />
+                <Input
+                  label={
+                    input.designType === 'gage_rr'
+                      ? 'Peças (Gage R&R)'
+                      : 'Amostras (aninhado)'
+                  }
+                  type="number"
+                  min="2"
+                  value={input.nSamples}
+                  disabled={locked}
+                  onChange={(e) => update('nSamples', Number(e.target.value))}
+                  hint={
+                    input.designType === 'gage_rr'
+                      ? 'Use 10 peças cobrindo a variação real do processo, não só a tolerância.'
+                      : undefined
+                  }
+                />
+                <Textarea
+                  label="Níveis experimentais"
+                  className="min-h-[64px]"
+                  value={levelsText}
+                  disabled={locked}
+                  onChange={(e) => {
+                    setLevelsText(e.target.value);
+                    setDirty(true);
+                  }}
+                  hint="Separe por vírgula. Use valores numéricos quando o parâmetro exigir níveis quantitativos."
+                />
+                <Textarea
+                  label="Fatores (fatorial)"
+                  className="min-h-[64px]"
+                  value={factorsText}
+                  disabled={locked}
+                  onChange={(e) => {
+                    setFactorsText(e.target.value);
+                    setDirty(true);
+                  }}
+                  hint="Ex.: temperatura, pH, fluxo."
+                />
+              </>
+            )}
             <Textarea
               label="Notas do delineamento"
               className="min-h-[64px] sm:col-span-2 lg:col-span-3"
@@ -436,7 +519,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               />
               {input.manualOverride ? (
                 <Input
-                  label="Total manual de medições"
+                  label={attribute ? 'Total manual de classificações' : 'Total manual de medições'}
                   type="number"
                   min="2"
                   value={input.manualTotal ?? ''}
@@ -454,38 +537,49 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
             <CardBody className="space-y-3 text-sm text-ink-600 dark:text-ink-300">
               <p>{plan.summary}</p>
               <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
-                  <p className="text-ink-400">
-                    {input.designType === 'attribute_agreement' ? 'Avaliadores' : 'Analistas'}
-                  </p>
-                  <p className="font-semibold">{plan.recommended.analysts}</p>
-                </div>
-                <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
-                  <p className="text-ink-400">Dias</p>
-                  <p className="font-semibold">{plan.recommended.days}</p>
-                </div>
-                <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
-                  <p className="text-ink-400">Réplicas</p>
-                  <p className="font-semibold">{plan.recommended.replicates}</p>
-                </div>
-                <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
-                  <p className="text-ink-400">Laboratórios</p>
-                  <p className="font-semibold">{plan.recommended.labs}</p>
-                </div>
-                {input.designType === 'attribute_agreement' ? (
+                {attribute ? (
                   <>
                     <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
-                      <p className="text-ink-400">Amostras</p>
+                      <p className="text-ink-400">Avaliadores</p>
+                      <p className="font-semibold">{plan.recommended.analysts}</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
+                      <p className="text-ink-400">Itens</p>
                       <p className="font-semibold">{plan.recommended.samples}</p>
                     </div>
                     <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
                       <p className="text-ink-400">Limítrofes</p>
-                      <p className="font-semibold">
-                        {plan.recommended.borderlineSamples ?? 0}
-                      </p>
+                      <p className="font-semibold">{plan.recommended.borderlineSamples ?? 0}</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
+                      <p className="text-ink-400">Réplicas</p>
+                      <p className="font-semibold">{plan.recommended.replicates}</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60 col-span-2">
+                      <p className="text-ink-400">Categorias de referência</p>
+                      <p className="font-semibold">{levelsText || '—'}</p>
                     </div>
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
+                      <p className="text-ink-400">Analistas</p>
+                      <p className="font-semibold">{plan.recommended.analysts}</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
+                      <p className="text-ink-400">Dias</p>
+                      <p className="font-semibold">{plan.recommended.days}</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
+                      <p className="text-ink-400">Réplicas</p>
+                      <p className="font-semibold">{plan.recommended.replicates}</p>
+                    </div>
+                    <div className="rounded-xl bg-ink-50 p-2.5 dark:bg-ink-800/60">
+                      <p className="text-ink-400">Laboratórios</p>
+                      <p className="font-semibold">{plan.recommended.labs}</p>
+                    </div>
+                  </>
+                )}
               </div>
               <Button variant="outline" size="sm" className="w-full" onClick={recalculate}>
                 <RefreshCw className="h-3.5 w-3.5" /> Recalcular plano
@@ -518,8 +612,12 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
 
       <Card>
         <CardHeader
-          title="Curva de poder"
-          description="Probabilidade de detectar o efeito mínimo em função do n por grupo."
+          title={attribute ? 'Aleatorização e cegamento' : 'Curva de poder'}
+          description={
+            attribute
+              ? 'A semente reproduz os códigos das amostras e a ordem de apresentação. O avaliador não deve ver a referência.'
+              : 'Probabilidade de detectar o efeito mínimo em função do n por grupo.'
+          }
           action={
             <Button
               variant="outline"
@@ -538,7 +636,23 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
           }
         />
         <CardBody>
-          <PowerCurveChart data={plan.powerCurve} targetPower={input.power} recommended={input.nReplicates} />
+          {attribute ? (
+            <div className="space-y-2 text-sm text-ink-600 dark:text-ink-300">
+              <p>
+                Cada avaliador recebe os itens em ordem aleatória, identificados apenas pelo
+                código cego. A referência de cada item é registrada separadamente pelo
+                responsável pelo estudo e não é exibida durante a classificação.
+              </p>
+              <ul className="list-disc space-y-1 pl-5 text-xs text-ink-500">
+                <li>Não use o mesmo código para itens diferentes entre avaliadores.</li>
+                <li>Mantenha as réplicas do mesmo avaliador separadas no tempo.</li>
+                <li>Registre a categoria observada sem consultar a referência.</li>
+                <li>Se a semente mudar, salve o delineamento para preservar a rastreabilidade.</li>
+              </ul>
+            </div>
+          ) : (
+            <PowerCurveChart data={plan.powerCurve} targetPower={input.power} recommended={input.nReplicates} />
+          )}
         </CardBody>
       </Card>
 
@@ -550,11 +664,15 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               <tr>
                 <th>Parâmetro</th>
                 <th>Método</th>
-                <th className="text-right">n / grupo</th>
-                <th className="text-right">Grupos</th>
+                <th className="text-right">{attribute ? 'Itens' : 'n / grupo'}</th>
+                <th className="text-right">{attribute ? 'Avaliadores × réplicas' : 'Grupos'}</th>
                 <th className="text-right">Total</th>
-                <th className="text-right">Poder</th>
-                <th className="text-right">Precisão</th>
+                {!attribute ? (
+                  <>
+                    <th className="text-right">Poder</th>
+                    <th className="text-right">Precisão</th>
+                  </>
+                ) : null}
                 <th>Fórmula</th>
               </tr>
             </thead>
@@ -566,12 +684,20 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
                 return (
                   <tr key={parameter.key}>
                     <td className="font-medium">{label}</td>
-                    <td className="text-xs text-ink-500">{parameter.method}</td>
+                    <td className="text-xs text-ink-500">
+                      {parameter.method === 'attribute_agreement'
+                        ? 'concordância de atributo'
+                        : parameter.method}
+                    </td>
                     <td className="text-right font-mono text-xs">{parameter.nPerGroup ?? '—'}</td>
                     <td className="text-right font-mono text-xs">{parameter.groups ?? '—'}</td>
                     <td className="text-right font-mono text-xs font-semibold">{parameter.total}</td>
-                    <td className="text-right font-mono text-xs">{parameter.achievedPower === null ? '—' : `${(parameter.achievedPower * 100).toFixed(1)}%`}</td>
-                    <td className="text-right font-mono text-xs">{parameter.achievedPrecision === null ? '—' : fmt(parameter.achievedPrecision)}</td>
+                    {!attribute ? (
+                      <>
+                        <td className="text-right font-mono text-xs">{parameter.achievedPower === null ? '—' : `${(parameter.achievedPower * 100).toFixed(1)}%`}</td>
+                        <td className="text-right font-mono text-xs">{parameter.achievedPrecision === null ? '—' : fmt(parameter.achievedPrecision)}</td>
+                      </>
+                    ) : null}
                     <td className="max-w-[260px] font-mono text-[10px] text-ink-500">{parameter.formula}</td>
                   </tr>
                 );
@@ -596,12 +722,17 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
             <thead>
               <tr>
                 <th>#</th>
-                <th>Nível</th>
-                <th>Analista</th>
-                <th>Dia</th>
-                <th>Equipamento</th>
-                <th>Lote</th>
+                {!attribute ? (
+                  <>
+                    <th>Nível</th>
+                    <th>Analista</th>
+                    <th>Dia</th>
+                    <th>Equipamento</th>
+                    <th>Lote</th>
+                  </>
+                ) : null}
                 <th>Amostra</th>
+                {attribute ? <th>Avaliador</th> : null}
                 {plan.runs.some((run) => run.partId) ? <th>Peça</th> : null}
                 {plan.runs.some((run) => run.specimen) ? <th>Corpo de prova</th> : null}
                 <th>Réplica</th>
@@ -612,12 +743,17 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               {plan.runs.slice(0, 60).map((run) => (
                 <tr key={run.runOrder}>
                   <td className="font-mono text-xs">{run.runOrder}</td>
-                  <td>{run.level || '—'}</td>
-                  <td>{run.analyst || '—'}</td>
-                  <td>{run.day || '—'}</td>
-                  <td>{run.equipment || '—'}</td>
-                  <td>{run.lot || '—'}</td>
+                  {!attribute ? (
+                    <>
+                      <td>{run.level || '—'}</td>
+                      <td>{run.analyst || '—'}</td>
+                      <td>{run.day || '—'}</td>
+                      <td>{run.equipment || '—'}</td>
+                      <td>{run.lot || '—'}</td>
+                    </>
+                  ) : null}
                   <td>{run.sample || '—'}</td>
+                  {attribute ? <td>{run.analyst || '—'}</td> : null}
                   {plan.runs.some((item) => item.partId) ? (
                     <td className="font-mono text-xs">{run.partId || '—'}</td>
                   ) : null}

@@ -71,6 +71,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
   const toast = useToast();
   const locked = bundle.validation.locked;
   const dimensional = bundle.method.family === 'dimensional';
+  const attribute = bundle.method.family === 'attribute';
   const [measurements, setMeasurements] = useState<Measurement[]>(bundle.measurements);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -97,9 +98,48 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
   const quality = useMemo(() => {
     const numeric = measurements.filter((row) => row.value !== null && Number.isFinite(row.value));
     const textual = measurements.filter((row) => row.value === null && row.textValue.trim());
-    const missing = measurements.length - numeric.length - textual.length;
+    const categorized = measurements.filter(
+      (row) =>
+        (row.category ?? '').trim() !== '' ||
+        row.textValue.trim() !== '' ||
+        (row.value !== null && Number.isFinite(row.value)),
+    );
+    const missing = attribute
+      ? measurements.length - categorized.length
+      : measurements.length - numeric.length - textual.length;
     const levels = [...new Set(measurements.map((row) => row.level).filter(Boolean))];
-    const references = measurements.filter((row) => row.referenceValue !== null && Number.isFinite(row.referenceValue));
+    const references = attribute
+      ? measurements.filter(
+          (row) =>
+            row.level.trim() !== '' ||
+            (row.referenceValue !== null && Number.isFinite(row.referenceValue)),
+        )
+      : measurements.filter(
+          (row) => row.referenceValue !== null && Number.isFinite(row.referenceValue),
+        );
+    const missingReferences = attribute
+      ? measurements.filter(
+          (row) =>
+            row.level.trim() === '' &&
+            (row.referenceValue === null || !Number.isFinite(row.referenceValue)),
+        ).length
+      : 0;
+    const items = [...new Set(measurements.map((row) => row.sample.trim()).filter(Boolean))];
+    const raters = [...new Set(measurements.map((row) => row.analyst.trim()).filter(Boolean))];
+    const cellCounts = new Map<string, number>();
+    if (attribute) {
+      for (const row of measurements) {
+        const item = row.sample.trim();
+        const rater = row.analyst.trim();
+        if (!item || !rater) continue;
+        const key = `${item}\u0000${rater}\u0000${row.replicate}`;
+        cellCounts.set(key, (cellCounts.get(key) ?? 0) + 1);
+      }
+    }
+    const duplicateCells = [...cellCounts.values()].reduce(
+      (sum, count) => sum + Math.max(0, count - 1),
+      0,
+    );
     const outside = numeric.filter((row) => {
       if (bundle.method.rangeMin === null && bundle.method.rangeMax === null) return false;
       const value = row.value!;
@@ -125,15 +165,26 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
     return {
       numeric,
       textual,
+      categorized,
       missing,
       levels,
       references,
+      missingReferences,
+      items,
+      raters,
+      duplicateCells,
       outside,
       byAnalyst,
       unbalanced,
       missingParts,
     };
-  }, [measurements, bundle.method.rangeMin, bundle.method.rangeMax, dimensional]);
+  }, [
+    measurements,
+    bundle.method.rangeMin,
+    bundle.method.rangeMax,
+    dimensional,
+    attribute,
+  ]);
 
   const fillFromPlan = () => {
     if (!bundle.design?.plan.runs.length) {
@@ -243,16 +294,44 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
               para o valor nominal de exatidão.
             </p>
           ) : null}
+          {attribute ? (
+            <p className="mt-1">
+              No perfil de atributo, <strong>Amostra</strong> identifica o item,{' '}
+              <strong>Analista / lab</strong> é o avaliador e <strong>Rep.</strong> é a réplica.
+              Registre a classificação em <strong>Categoria observada</strong> e a categoria
+              correta do item em <strong>Ref. categ.</strong> (por exemplo, “conforme” ou “não
+              conforme”). A referência deve ser a mesma para todas as réplicas do mesmo item.
+            </p>
+          ) : null}
         </>
       }
       aside={
         <div className="flex flex-wrap gap-2">
           <Badge tone="brand">{measurements.length} registro(s)</Badge>
-          {quality.missing ? <Badge tone="warning">{quality.missing} sem valor</Badge> : null}
-          {quality.outside.length ? <Badge tone="danger">{quality.outside.length} fora da faixa</Badge> : null}
-          {dimensional && quality.missingParts ? (
-            <Badge tone="warning">{quality.missingParts} sem peça</Badge>
-          ) : null}
+          {attribute ? (
+            <>
+              <Badge tone="neutral">
+                {quality.items.length} item(ns) · {quality.raters.length} avaliador(es)
+              </Badge>
+              {quality.missing ? (
+                <Badge tone="warning">{quality.missing} sem categoria</Badge>
+              ) : null}
+              {quality.missingReferences ? (
+                <Badge tone="warning">{quality.missingReferences} sem referência</Badge>
+              ) : null}
+              {quality.duplicateCells ? (
+                <Badge tone="danger">{quality.duplicateCells} duplicidade(s)</Badge>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {quality.missing ? <Badge tone="warning">{quality.missing} sem valor</Badge> : null}
+              {quality.outside.length ? <Badge tone="danger">{quality.outside.length} fora da faixa</Badge> : null}
+              {dimensional && quality.missingParts ? (
+                <Badge tone="warning">{quality.missingParts} sem peça</Badge>
+              ) : null}
+            </>
+          )}
         </div>
       }
       footer={
@@ -278,16 +357,74 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
       }
     >
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Stat label="Registros" value={measurements.length} hint={`${quality.numeric.length} numéricos · ${quality.textual.length} textuais`} icon={<ClipboardList className="h-5 w-5" />} />
-        <Stat label="Sem valor" value={quality.missing} hint="faltantes ou incompletos" icon={<AlertTriangle className="h-5 w-5" />} tone={quality.missing ? 'warning' : 'success'} />
-        <Stat label="Níveis" value={quality.levels.length} hint={quality.levels.join(', ') || '—'} icon={<FileSpreadsheet className="h-5 w-5" />} tone="neutral" />
-        <Stat label="Fora da faixa" value={quality.outside.length} hint={quality.references.length ? `${quality.references.length} com referência` : 'sem valor de referência'} icon={<AlertTriangle className="h-5 w-5" />} tone={quality.outside.length ? 'danger' : 'success'} />
+        {attribute ? (
+          <>
+            <Stat
+              label="Registros"
+              value={measurements.length}
+              hint={`${quality.items.length} item(ns) · ${quality.raters.length} avaliador(es)`}
+              icon={<ClipboardList className="h-5 w-5" />}
+            />
+            <Stat
+              label="Sem categoria"
+              value={quality.missing}
+              hint="classificação observada ausente"
+              icon={<AlertTriangle className="h-5 w-5" />}
+              tone={quality.missing ? 'warning' : 'success'}
+            />
+            <Stat
+              label="Categorias"
+              value={quality.levels.length}
+              hint={quality.levels.join(', ') || '—'}
+              icon={<FileSpreadsheet className="h-5 w-5" />}
+              tone="neutral"
+            />
+            <Stat
+              label="Sem referência"
+              value={quality.missingReferences}
+              hint="registros sem categoria correta"
+              icon={<AlertTriangle className="h-5 w-5" />}
+              tone={quality.missingReferences ? 'warning' : 'success'}
+            />
+          </>
+        ) : (
+          <>
+            <Stat label="Registros" value={measurements.length} hint={`${quality.numeric.length} numéricos · ${quality.textual.length} textuais`} icon={<ClipboardList className="h-5 w-5" />} />
+            <Stat label="Sem valor" value={quality.missing} hint="faltantes ou incompletos" icon={<AlertTriangle className="h-5 w-5" />} tone={quality.missing ? 'warning' : 'success'} />
+            <Stat label="Níveis" value={quality.levels.length} hint={quality.levels.join(', ') || '—'} icon={<FileSpreadsheet className="h-5 w-5" />} tone="neutral" />
+            <Stat label="Fora da faixa" value={quality.outside.length} hint={quality.references.length ? `${quality.references.length} com referência` : 'sem valor de referência'} icon={<AlertTriangle className="h-5 w-5" />} tone={quality.outside.length ? 'danger' : 'success'} />
+          </>
+        )}
       </div>
 
       {quality.unbalanced ? (
         <Alert tone="warning" title="Desbalanceamento entre analistas/laboratórios">
-          {[...quality.byAnalyst.entries()].map(([name, count]) => `${name}: ${count}`).join(' · ')}. A ANOVA e a
-          decomposição de variância podem exigir aproximação; o relatório registrará a limitação.
+          {[...quality.byAnalyst.entries()].map(([name, count]) => `${name}: ${count}`).join(' · ')}.{' '}
+          {attribute
+            ? 'Cada avaliador deve classificar todos os itens; um avaliador com menos registros reduz a comparabilidade do κ.'
+            : 'A ANOVA e a decomposição de variância podem exigir aproximação; o relatório registrará a limitação.'}
+        </Alert>
+      ) : null}
+
+      {attribute && quality.duplicateCells ? (
+        <Alert tone="danger" title="Combinações item/avaliador/réplica duplicadas">
+          Há {quality.duplicateCells} combinação(ões) repetida(s). O estudo de concordância não
+          será avaliado até que cada item tenha uma única classificação por avaliador e réplica.
+        </Alert>
+      ) : null}
+
+      {attribute && quality.missingReferences ? (
+        <Alert tone="warning" title="Itens sem referência conhecida">
+          {quality.missingReferences} registro(s) não têm categoria de referência. A concordância
+          entre avaliadores ainda pode ser calculada, mas eficácia, FAR, FRR e concordância com a
+          referência ficam limitadas aos itens com referência.
+        </Alert>
+      ) : null}
+
+      {attribute && quality.missing ? (
+        <Alert tone="warning" title="Classificações ausentes">
+          {quality.missing} registro(s) sem categoria observada não entram no estudo. Preencha
+          “Categoria observada” ou remova as linhas que não serão usadas.
         </Alert>
       ) : null}
 
@@ -343,20 +480,32 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
           }
         />
         <div className="max-h-[620px] overflow-auto">
-          <table className={`w-full ${dimensional ? 'min-w-[1560px]' : 'min-w-[1320px]'} border-collapse text-xs`}>
+          <table className={`w-full ${dimensional ? 'min-w-[1560px]' : attribute ? 'min-w-[1220px]' : 'min-w-[1320px]'} border-collapse text-xs`}>
             <thead className="sticky top-0 z-10 bg-ink-50 dark:bg-ink-900">
               <tr className="text-left text-[10px] uppercase tracking-wide text-ink-500">
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Ordem</th>
-                <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Nível</th>
+                <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">
+                  {attribute ? 'Ref. categ.' : 'Nível'}
+                </th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Analista / lab</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Dia</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Equip.</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Lote</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Amostra</th>
-                <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Peça</th>
+                {!attribute ? (
+                  <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Peça</th>
+                ) : null}
                 <th className="border-b border-ink-200 px-2 py-2 text-center dark:border-ink-800">Rep.</th>
-                <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Valor</th>
-                <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Referência</th>
+                {!attribute ? (
+                  <>
+                    <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Valor</th>
+                    <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Referência</th>
+                  </>
+                ) : (
+                  <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">
+                    Categoria observada
+                  </th>
+                )}
                 {dimensional ? (
                   <>
                     <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Valor ref. padrão</th>
@@ -371,7 +520,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
             <tbody>
               {measurements.length === 0 ? (
                 <tr>
-                  <td colSpan={dimensional ? 16 : 14} className="px-3 py-10 text-center text-sm text-ink-500">
+                  <td colSpan={dimensional ? 16 : attribute ? 12 : 14} className="px-3 py-10 text-center text-sm text-ink-500">
                     Nenhum dado. Adicione uma linha, preencha pelo plano ou importe uma planilha.
                   </td>
                 </tr>
@@ -388,7 +537,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                       />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-24`} value={row.level} disabled={locked} onChange={(e) => patch(row.id, { level: e.target.value })} placeholder="5" />
+                      <input className={`${inputClass} w-24`} value={row.level} disabled={locked} onChange={(e) => patch(row.id, { level: e.target.value })} placeholder={attribute ? 'conforme' : '5'} />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input className={`${inputClass} w-28`} value={row.analyst} disabled={locked} onChange={(e) => patch(row.id, { analyst: e.target.value })} placeholder="Ana" />
@@ -405,9 +554,11 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input className={`${inputClass} w-28`} value={row.sample} disabled={locked} onChange={(e) => patch(row.id, { sample: e.target.value })} />
                     </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-20 font-mono`} value={row.partId ?? ''} disabled={locked} onChange={(e) => patch(row.id, { partId: e.target.value })} placeholder="P-01" />
-                    </td>
+                    {!attribute ? (
+                      <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
+                        <input className={`${inputClass} w-20 font-mono`} value={row.partId ?? ''} disabled={locked} onChange={(e) => patch(row.id, { partId: e.target.value })} placeholder="P-01" />
+                      </td>
+                    ) : null}
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input
                         type="number"
@@ -417,27 +568,47 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                         onChange={(e) => patch(row.id, { replicate: Number(e.target.value) })}
                       />
                     </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        type="number"
-                        step="any"
-                        className={`${inputClass} w-24 ${row.value === null && row.textValue === '' ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20' : ''}`}
-                        value={row.value ?? ''}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { value: parseNumber(e.target.value) })}
-                      />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        type="number"
-                        step="any"
-                        className={`${inputClass} w-24`}
-                        value={row.referenceValue ?? ''}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { referenceValue: parseNumber(e.target.value) })}
-                        placeholder="—"
-                      />
-                    </td>
+                    {attribute ? (
+                      <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
+                        <input
+                          className={`${inputClass} w-32 ${
+                            (row.category ?? '').trim() === '' &&
+                            row.textValue.trim() === '' &&
+                            row.value === null
+                              ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20'
+                              : ''
+                          }`}
+                          value={row.category ?? ''}
+                          disabled={locked}
+                          onChange={(e) => patch(row.id, { category: e.target.value })}
+                          placeholder="conforme"
+                        />
+                      </td>
+                    ) : (
+                      <>
+                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
+                          <input
+                            type="number"
+                            step="any"
+                            className={`${inputClass} w-24 ${row.value === null && row.textValue === '' ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20' : ''}`}
+                            value={row.value ?? ''}
+                            disabled={locked}
+                            onChange={(e) => patch(row.id, { value: parseNumber(e.target.value) })}
+                          />
+                        </td>
+                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
+                          <input
+                            type="number"
+                            step="any"
+                            className={`${inputClass} w-24`}
+                            value={row.referenceValue ?? ''}
+                            disabled={locked}
+                            onChange={(e) => patch(row.id, { referenceValue: parseNumber(e.target.value) })}
+                            placeholder="—"
+                          />
+                        </td>
+                      </>
+                    )}
                     {dimensional ? (
                       <>
                         <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">

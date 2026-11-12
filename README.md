@@ -1,11 +1,11 @@
 # ValidaMétodo
 
-Sistema web **offline-first** para validação de métodos analíticos. Combina um
-fluxo guiado de sete etapas, delineamento amostral estatístico, análise
-auditável, orçamento de incerteza (GUM) e relatório exportável em DOCX, PDF e
-pacote de evidências.
+Sistema web **offline-first** para validação de métodos analíticos e
+qualitativos. Combina um fluxo guiado de sete etapas, delineamento amostral
+estatístico, análise auditável, orçamento de incerteza (GUM) e relatório
+exportável em DOCX, PDF e pacote de evidências.
 
-O princípio central: **nenhum resultado é declarado conforme sem dado numérico
+O princípio central: **nenhum resultado é declarado conforme sem dado válido
 e critério de aceitação cadastrado**. Quando falta um dos dois, o veredito é
 **não avaliado**. Nenhum outlier é removido automaticamente.
 
@@ -19,6 +19,9 @@ e critério de aceitação cadastrado**. Quando falta um dos dois, o veredito é
 - Análise com fórmula, valor, critério e veredito em cada métrica.
 - Estatística descritiva, normalidade, homogeneidade, ANOVA, ISO 5725-2,
   regressão/linearidade, LD/LQ, tendência/recuperação/TOST, robustez e GUM.
+- Concordância de atributo para métodos qualitativos: kappa de Cohen/Fleiss,
+  concordância intra e interavaliadores, eficácia, FAR, FRR e cobertura de
+  referência, com itens limítrofes e códigos cegados.
 - Coleta manual, importação de XLSX/CSV e exportação de dados.
 - Relatório com hash SHA-256, três assinaturas eletrônicas e bloqueio após a
   aprovação.
@@ -121,13 +124,17 @@ localmente para garantir reprodutibilidade e funcionamento offline.
 | `iso5725.ts` | precisão por ISO 5725-2, Mandel h/k |
 | `regression.ts` | OLS, WLS, falta de ajuste, LD/LQ |
 | `bias.ts` | tendência, recuperação, TOST, proficiência, tolerância |
+| `attribute.ts` | Cohen/Fleiss kappa, concordância intra/inter, FAR/FRR, IC de Wilson |
+| `attribute-data.ts` | mapeamento das medições para o estudo de atributo e diagnósticos |
 | `uncertainty.ts` | GUM, Welch–Satterthwaite, incerteza expandida |
 | `analysis.ts` | orquestração genérica dos parâmetros e vereditos |
 
-O catálogo de parâmetros, critérios sugeridos, pressupostos e templates do
-perfil analítico fica em `src/profiles/analytical.ts`. `analysis.ts` consulta o
-perfil ativo, de modo que as próximas famílias de métodos possam ser acrescentadas
-sem duplicar o catálogo analítico.
+O catálogo de parâmetros, critérios sugeridos, pressupostos e templates de cada
+família fica em `src/profiles/`. O perfil `attribute` reutiliza as colunas
+existentes (`sample`, `analyst`, `category`, `textValue`, `level`,
+`referenceValue`, `replicate`), sem migração de schema. `analysis.ts` consulta o
+perfil ativo, de modo que novas famílias possam ser acrescentadas sem duplicar o
+catálogo analítico.
 
 Os testes em `src/stats/__tests__/stats.test.ts` comparam os resultados com
 valores de `scipy`, `R` e publicações de referência. A catalogação completa das
@@ -184,6 +191,10 @@ scripts/
   bloquear automaticamente a análise.
 - **Homogeneidade**: Levene é o teste de decisão; Bartlett é informativo.
 - **Outliers**: apenas sinalizados. A exclusão exige justificativa registrada.
+- **Atributo/qualitativo**: item = amostra, avaliador = analista, categoria
+  observada = `category` (ou `textValue`/`value`) e referência = `level` (ou
+  `referenceValue`). O estudo usa kappa de Cohen/Fleiss; a decisão padrão usa
+  κ ≥ 0,75 como conforme e 0,40–0,75 como atenção, valores editáveis.
 - **Seletividade**: não há cálculo automático; exige experimento e evidência
   registrada. Permanece “não avaliado” até haver critério e dado.
 - **Assinaturas**: são eletrônicas simples (nome, papel, instante e hash), não

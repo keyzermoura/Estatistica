@@ -82,7 +82,8 @@ export type SampleSizeMethod =
   | 'nested'
   | 'lod'
   | 'linearity'
-  | 'guideline';
+  | 'guideline'
+  | 'attribute_agreement';
 
 export type CriterionOperator = '>=' | '<=' | 'between';
 

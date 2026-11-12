@@ -66,6 +66,8 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
   const toast = useToast();
   const locked = bundle.validation.locked;
   const profile = getProfileForMethod(bundle.method);
+  const attribute = profile.id === 'attribute';
+  const attributeQc = analysis.qc.attribute;
   const uncertaintyDefinition = profile.parameters.find((parameter) => parameter.key === 'uncertainty');
   const [items, setItems] = useState<UncertaintyItem[]>(bundle.uncertainty);
   const [savingUncertainty, setSavingUncertainty] = useState(false);
@@ -172,6 +174,18 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
 
   const descriptive = analysis.qc.descriptive;
   const calibration = analysis.qc.regression;
+  const attributeData = attributeQc?.data ?? null;
+  const attributeStudy = attributeQc?.study ?? null;
+  const finiteValues = (values: Array<number | null>) =>
+    values.filter((value): value is number => value !== null && Number.isFinite(value));
+  const intraKappas = finiteValues(
+    attributeStudy?.intraRater.map((result) => result.kappa.kappa) ?? [],
+  );
+  const referenceKappas = finiteValues(
+    attributeStudy?.vsReference.map((result) => result.kappa.kappa) ?? [],
+  );
+  const worstIntra = intraKappas.length ? Math.min(...intraKappas) : null;
+  const worstReference = referenceKappas.length ? Math.min(...referenceKappas) : null;
 
   return (
     <StepShell
@@ -185,16 +199,28 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
             A análise é recalculada a cada alteração dos dados ou critérios. O botão “Congelar
             resultados” grava o estado atual com um hash de entrada na tabela de análises.
           </p>
-          <p className="mt-1">
-            Outliers são sinalizados, nunca removidos automaticamente. A decisão de excluir um
-            ponto deve ser registrada e justificada.
-          </p>
+          {attribute ? (
+            <p className="mt-1">
+              No perfil de atributo, o estudo usa <strong>Amostra</strong> como item,{' '}
+              <strong>Analista / lab</strong> como avaliador e <strong>Ref. categ.</strong> como
+              referência conhecida. Kappa, eficácia, FAR e FRR são calculados a partir das
+              categorias observadas; classificações ausentes e duplicidades são reportadas antes de
+              qualquer conclusão.
+            </p>
+          ) : (
+            <p className="mt-1">
+              Outliers são sinalizados, nunca removidos automaticamente. A decisão de excluir um
+              ponto deve ser registrada e justificada.
+            </p>
+          )}
         </>
       }
       aside={
         <div className="flex flex-wrap items-center gap-2">
           <VerdictBadge verdict={analysis.overallVerdict} />
-          <Badge tone="outline">{analysis.nUsed} medições usadas</Badge>
+          <Badge tone="outline">
+            {analysis.nUsed} {attribute ? 'classificações usadas' : 'medições usadas'}
+          </Badge>
         </div>
       }
       footer={
@@ -224,11 +250,52 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <Stat label="n usado" value={analysis.nUsed} hint={`${analysis.nTotal} registros`} icon={<Sigma className="h-5 w-5" />} />
-        <Stat label="Média" value={fmt(descriptive.mean)} hint={`IC ${((descriptive.confidence ?? 0.95) * 100).toFixed(0)}%: ${fmt(descriptive.ciLow)} – ${fmt(descriptive.ciHigh)}`} icon={<BarChart3 className="h-5 w-5" />} tone="neutral" />
-        <Stat label="s" value={fmt(descriptive.sd)} hint={`variância ${fmt(descriptive.variance)}`} icon={<LineChart className="h-5 w-5" />} tone="neutral" />
-        <Stat label="CV" value={descriptive.cv === null ? '—' : `${fmt(descriptive.cv, 2)}%`} hint={`mediana ${fmt(descriptive.median)}`} icon={<FlaskConical className="h-5 w-5" />} tone={descriptive.cv !== null && descriptive.cv > 10 ? 'warning' : 'success'} />
-        <Stat label="Veredito global" value={analysis.overallVerdict === 'pass' ? 'Conforme' : analysis.overallVerdict === 'fail' ? 'Não conforme' : analysis.overallVerdict === 'warning' ? 'Atenção' : 'Não avaliado'} hint={`${analysis.parameters.length} parâmetro(s)`} icon={<CheckCircle2 className="h-5 w-5" />} tone={analysis.overallVerdict === 'pass' ? 'success' : analysis.overallVerdict === 'fail' ? 'danger' : 'warning'} />
+        {attribute ? (
+          <>
+            <Stat
+              label="Classificações válidas"
+              value={analysis.nUsed}
+              hint={`${analysis.nTotal} registros na coleta`}
+              icon={<Sigma className="h-5 w-5" />}
+            />
+            <Stat
+              label="Itens"
+              value={attributeQc?.data?.items.length ?? 0}
+              hint="amostras distintas"
+              icon={<FlaskConical className="h-5 w-5" />}
+              tone="neutral"
+            />
+            <Stat
+              label="Avaliadores"
+              value={attributeQc?.data?.raters.length ?? 0}
+              hint="analistas/labs distintos"
+              icon={<Database className="h-5 w-5" />}
+              tone="neutral"
+            />
+            <Stat
+              label="Sem referência"
+              value={attributeQc?.data?.itemsWithoutReference ?? 0}
+              hint="itens sem categoria correta"
+              icon={<Info className="h-5 w-5" />}
+              tone={attributeQc?.data?.itemsWithoutReference ? 'warning' : 'success'}
+            />
+            <Stat
+              label="Veredito global"
+              value={analysis.overallVerdict === 'pass' ? 'Conforme' : analysis.overallVerdict === 'fail' ? 'Não conforme' : analysis.overallVerdict === 'warning' ? 'Atenção' : 'Não avaliado'}
+              hint={`${analysis.parameters.length} parâmetro(s)`}
+              icon={<CheckCircle2 className="h-5 w-5" />}
+              tone={analysis.overallVerdict === 'pass' ? 'success' : analysis.overallVerdict === 'fail' ? 'danger' : 'warning'}
+            />
+          </>
+        ) : (
+          <>
+            <Stat label="n usado" value={analysis.nUsed} hint={`${analysis.nTotal} registros`} icon={<Sigma className="h-5 w-5" />} />
+            <Stat label="Média" value={fmt(descriptive.mean)} hint={`IC ${((descriptive.confidence ?? 0.95) * 100).toFixed(0)}%: ${fmt(descriptive.ciLow)} – ${fmt(descriptive.ciHigh)}`} icon={<BarChart3 className="h-5 w-5" />} tone="neutral" />
+            <Stat label="s" value={fmt(descriptive.sd)} hint={`variância ${fmt(descriptive.variance)}`} icon={<LineChart className="h-5 w-5" />} tone="neutral" />
+            <Stat label="CV" value={descriptive.cv === null ? '—' : `${fmt(descriptive.cv, 2)}%`} hint={`mediana ${fmt(descriptive.median)}`} icon={<FlaskConical className="h-5 w-5" />} tone={descriptive.cv !== null && descriptive.cv > 10 ? 'warning' : 'success'} />
+            <Stat label="Veredito global" value={analysis.overallVerdict === 'pass' ? 'Conforme' : analysis.overallVerdict === 'fail' ? 'Não conforme' : analysis.overallVerdict === 'warning' ? 'Atenção' : 'Não avaliado'} hint={`${analysis.parameters.length} parâmetro(s)`} icon={<CheckCircle2 className="h-5 w-5" />} tone={analysis.overallVerdict === 'pass' ? 'success' : analysis.overallVerdict === 'fail' ? 'danger' : 'warning'} />
+          </>
+        )}
       </div>
 
       {uncertaintyDefinition ? (
@@ -439,6 +506,104 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         )}
       </div>
 
+      {attribute ? (
+        <Card>
+          <CardHeader
+            title="Diagnóstico do estudo de atributo"
+            description="Itens, avaliadores, referências e concordância observada. Nenhuma classificação é removida automaticamente."
+            icon={<BarChart3 className="h-4 w-4" />}
+          />
+          <CardBody className="space-y-3">
+            {attributeQc?.error ? (
+              <Alert tone="danger" title="Estudo de atributo não avaliado">
+                {attributeQc.error}
+              </Alert>
+            ) : null}
+            {attributeData ? (
+              <>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                    <p className="text-[10px] uppercase tracking-wide text-ink-400">Itens (amostras)</p>
+                    <p className="font-mono text-lg">{attributeData.items.length}</p>
+                  </div>
+                  <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                    <p className="text-[10px] uppercase tracking-wide text-ink-400">Avaliadores</p>
+                    <p className="font-mono text-lg">{attributeData.raters.length}</p>
+                  </div>
+                  <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                    <p className="text-[10px] uppercase tracking-wide text-ink-400">Categorias</p>
+                    <p className="font-mono text-lg">{attributeData.categories.length}</p>
+                  </div>
+                  <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                    <p className="text-[10px] uppercase tracking-wide text-ink-400">Classificações válidas</p>
+                    <p className="font-mono text-lg">{attributeData.validRows}</p>
+                  </div>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">Cobertura e referência</p>
+                    <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <span className="text-ink-500">Itens com referência</span>
+                      <span className="font-mono">{attributeData.items.length - attributeData.itemsWithoutReference} / {attributeData.items.length}</span>
+                      <span className="text-ink-500">Cobertura</span>
+                      <span className="font-mono">{attributeStudy ? `${fmt(attributeStudy.referenceCoveragePct)}%` : '—'}</span>
+                      <span className="text-ink-500">Sem referência</span>
+                      <span className="font-mono">{attributeData.missingReference}</span>
+                      <span className="text-ink-500">Referências conflitantes</span>
+                      <span className="font-mono">{attributeData.referenceConflicts.length}</span>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">Qualidade dos registros</p>
+                    <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                      <span className="text-ink-500">Sem categoria</span>
+                      <span className="font-mono">{attributeData.missingCategory}</span>
+                      <span className="text-ink-500">Sem amostra</span>
+                      <span className="font-mono">{attributeData.missingItem}</span>
+                      <span className="text-ink-500">Sem avaliador</span>
+                      <span className="font-mono">{attributeData.missingRater}</span>
+                      <span className="text-ink-500">Duplicidades</span>
+                      <span className="font-mono">{attributeData.duplicateCells}</span>
+                      <span className="text-ink-500">Réplicas inválidas</span>
+                      <span className="font-mono">{attributeData.invalidReplicates}</span>
+                    </div>
+                  </div>
+                </div>
+                {attributeStudy ? (
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                      <p className="text-[10px] uppercase tracking-wide text-ink-400">κ interavaliadores</p>
+                      <p className="font-mono text-lg">{fmt(attributeStudy.interRater.kappa)}</p>
+                      <p className="text-[11px] text-ink-500">IC {fmt(attributeStudy.interRater.ciLow)}–{fmt(attributeStudy.interRater.ciHigh)}</p>
+                    </div>
+                    <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                      <p className="text-[10px] uppercase tracking-wide text-ink-400">Pior κ intra-avaliador</p>
+                      <p className="font-mono text-lg">{fmt(worstIntra)}</p>
+                      <p className="text-[11px] text-ink-500">{attributeStudy.intraRater.length} avaliador(es)</p>
+                    </div>
+                    <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                      <p className="text-[10px] uppercase tracking-wide text-ink-400">Pior κ com a referência</p>
+                      <p className="font-mono text-lg">{fmt(worstReference)}</p>
+                      <p className="text-[11px] text-ink-500">{attributeStudy.vsReference.length} avaliador(es)</p>
+                    </div>
+                  </div>
+                ) : null}
+                {attributeData.warnings.length ? (
+                  <ul className="list-disc space-y-1 pl-4 text-xs text-ink-500">
+                    {attributeData.warnings.map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </>
+            ) : (
+              <p className="text-xs text-ink-500">Sem dados de atributo mapeados.</p>
+            )}
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {!attribute ? (
       <Card>
         <CardHeader
           title="Controle de qualidade dos dados"
@@ -584,7 +749,9 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
           ) : null}
         </CardBody>
       </Card>
+      ) : null}
 
+      {!attribute ? (
       <Card>
         <CardHeader title="Por nível" description="Médias e dispersões observadas em cada nível." />
         <div className="max-h-[360px] overflow-auto">
@@ -616,6 +783,7 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
           </table>
         </div>
       </Card>
+      ) : null}
 
       <Card>
         <CardHeader title="Pressupostos da análise" />

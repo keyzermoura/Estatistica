@@ -1,21 +1,23 @@
 /**
  * Registro de perfis de método.
  *
- * O perfil analítico e o dimensional estão registrados. Famílias ainda sem
- * módulos próprios usam o perfil analítico como fallback, sem quebrar telas de
- * métodos já classificados.
+ * Os perfis analítico, dimensional e de atributo estão registrados. Famílias
+ * ainda sem módulos próprios usam o perfil analítico como fallback, sem quebrar
+ * telas de métodos já classificados.
  */
 
 import type { Method, MethodFamily } from '../lib/types';
 import type { MethodProfile } from './types';
 import { ANALYTICAL_PROFILE } from './analytical';
 import { DIMENSIONAL_PROFILE } from './dimensional';
+import { ATTRIBUTE_PROFILE } from './attribute';
 
 export const DEFAULT_PROFILE_ID = 'analytical';
 
 const REGISTRY: Record<string, MethodProfile> = {
   [ANALYTICAL_PROFILE.id]: ANALYTICAL_PROFILE,
   [DIMENSIONAL_PROFILE.id]: DIMENSIONAL_PROFILE,
+  [ATTRIBUTE_PROFILE.id]: ATTRIBUTE_PROFILE,
 };
 
 /** Retorna o perfil pelo identificador; família desconhecida falha explicitamente. */
@@ -31,10 +33,9 @@ export function getProfile(family: string): MethodProfile {
 }
 
 /**
- * Perfil ativo para um método. A família já é persistida (migração v2), mas
- * apenas o perfil analítico está registrado; as demais famílias usam o perfil
- * analítico como fallback até que seus módulos sejam implementados nos
- * próximos prompts. Isso evita quebrar telas ao classificar um método.
+ * Perfil ativo para um método. A família é persistida (migração v2) e os
+ * perfis registrados são usados; famílias ainda sem módulos próprios usam o
+ * perfil analítico como fallback para não quebrar telas.
  */
 export function getProfileForMethod(method?: Method): MethodProfile {
   const family = method?.family;

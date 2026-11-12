@@ -293,7 +293,9 @@ function buildSummary(
       ? 'Concordância de atributo'
       : input.designType.toUpperCase();
   const parts = [
-    `Delineamento ${designLabel} com ${total} medições recomendadas`,
+    input.designType === 'attribute_agreement'
+      ? `Delineamento de concordância de atributo com ${total} classificações recomendadas`
+      : `Delineamento ${designLabel} com ${total} medições recomendadas`,
     `${runs.length} execuções aleatorizadas (semente ${input.seed})`,
   ];
   if (largest) {
@@ -301,7 +303,9 @@ function buildSummary(
       profile.parameters.find((parameter) => parameter.key === largest.key)?.label ??
       largest.key;
     parts.push(
-      `O parâmetro mais exigente é ${label} (${largest.total} medições)`,
+      `O parâmetro mais exigente é ${label} (${largest.total} ${
+        input.designType === 'attribute_agreement' ? 'classificações' : 'medições'
+      })`,
     );
   }
   if (input.designType === 'iso5725') {
@@ -361,6 +365,9 @@ export function buildDesign(
         nAnalysts: input.nAnalysts,
         nDays: input.nDays,
         nLabs: input.nLabs,
+        nSamples: input.nSamples,
+        designType: input.designType,
+        profileId: profile.id,
       }),
     ),
   );
@@ -374,15 +381,27 @@ export function buildDesign(
   if (capped.length < runs.length) {
     warnings.push(`Lista de execuções limitada a ${capped.length} linhas para desempenho.`);
   }
-  const powerCurve = buildPowerCurve(input, Math.max(total, input.nReplicates * 10));
-  const assumptions = [
-    `Confiança de ${(input.confidence * 100).toFixed(1)}% e poder de ${(input.power * 100).toFixed(0)}%`,
-    `σ assumido = ${input.sigma}${input.sigma === 0.5 ? ' (padrão; substitua por dado piloto)' : ''}`,
-    `Efeito mínimo detectável = ${input.effect}; margem = ${input.margin}`,
-    'Observações independentes; aleatorização executada na ordem gerada',
-    'Dados faltantes serão tratados por análise de casos completos, com registro do n efetivo',
-  ];
-  if (input.sigma === 0.5) {
+  const powerCurve =
+    input.designType === 'attribute_agreement'
+      ? []
+      : buildPowerCurve(input, Math.max(total, input.nReplicates * 10));
+  const assumptions =
+    input.designType === 'attribute_agreement'
+      ? [
+          `Confiança de ${(input.confidence * 100).toFixed(1)}% para os intervalos de κ`,
+          'Classificações independentes; avaliadores não conhecem a referência durante o estudo',
+          'Categorias mutuamente exclusivas e exaustivas, definidas antes da coleta',
+          'Itens limítrofes incluídos para desafiar a discriminação entre categorias',
+          'Dados faltantes serão tratados por análise de casos completos, com registro do n efetivo',
+        ]
+      : [
+          `Confiança de ${(input.confidence * 100).toFixed(1)}% e poder de ${(input.power * 100).toFixed(0)}%`,
+          `σ assumido = ${input.sigma}${input.sigma === 0.5 ? ' (padrão; substitua por dado piloto)' : ''}`,
+          `Efeito mínimo detectável = ${input.effect}; margem = ${input.margin}`,
+          'Observações independentes; aleatorização executada na ordem gerada',
+          'Dados faltantes serão tratados por análise de casos completos, com registro do n efetivo',
+        ];
+  if (input.designType !== 'attribute_agreement' && input.sigma === 0.5) {
     warnings.push('σ = 0,5 é apenas um valor inicial. Use o desvio-padrão piloto do método.');
   }
   if (input.designType === 'iso5725' && Math.max(2, input.nLabs) < 6) {
@@ -409,14 +428,28 @@ export function buildDesign(
     const rawAnalysts = Math.round(input.nAnalysts);
     const rawSamples = Math.round(input.nSamples);
     const rawBorderline = Math.round(input.nBorderlineSamples ?? 0);
+    const rawReplicates = Math.round(input.nReplicates);
     if (rawAnalysts < 2) {
       warnings.push(
         'O estudo de concordância exige pelo menos 2 avaliadores; o plano foi gerado com 2.',
+      );
+    } else if (rawAnalysts < 3) {
+      warnings.push(
+        'AIAG MSA (2010) recomenda pelo menos 3 avaliadores para estimar a concordância entre avaliadores.',
       );
     }
     if (rawSamples < 2) {
       warnings.push(
         'O estudo de concordância exige pelo menos 2 amostras; o plano foi gerado com 2.',
+      );
+    } else if (rawSamples < 30) {
+      warnings.push(
+        'AIAG MSA (2010) recomenda pelo menos 30 itens para uma estimativa estável de κ; a precisão depende também da prevalência das categorias.',
+      );
+    }
+    if (rawReplicates < 2) {
+      warnings.push(
+        'O estudo de concordância exige pelo menos 2 réplicas por avaliador; o plano foi gerado com 2.',
       );
     }
     if (rawBorderline < 1) {
@@ -444,7 +477,9 @@ export function buildDesign(
       'As amostras incluem itens limítrofes, além de casos claramente conformes e não conformes',
     );
   }
-  if (Math.max(2, input.nReplicates) < 2) warnings.push('Menos de 2 réplicas impede estimar repetibilidade.');
+  if (input.designType !== 'attribute_agreement' && Math.max(2, input.nReplicates) < 2) {
+    warnings.push('Menos de 2 réplicas impede estimar repetibilidade.');
+  }
   const specimenConsumption =
     input.designType === 'nested_destructive'
       ? (() => {

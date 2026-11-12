@@ -85,6 +85,8 @@ estat2/
 │  ├─ profiles/
 │  │  ├─ types.ts             ← contrato MethodProfile
 │  │  ├─ analytical.ts        ← catálogo e módulos do perfil analítico
+│  │  ├─ dimensional.ts       ← catálogo e módulos do perfil dimensional
+│  │  ├─ attribute.ts         ← catálogo e módulos do perfil de atributo
 │  │  └─ index.ts             ← registro e seleção do perfil ativo
 │  └─ stats/
 │     ├─ distributions.ts     ← normais, t, χ², F, não centrais
@@ -103,12 +105,13 @@ estat2/
 │     ├─ gageBiasLinearity.ts ← tendência por nível + linearidade AIAG
 │     ├─ stability.ts         ← cartas I-MR/X̄-R, alarmes e resolução
 │     ├─ attribute.ts         ← Cohen/Fleiss, kappa ponderado, FAR/FRR
+│     ├─ attribute-data.ts    ← medições → observações de atributo
 │     ├─ conformity.ts        ← regra de decisão, banda de guarda e riscos
 │     ├─ uncertainty.ts       ← GUM + Welch-Satterthwaite
 │     ├─ analysis.ts          ← orquestração genérica da análise
 │     ├─ analysis-types.ts    ← contratos de resultado
 │     ├─ analysis-utils.ts    ← métricas e resumos compartilhados
-│     ├─ parameters/          ← módulos analíticos por parâmetro
+│     ├─ parameters/          ← módulos analíticos/dimensionais/de atributo
 │     ├─ index.ts
 │     └─ __tests__/           ← referência numérica + caracterização
 ├─ scripts/
@@ -123,18 +126,33 @@ estat2/
 ### Perfis de método
 
 O catálogo de parâmetros, os rótulos, as métricas, os critérios sugeridos, os
-pressupostos e os templates de delineamento ficam em `src/profiles/`. Nesta
-etapa só existe o perfil `analytical`; as demais famílias (dimensional, físico
-destrutivo/não destrutivo e atributo) serão registradas no mesmo contrato. O
-motor em `src/stats/analysis.ts` apenas orquestra os módulos indicados pelo
-perfil ativo e mantém as regras gerais de veredito, qualidade e auditoria.
+pressupostos e os templates de delineamento ficam em `src/profiles/`. Os perfis
+`analytical`, `dimensional` e `attribute` compartilham o mesmo contrato. O motor
+em `src/stats/analysis.ts` apenas orquestra os módulos indicados pelo perfil
+ativo e mantém as regras gerais de veredito, qualidade e auditoria.
 
 Desde a migração v2, `methods.family` registra a família do ensaio
 (`analytical`, `dimensional`, `physical-destructive`,
-`physical-nondestructive` ou `attribute`). Enquanto os próximos perfis não
-estiverem implementados, `getProfileForMethod` usa o perfil analítico como
-fallback para não quebrar telas; métodos migrados de versões anteriores são
-lidos como `analytical`.
+`physical-nondestructive` ou `attribute`). Famílias ainda sem perfil próprio
+usam o perfil analítico como fallback para não quebrar telas; métodos migrados
+de versões anteriores são lidos como `analytical`.
+
+O perfil `attribute` não exige migração de schema: ele reutiliza as colunas já
+existentes. O mapeamento é explícito em `src/stats/attribute-data.ts`:
+
+| Conceito do estudo | Coluna existente |
+|---|---|
+| Item / amostra | `sample` |
+| Avaliador | `analyst` |
+| Categoria observada | `category`, depois `text_value`, depois `value` |
+| Referência conhecida | `level`, depois `reference_value` |
+| Réplica | `replicate` |
+
+O estudo usa `attributeAgreementStudy` para κ de Cohen/Fleiss, concordância
+intra-avaliador, concordância com a referência, eficácia, FAR, FRR e cobertura.
+Falhas de coleta (item/avaliador/réplica duplicados, referências conflitantes)
+são capturadas e expostas como `not_evaluated`, com a mensagem no relatório.
+`QcSummary.attribute` leva dados, estudo e erro para a interface e o laudo.
 
 O módulo `src/stats/conformity.ts` é autônomo e entrega um bloco `report` com
 regra, valor, `U`, `k`, limites efetivos e veredito. Ele ainda não altera
@@ -207,13 +225,16 @@ Regras de integridade:
 1. **Método** — identificação, faixa, equipamento, norma, tipo de validação e critérios.
 2. **Parâmetros** — checklist com sugestão automática por tipo de método.
 3. **Delineamento** — confiança, poder, σ, efeito, margem; cálculo por parâmetro;
-   desenho (CRD, blocos, fatorial, cruzado, aninhado, ISO 5725-2); curva de poder;
-   aleatorização com semente; resumo leigo.
+   desenho (CRD, blocos, fatorial, cruzado, aninhado, ISO 5725-2, concordância
+   de atributo); curva de poder ou orientação de cegamento; aleatorização com
+   semente; resumo leigo.
 4. **Coleta** — formulário, planilha modelo, importação com validação, detecção de
-   faltantes, desbalanceamento e valores fora da faixa.
+   faltantes, desbalanceamento, valores fora da faixa, categorias ausentes,
+   referências ausentes e duplicidades item/avaliador/réplica.
 5. **Análise** — descritiva, gráficos, outliers, normalidade, homogeneidade,
    ANOVA, componentes de variância, ISO 5725-2, regressão/linearidade, LD/LQ,
-   tendência/recuperação, z/En, TOST e orçamento de incerteza GUM.
+   tendência/recuperação, z/En, TOST, orçamento de incerteza GUM e, no perfil de
+   atributo, κ, eficácia, FAR, FRR e cobertura de referência.
 6. **Relatório** — prévia auditável, assinaturas, DOCX/PDF, pacote de evidências.
 7. **Auditoria** — log, versões, bloqueio.
 
@@ -238,6 +259,7 @@ registrada no relatório. Os padrões abaixo são apenas recomendações iniciai
 | ANOVA | 1 fator (balanceada/desbalanceada); 2 fatores cruzados balanceados; modelo misto REML para 1 fator aleatório desbalanceado | Para desenhos cruzados desbalanceados, o sistema emite alerta e usa aproximação ANOVA, registrando a limitação |
 | Componentes de variância | método dos momentos (ANOVA) para balanceado; REML para 1 fator | Coincide com ISO 5725-2 no caso balanceado |
 | ISO 5725-2 | p laboratórios × n replicatas × q níveis, balanceado | s_r² = MSW; s_L² = (MSB−MSW)/n; s_R² = s_r²+s_L²; pooling por nível |
+| Atributo | 30 itens × 3 avaliadores × 3 réplicas (AIAG MSA); κ ≥ 0,75 conforme, 0,40–0,75 atenção | Itens limítrofes e referência conhecida; κ de Cohen/Fleiss; FAR/FRR só quando a categoria de aceitação é reconhecida; limites editáveis |
 | Incerteza | GUM, entradas independentes | Tipo A = s/√n; Tipo B conforme distribuição; k=2 ou t(ν_eff) |
 | Conformidade | aceitação simples, banda de guarda (`r=1`) ou probabilidade normal (`P≥0,95`) | Regra explícita e editável (ISO/IEC 17025, 7.8.2.1); limites fechados; três estados (conforme/não conforme/indeterminado). Riscos são específicos ao valor medido (JCGM 106), não globais |
 | Alertas de tolerância | `TUR/TAR ≥ 4`, `U/T ≤ 0,25`, `%P/T ≤ 10%` | Limiares editáveis e apenas informativos; não mudam a decisão da regra. `TUR/TAR = T/(2U)`; `%P/T = 100·U/T` é distinto do `%P/T` do Gage R&R |

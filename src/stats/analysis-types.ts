@@ -22,6 +22,8 @@ import type { NormalityResult } from './normality';
 import type { HomogeneityResult } from './variance';
 import type { UncertaintyResult } from './uncertainty';
 import type { ConformityCriteria, ConformityRule } from './conformity';
+import type { AttributeStudyResult } from './attribute';
+import type { AttributeData } from './attribute-data';
 
 export interface AnalysisMetric {
   key: string;
@@ -65,6 +67,13 @@ export interface ParameterAnalysis {
   results: Record<string, unknown>;
 }
 
+/** Diagnóstico do estudo de atributo, compartilhado pela interface e pelo relatório. */
+export interface AttributeQc {
+  data: AttributeData | null;
+  study: AttributeStudyResult | null;
+  error: string | null;
+}
+
 export interface QcSummary {
   descriptive: DescriptiveStats;
   byLevel: Array<{ group: string; stats: DescriptiveStats }>;
@@ -83,6 +92,8 @@ export interface QcSummary {
   recovery: ReturnType<typeof import('./bias').recoveryTest> | null;
   tost: ReturnType<typeof import('./bias').tost> | null;
   uncertainty: UncertaintyResult | null;
+  /** Presente apenas no perfil de atributo. */
+  attribute: AttributeQc | null;
   residualChart: AnalysisChart | null;
   calibrationChart: AnalysisChart | null;
 }
@@ -147,6 +158,8 @@ export interface DimensionalConformityOptions {
  * módulos de análise de cada parâmetro.
  */
 export interface AnalysisContext {
+  /** Todas as medições da validação (inclui linhas não numéricas). */
+  all: Measurement[];
   used: Measurement[];
   values: number[];
   options: AnalysisOptions;
@@ -156,6 +169,12 @@ export interface AnalysisContext {
   iso5725: Iso5725Result | null;
   uncertaintyItems: UncertaintyItem[];
   observedMean: number | null;
+  /** Dados de atributo mapeados; nulo nos demais perfis. */
+  attributeData: AttributeData | null;
+  /** Estudo de concordância; nulo quando indisponível ou inválido. */
+  attributeStudy: AttributeStudyResult | null;
+  /** Motivo da indisponibilidade do estudo de atributo. */
+  attributeError: string | null;
 }
 
 export interface AnalysisModuleInput {

@@ -101,6 +101,18 @@ export function CriteriaTable({
                       disabled={disabled}
                       onChange={(e) => update(criterion.id, { limit2: Number(e.target.value) })}
                     />
+                  ) : criterion.operator === '>=' &&
+                    criterion.limit2 !== undefined ? (
+                    <Input
+                      aria-label="Limite de atenção"
+                      className="sm:col-span-2"
+                      type="number"
+                      step="any"
+                      value={criterion.limit2}
+                      disabled={disabled}
+                      onChange={(e) => update(criterion.id, { limit2: Number(e.target.value) })}
+                      title="Abaixo deste valor o resultado é não conforme; entre este valor e o limite, é atenção."
+                    />
                   ) : (
                     <div className="hidden sm:col-span-2 sm:block" />
                   )}

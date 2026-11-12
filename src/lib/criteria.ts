@@ -153,6 +153,14 @@ export function criterionText(criterion: AcceptanceCriterion): string {
   if (criterion.operator === 'between') {
     return `entre ${fmt(criterion.limit)} e ${fmt(criterion.limit2 ?? criterion.limit)}${criterion.unit ? ` ${criterion.unit}` : ''}`;
   }
+  if (
+    criterion.operator === '>=' &&
+    criterion.limit2 !== undefined &&
+    Number.isFinite(criterion.limit2) &&
+    criterion.limit2 < criterion.limit
+  ) {
+    return `≥ ${fmt(criterion.limit)} conforme; ${fmt(criterion.limit2)} ≤ valor < ${fmt(criterion.limit)} atenção${criterion.unit ? ` (${criterion.unit})` : ''}`;
+  }
   return `${criterion.operator === '>=' ? '≥' : '≤'} ${fmt(criterion.limit)}${criterion.unit ? ` ${criterion.unit}` : ''}`;
 }
 

@@ -402,8 +402,8 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
               </p>
               <p>Gerado em: {report ? formatDate(report.content.generatedAt) : '—'}</p>
               <p>
-                O hash cobre método, validação, parâmetros, delineamento, medições e resultados
-                congelados.
+                O hash cobre método, validação, parâmetros, delineamento, registros de coleta e
+                resultados congelados.
               </p>
             </CardBody>
           </Card>

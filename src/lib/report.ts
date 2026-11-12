@@ -14,6 +14,7 @@ import type {
   Verdict,
 } from './types';
 import { fmt } from '../stats/distributions';
+import { attributeObservationsFrom } from '../stats/attribute-data';
 import { nowIso, objectHash, uid } from './utils';
 
 export const VERDICT_LABELS: Record<Verdict, string> = {
@@ -44,6 +45,20 @@ function conclusionFor(analysis: ValidationAnalysis): string {
 
 function dataSummary(bundle: ValidationBundle): string {
   const total = bundle.measurements.length;
+  if (bundle.method.family === 'attribute') {
+    const data = attributeObservationsFrom(bundle.measurements);
+    const parts = [
+      `${data.validRows} classificação(ões) válida(s) de ${total} registro(s)`,
+      `${data.items.length} item(ns)/amostra(s)`,
+      `${data.raters.length} avaliador(es)`,
+      `${data.categories.length} categoria(s)`,
+    ];
+    const gaps: string[] = [];
+    if (data.missingCategory) gaps.push(`${data.missingCategory} sem categoria observada`);
+    if (data.missingReference) gaps.push(`${data.missingReference} sem referência`);
+    if (data.duplicateCells) gaps.push(`${data.duplicateCells} duplicidade(s)`);
+    return `${parts.join(', ')}.${gaps.length ? ` Pendências: ${gaps.join('; ')}.` : ''} Categorias: ${data.categories.join(', ') || '—'}.`;
+  }
   const numeric = bundle.measurements.filter((m) => m.value !== null && Number.isFinite(m.value)).length;
   const levels = [...new Set(bundle.measurements.map((m) => m.level).filter(Boolean))];
   const analysts = [...new Set(bundle.measurements.map((m) => m.analyst).filter(Boolean))];

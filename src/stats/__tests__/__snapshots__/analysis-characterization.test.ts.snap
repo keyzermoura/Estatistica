@@ -1624,6 +1624,7 @@ exports[`caracterização da análise analítica > reproduz o resultado completo
       "totalSs": 996.6044549999999,
       "warnings": [],
     },
+    "attribute": null,
     "bias": {
       "alpha": 0.05,
       "biasPercent": 0.07666666666666651,

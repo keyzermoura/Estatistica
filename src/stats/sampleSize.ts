@@ -1024,6 +1024,44 @@ function sampleSizeDimensional(
   };
 }
 
+/**
+ * Tamanho de amostra para concordância de atributo.
+ *
+ * O estudo não usa poder de teste t: o total é o produto
+ * itens × avaliadores × réplicas. A precisão do κ depende do número de itens e
+ * da prevalência das categorias; o padrão AIAG (30 itens, 3 avaliadores e 2–3
+ * réplicas) é uma recomendação prática, não um cálculo de poder.
+ */
+export function sampleSizeAttributeAgreement(opts: {
+  nSamples?: number;
+  nAnalysts?: number;
+  nReplicates?: number;
+}): SampleSizeResult {
+  const samples = Math.max(2, Math.round(opts.nSamples ?? 30));
+  const raters = Math.max(2, Math.round(opts.nAnalysts ?? 3));
+  const reps = Math.max(2, Math.round(opts.nReplicates ?? 3));
+  const total = samples * raters * reps;
+  return {
+    method: 'attribute_agreement',
+    nPerGroup: samples,
+    groups: raters * reps,
+    total,
+    power: null,
+    precision: null,
+    formula: 'N = itens × avaliadores × réplicas; κ = (p_o − p_e)/(1 − p_e)',
+    reference: 'Cohen (1960); Fleiss (1971); AIAG MSA (2010), 4. ed.',
+    assumptions: [
+      'Itens com referência conhecida para exatidão',
+      'Classificações independentes e cegas',
+      'Categorias mutuamente exclusivas',
+    ],
+    notes: [
+      `Sugestão: ${samples} itens × ${raters} avaliadores × ${reps} réplicas = ${total} classificações.`,
+      'Inclua itens limítrofes e casos claros de cada categoria; a precisão do κ depende da prevalência.',
+    ],
+  };
+}
+
 /** Retorna o n de um parâmetro a partir da chave e dos parâmetros do delineamento. */
 export function planForParameter(
   key: string,
@@ -1051,9 +1089,23 @@ export function planForParameter(
 ): SampleSizeResult {
   const common = { alpha: opts.alpha, power: opts.power };
   const dimensional = opts.profileId === 'dimensional';
+  const attribute =
+    opts.profileId === 'attribute' || opts.designType === 'attribute_agreement';
   if (dimensional && opts.designType === 'gage_rr' && (key === 'repeatability' || key === 'reproducibility')) {
     return sampleSizeGageRR(key, {
       nSamples: opts.nSamples ?? 10,
+      nAnalysts: opts.nAnalysts,
+      nReplicates: opts.nReplicates,
+    });
+  }
+  if (
+    attribute &&
+    (key === 'accuracy' ||
+      key === 'repeatability' ||
+      key === 'intermediate_precision')
+  ) {
+    return sampleSizeAttributeAgreement({
+      nSamples: opts.nSamples,
       nAnalysts: opts.nAnalysts,
       nReplicates: opts.nReplicates,
     });

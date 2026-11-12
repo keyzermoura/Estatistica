@@ -830,6 +830,58 @@ Referências: Cohen (1960); Fleiss (1971); Fleiss, Cohen & Everitt (1969);
 Landis & Koch (1977); AIAG MSA 4th ed.; `irr` 0.84.1 (`kappa2`,
 `kappam.fleiss`); `sklearn.metrics.cohen_kappa_score`.
 
+### 12.6 Perfil de atributo e mapeamento das medições
+
+O perfil `attribute` reutiliza o schema existente, sem migração:
+
+| Conceito | Campo da medição |
+|---|---|
+| Item / amostra | `sample` |
+| Avaliador | `analyst` |
+| Categoria observada | `category` → `textValue` → `value` (numérico convertido em texto) |
+| Referência conhecida | `level` → `referenceValue` |
+| Réplica | `replicate` (inteiro ≥ 1; inválido vira 1 com alerta) |
+
+`attributeObservationsFrom` conta itens sem referência, categorias ausentes,
+amostra/avaliador ausentes, réplicas inválidas, células duplicadas e referências
+conflitantes. O estudo só é executado quando não há conflito de referência nem
+duplicidade item/avaliador/réplica; nesses casos o resultado fica
+`not_evaluated` com a mensagem registrada, em vez de quebrar a interface.
+
+Os parâmetros do perfil são:
+
+| Parâmetro | Métricas | Fonte |
+|---|---|---|
+| Exatidão / concordância com a referência | `kappa_reference`, `effectiveness`, `far`, `frr`, `reference_coverage` | concordância de cada avaliador com a referência |
+| Repetibilidade | `kappa_intra`, `po_intra` | réplicas do mesmo avaliador |
+| Precisão intermediária | `kappa_inter`, `po_inter` | primeira réplica de cada item, entre avaliadores |
+
+As métricas agregadas usam o **pior avaliador** (mínimo para κ, eficácia e
+cobertura; máximo para FAR e FRR), para que um avaliador fora do critério não
+seja mascarado pela média. Cada métrica é reavaliada com o seu próprio critério;
+sem critério cadastrado, o veredito é `not_evaluated`. Cobertura abaixo do
+mínimo é **atenção**, não reprovação automática, porque limita a conclusão sobre
+exatidão sem invalidar a concordância entre avaliadores.
+
+### 12.7 Tamanho de amostra de atributo
+
+O estudo não usa poder de teste t. O total é o produto:
+
+```
+N = itens × avaliadores × réplicas
+```
+
+O template padrão usa 30 itens × 3 avaliadores × 3 réplicas = **270
+classificações**, com 6 itens limítrofes. O padrão AIAG MSA (30 itens, 3
+avaliadores, 2–3 réplicas) é uma recomendação prática; a precisão do κ depende
+da prevalência das categorias e do número de itens. O sistema alerta quando há
+menos de 30 itens, menos de 3 avaliadores ou nenhum item limítrofe, mas não
+bloqueia o plano.
+
+Critérios iniciais: apenas κ (0,75 conforme; 0,40 atenção). Eficácia (≥ 90%),
+FAR (≤ 10%), FRR (≤ 10%) e cobertura (100%) aparecem como sugestões editáveis,
+mas **não são aplicados** sem decisão explícita do laboratório.
+
 ## 13. Conformidade, banda de guarda e riscos
 
 Arquivo: `src/stats/conformity.ts`. A entrada é o valor medido `x`, a

@@ -35,6 +35,10 @@ import {
   unique,
   withinGroupResiduals,
 } from './analysis-utils';
+import {
+  attributeStudyCriteria,
+  buildAttributeStudy,
+} from './attribute-data';
 import type {
   AnalysisContext,
   AnalysisOptions,
@@ -50,6 +54,7 @@ export type {
   AnalysisModuleInput,
   AnalysisOptions,
   AnalysisTable,
+  AttributeQc,
   DimensionalConformityOptions,
   ParameterAnalysis,
   QcSummary,
@@ -73,35 +78,52 @@ export function analyzeValidation(
   options: AnalysisOptions = {},
 ): ValidationAnalysis {
   const profile = getProfile(options.profileId ?? DEFAULT_PROFILE_ID);
-  const used = measurements.filter((m) => m.value !== null && Number.isFinite(m.value));
-  const values = used.map((m) => m.value!);
-  const warnings: string[] = [];
+  const attributeMode = profile.id === 'attribute';
   const selected = parameters.filter((p) => p.selected);
+  const numericUsed = measurements.filter(
+    (m) => m.value !== null && Number.isFinite(m.value),
+  );
+  // No perfil de atributo, todas as linhas são candidatas; o mapeamento e a
+  // validação de amostra/avaliador/categoria ficam em attribute-data.ts.
+  const used = attributeMode ? measurements : numericUsed;
+  const values = attributeMode ? [] : numericUsed.map((m) => m.value!);
+  const warnings: string[] = [];
   const analyses: ParameterAnalysis[] = [];
-  const numericLevels = used.map((m) => numericLevel(m.level)).filter((v): v is number => v !== null);
+
+  const attributeCriteria = attributeStudyCriteria([
+    ...criteria,
+    ...selected.flatMap((selection) => selection.criteria),
+  ]);
+  const attributeOutcome = attributeMode
+    ? buildAttributeStudy(measurements, { criteria: attributeCriteria })
+    : null;
+
+  const numericLevels = numericUsed
+    .map((m) => numericLevel(m.level))
+    .filter((v): v is number => v !== null);
   const uniqueLevels = [...new Set(numericLevels)].sort((a, b) => a - b);
-  const regressionPoints = used
+  const regressionPoints = numericUsed
     .filter((m) => numericLevel(m.level) !== null)
     .map((m) => ({ x: numericLevel(m.level)!, y: m.value! }));
   const regression =
     uniqueLevels.length >= 3 && numericLevels.length >= 3
       ? linearRegression(regressionPoints, options.confidence ?? 0.95, options.alpha ?? 0.05)
       : null;
-  const levelGroups = [...new Set(used.map((m) => m.level || 'geral'))].map((level) => ({
+  const levelGroups = [...new Set(numericUsed.map((m) => m.level || 'geral'))].map((level) => ({
     name: level,
-    values: used.filter((m) => (m.level || 'geral') === level).map((m) => m.value!),
+    values: numericUsed.filter((m) => (m.level || 'geral') === level).map((m) => m.value!),
   }));
-  const residuals = withinGroupResiduals(used);
+  const residuals = withinGroupResiduals(numericUsed);
   const normality = residuals.length >= 3 ? shapiroWilk(residuals, options.alpha ?? 0.05) : null;
   const normalityAll = values.length >= 3 ? normalitySuite(values, options.alpha ?? 0.05) : null;
   const homogeneity = levelGroups.length >= 2 ? homogeneitySuite(levelGroups.map((g) => g.values), options.alpha ?? 0.05) : null;
   const anova = levelGroups.length >= 2 ? anovaOneWay(levelGroups, options.alpha ?? 0.05) : null;
   const labKey = (m: Measurement) => m.analyst || m.lot;
-  const labs = unique(used.map(labKey));
+  const labs = unique(numericUsed.map(labKey));
   const iso5725 =
-    labs.length >= 2 && unique(used.map((m) => m.level)).length >= 1
+    labs.length >= 2 && unique(numericUsed.map((m) => m.level)).length >= 1
       ? iso5725Analysis(
-          used.map((m) => ({
+          numericUsed.map((m) => ({
             lab: labKey(m) || 'Lab 1',
             level: m.level || 'nível',
             replicate: m.replicate,
@@ -109,7 +131,7 @@ export function analyzeValidation(
           })),
         )
       : null;
-  const accuracyPairs = accuracyPairsFrom(used);
+  const accuracyPairs = accuracyPairsFrom(numericUsed);
   const bias =
     accuracyPairs.length >= 2
       ? biasTest(
@@ -155,6 +177,7 @@ export function analyzeValidation(
   const observedMean = values.length ? mean(values) : null;
 
   const context: AnalysisContext = {
+    all: measurements,
     used,
     values,
     options,
@@ -164,6 +187,9 @@ export function analyzeValidation(
     iso5725,
     uncertaintyItems,
     observedMean,
+    attributeData: attributeOutcome?.data ?? null,
+    attributeStudy: attributeOutcome?.study ?? null,
+    attributeError: attributeOutcome?.error ?? null,
   };
 
   for (const selection of selected) {
@@ -183,21 +209,36 @@ export function analyzeValidation(
   const notEvaluated = analyses.some((a) => a.verdict === 'not_evaluated');
   const passAll = analyses.length > 0 && analyses.every((a) => a.verdict === 'pass');
   const overallVerdict: Verdict = fail ? 'fail' : passAll ? 'pass' : notEvaluated || analyses.length === 0 ? 'not_evaluated' : 'warning';
-  if (!used.length) warnings.push('Nenhuma medição numérica disponível.');
-  if (used.length && used.length < 6) warnings.push('Menos de 6 medições: interpretação limitada.');
-  if (normality && !normality.normal) warnings.push(normality.interpretation);
-  if (homogeneity && !homogeneity.primary.homogeneous) warnings.push(homogeneity.conclusion);
+
+  if (attributeMode) {
+    if (attributeOutcome?.error) {
+      warnings.push(`Estudo de atributo: ${attributeOutcome.error}`);
+    }
+    for (const warning of attributeOutcome?.data.warnings ?? []) warnings.push(warning);
+    for (const warning of attributeOutcome?.study?.warnings ?? []) warnings.push(warning);
+    if (!attributeOutcome?.study) {
+      warnings.push(
+        'Os parâmetros de atributo permanecem não avaliados até que os dados de coleta sejam corrigidos.',
+      );
+    }
+  } else {
+    if (!numericUsed.length) warnings.push('Nenhuma medição numérica disponível.');
+    if (numericUsed.length && numericUsed.length < 6) warnings.push('Menos de 6 medições: interpretação limitada.');
+    if (normality && !normality.normal) warnings.push(normality.interpretation);
+    if (homogeneity && !homogeneity.primary.homogeneous) warnings.push(homogeneity.conclusion);
+  }
+
   return {
     nTotal: measurements.length,
-    nUsed: used.length,
+    nUsed: attributeMode ? attributeOutcome?.data.validRows ?? 0 : numericUsed.length,
     overallVerdict,
     parameters: analyses,
     qc: {
       descriptive: describe(values),
-      byLevel: describeGroups(used, (m) => m.level || 'geral', (m) => m.value),
-      byAnalyst: describeGroups(used, (m) => m.analyst || '—', (m) => m.value),
-      byDay: describeGroups(used, (m) => m.day || '—', (m) => m.value),
-      byEquipment: describeGroups(used, (m) => m.equipment || '—', (m) => m.value),
+      byLevel: describeGroups(numericUsed, (m) => m.level || 'geral', (m) => m.value),
+      byAnalyst: describeGroups(numericUsed, (m) => m.analyst || '—', (m) => m.value),
+      byDay: describeGroups(numericUsed, (m) => m.day || '—', (m) => m.value),
+      byEquipment: describeGroups(numericUsed, (m) => m.equipment || '—', (m) => m.value),
       outliers: values.length >= 3 ? grubbsTest(values, options.alpha ?? 0.05) : null,
       normality,
       normalitySuite: normalityAll,
@@ -210,6 +251,13 @@ export function analyzeValidation(
       recovery,
       tost: equivalence,
       uncertainty,
+      attribute: attributeMode
+        ? {
+            data: attributeOutcome?.data ?? null,
+            study: attributeOutcome?.study ?? null,
+            error: attributeOutcome?.error ?? null,
+          }
+        : null,
       residualChart:
         regression && regression.residuals.length
           ? {
@@ -232,11 +280,18 @@ export function analyzeValidation(
           : null,
     },
     warnings: [...new Set(warnings)],
-    assumptions: [
-      'Observações independentes; ausência de erros de transcrição não pode ser provada pelo software.',
-      'Dados faltantes tratados por lista (listwise), com n efetivo registrado.',
-      `α = ${options.alpha ?? 0.05}; confiança = ${((options.confidence ?? 0.95) * 100).toFixed(0)}%.`,
-    ],
+    assumptions: attributeMode
+      ? [
+          'Classificações independentes; avaliadores não conhecem a referência durante a classificação.',
+          'A referência do item é a categoria registrada em “Nível” (ou o valor de referência numérico).',
+          'Dados faltantes tratados por lista (listwise), com n efetivo registrado; nenhuma observação é removida silenciosamente.',
+          `Confiança = ${((options.confidence ?? 0.95) * 100).toFixed(0)}%; κ e intervalos calculados com essa confiança.`,
+        ]
+      : [
+          'Observações independentes; ausência de erros de transcrição não pode ser provada pelo software.',
+          'Dados faltantes tratados por lista (listwise), com n efetivo registrado.',
+          `α = ${options.alpha ?? 0.05}; confiança = ${((options.confidence ?? 0.95) * 100).toFixed(0)}%.`,
+        ],
     generatedAt: new Date().toISOString(),
   };
 }
