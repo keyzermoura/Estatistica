@@ -195,6 +195,10 @@ scripts/
   observada = `category` (ou `textValue`/`value`) e referência = `level` (ou
   `referenceValue`). O estudo usa kappa de Cohen/Fleiss; a decisão padrão usa
   κ ≥ 0,75 como conforme e 0,40–0,75 como atenção, valores editáveis.
+- **Gabarito de atributo**: na coleta, um quadro por item permite definir a
+  categoria de referência de todas as réplicas/avaliadores, aplicar em massa e
+  sinalizar referências conflitantes. A visão é derivada de `level` e não altera
+  o schema.
 - **Seletividade**: não há cálculo automático; exige experimento e evidência
   registrada. Permanece “não avaliado” até haver critério e dado.
 - **Assinaturas**: são eletrônicas simples (nome, papel, instante e hash), não

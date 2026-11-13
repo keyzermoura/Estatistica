@@ -53,6 +53,73 @@ export interface AttributeStudyOutcome {
   error: string | null;
 }
 
+/** Referência consolidada de um item para o gabarito de coleta. */
+export interface AttributeReferenceItem {
+  item: string;
+  /** Número de linhas (avaliador × réplica) do item. */
+  rows: number;
+  /** Referência única quando todas as linhas concordam; nula se ausente ou conflitante. */
+  reference: string | null;
+  /** Referências distintas não vazias encontradas no item. */
+  references: string[];
+  /** Verdadeiro quando o item tem mais de uma referência distinta. */
+  conflict: boolean;
+}
+
+export interface AttributeReferenceSheet {
+  items: AttributeReferenceItem[];
+  /** Categorias observadas e de referência, para sugestão no gabarito. */
+  categories: string[];
+}
+
+/**
+ * Consolida as referências por item para o gabarito da coleta.
+ *
+ * O gabarito é uma visão derivada: não cria coluna nova nem altera o schema.
+ * A referência é lida de `level` e, na ausência dele, de `referenceValue`.
+ */
+export function attributeReferenceSheet(
+  measurements: readonly Measurement[],
+): AttributeReferenceSheet {
+  const byItem = new Map<string, { rows: number; references: Set<string> }>();
+  const categories = new Set<string>();
+
+  for (const measurement of measurements) {
+    const item = text(measurement.sample);
+    if (!item) continue;
+    const reference = attributeReferenceOf(measurement);
+    const entry = byItem.get(item) ?? { rows: 0, references: new Set<string>() };
+    entry.rows += 1;
+    if (reference) {
+      entry.references.add(reference);
+      categories.add(reference);
+    }
+    const category = attributeCategoryOf(measurement);
+    if (category) categories.add(category);
+    byItem.set(item, entry);
+  }
+
+  const items = [...byItem.entries()]
+    .map(([item, entry]) => {
+      const references = [...entry.references].sort((a, b) =>
+        a.localeCompare(b, 'pt-BR'),
+      );
+      return {
+        item,
+        rows: entry.rows,
+        reference: references.length === 1 ? references[0] : null,
+        references,
+        conflict: references.length > 1,
+      };
+    })
+    .sort((a, b) => a.item.localeCompare(b.item, 'pt-BR', { numeric: true }));
+
+  return {
+    items,
+    categories: [...categories].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+  };
+}
+
 function text(value: string | null | undefined): string {
   return String(value ?? '').trim();
 }

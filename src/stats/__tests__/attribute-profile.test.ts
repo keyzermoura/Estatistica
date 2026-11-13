@@ -9,6 +9,7 @@ import { getProfileForFamily, getProfileForMethod } from '../../profiles/index';
 import { ATTRIBUTE_PROFILE } from '../../profiles/attribute';
 import {
   attributeObservationsFrom,
+  attributeReferenceSheet,
   attributeStudyCriteria,
   buildAttributeStudy,
 } from '../attribute-data';
@@ -156,6 +157,79 @@ describe('perfil de atributo', () => {
     expect(data.warnings.some((warning) => warning.includes('duplicada'))).toBe(
       true,
     );
+  });
+
+  it('consolida o gabarito de referência por item e sinaliza conflitos', () => {
+    const sheet = attributeReferenceSheet([
+      measurement({
+        id: 'a',
+        sample: 'A-2',
+        analyst: 'R1',
+        category: 'conforme',
+        level: 'conforme',
+      }),
+      measurement({
+        id: 'b',
+        sample: 'A-2',
+        analyst: 'R2',
+        category: 'não conforme',
+        level: 'não conforme',
+        replicate: 2,
+      }),
+      measurement({
+        id: 'c',
+        sample: 'A-1',
+        analyst: 'R1',
+        category: 'conforme',
+      }),
+      measurement({
+        id: 'd',
+        sample: 'A-1',
+        analyst: 'R2',
+        category: 'conforme',
+        level: 'conforme',
+      }),
+      measurement({
+        id: 'e',
+        sample: 'A-3',
+        analyst: 'R1',
+        category: 'conforme',
+        level: 'conforme',
+      }),
+      measurement({
+        id: 'f',
+        sample: 'A-3',
+        analyst: 'R2',
+        category: 'não conforme',
+        level: 'não conforme',
+      }),
+      measurement({
+        id: 'g',
+        sample: '',
+        analyst: 'R1',
+        category: 'conforme',
+        level: 'conforme',
+      }),
+    ]);
+
+    expect(sheet.items.map((item) => item.item)).toEqual(['A-1', 'A-2', 'A-3']);
+    expect(sheet.items[0]).toMatchObject({
+      rows: 2,
+      reference: 'conforme',
+      conflict: false,
+    });
+    expect(sheet.items[1]).toMatchObject({
+      rows: 2,
+      reference: null,
+      conflict: true,
+    });
+    expect(sheet.items[1].references).toEqual(['conforme', 'não conforme']);
+    expect(sheet.items[2]).toMatchObject({
+      rows: 2,
+      reference: null,
+      conflict: true,
+    });
+    expect(sheet.categories).toEqual(['conforme', 'não conforme']);
   });
 
   it('não quebra quando há referências conflitantes ou duplicidades', () => {

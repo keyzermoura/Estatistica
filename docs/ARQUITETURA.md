@@ -153,6 +153,10 @@ intra-avaliador, concordância com a referência, eficácia, FAR, FRR e cobertur
 Falhas de coleta (item/avaliador/réplica duplicados, referências conflitantes)
 são capturadas e expostas como `not_evaluated`, com a mensagem no relatório.
 `QcSummary.attribute` leva dados, estudo e erro para a interface e o laudo.
+`attributeReferenceSheet` consolida a referência por item para o gabarito da
+coleta (visão derivada, sem coluna nova): aponta itens sem referência e
+conflitos, e a interface grava a categoria escolhida em `level`, limpando
+`reference_value`.
 
 O módulo `src/stats/conformity.ts` é autônomo e entrega um bloco `report` com
 regra, valor, `U`, `k`, limites efetivos e veredito. Ele ainda não altera

@@ -227,6 +227,15 @@ exatidão, informe a **Referência**; se ela estiver vazia, o sistema tenta usar
 um nível numérico como referência. Para LD/LQ por brancos, use um nível chamado
 `branco`, `blank` ou `0`.
 
+Em métodos de atributo, a coleta mostra o **Gabarito de referência**: uma linha
+por item (amostra), com o número de registros, a referência atual e um campo
+para definir a categoria. A aplicação vale para todas as réplicas e avaliadores
+do item e grava o valor em **Nível**. Use a categoria de aplicação em massa para
+preencher todos os itens, apenas os sem referência ou resolver conflitos. Itens
+com referências diferentes entre linhas aparecem como **conflito** e mantêm o
+estudo “não avaliado” até serem corrigidos. Para uma classificação cega, não
+mostre esta coluna nem o gabarito ao avaliador.
+
 ### 7.2 Importação
 
 1. Clique em **Modelo** para baixar um XLSX já com a ordem do delineamento.

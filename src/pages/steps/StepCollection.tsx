@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
+  Check,
   ClipboardList,
   Download,
   FileSpreadsheet,
@@ -23,6 +24,7 @@ import {
 } from '../../lib/export';
 import { parseNumber, uid } from '../../lib/utils';
 import { fmt } from '../../stats/distributions';
+import { attributeReferenceSheet } from '../../stats/attribute-data';
 import { StepShell } from '../../components/wizard';
 import {
   Alert,
@@ -77,10 +79,15 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
   const [importing, setImporting] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
+  const [referenceDrafts, setReferenceDrafts] = useState<Record<string, string>>({});
+  const [bulkReference, setBulkReference] = useState(
+    () => bundle.design?.input.levels?.[0] ?? '',
+  );
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setMeasurements(bundle.measurements);
+    setReferenceDrafts({});
   }, [bundle.measurements]);
 
   const patch = (id: string, value: Partial<Measurement>) => {
@@ -186,6 +193,49 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
     attribute,
   ]);
 
+  const attributeSheet = useMemo(
+    () => (attribute ? attributeReferenceSheet(measurements) : null),
+    [attribute, measurements],
+  );
+  const attributeItems = attributeSheet?.items ?? [];
+  const attributeCategories = useMemo(() => {
+    const values = new Set<string>();
+    for (const level of bundle.design?.input.levels ?? []) {
+      const trimmed = level.trim();
+      if (trimmed) values.add(trimmed);
+    }
+    for (const category of attributeSheet?.categories ?? []) values.add(category);
+    return [...values].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [attributeSheet, bundle.design?.input.levels]);
+  const missingReferenceItems = attributeItems.filter(
+    (item) => !item.reference && !item.conflict,
+  );
+  const conflictReferenceItems = attributeItems.filter((item) => item.conflict);
+
+  const applyAttributeReference = (items: string[], reference: string) => {
+    if (!items.length) return;
+    const target = new Set(items);
+    const value = reference.trim();
+    setMeasurements((prev) =>
+      prev.map((row) =>
+        target.has(row.sample.trim())
+          ? { ...row, level: value, referenceValue: null }
+          : row,
+      ),
+    );
+    setReferenceDrafts((prev) => {
+      const next = { ...prev };
+      for (const item of items) delete next[item];
+      return next;
+    });
+  };
+
+  const commitReferenceDraft = (item: string) => {
+    const draft = referenceDrafts[item];
+    if (draft === undefined) return;
+    applyAttributeReference([item], draft);
+  };
+
   const fillFromPlan = () => {
     if (!bundle.design?.plan.runs.length) {
       toast.push('Gere e salve um delineamento antes de preencher pelo plano.', 'danger');
@@ -215,6 +265,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
       notes: '',
     }));
     setMeasurements(rows);
+    setReferenceDrafts({});
     setPlanOpen(false);
     toast.push(`${rows.length} linha(s) criadas a partir do plano. Preencha os valores e salve.`);
   };
@@ -230,6 +281,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
       }
       assertMeasurementIdentities(rows, bundle.method.family);
       setMeasurements(importedToMeasurements(rows, bundle.validation.id));
+      setReferenceDrafts({});
       toast.push(`${rows.length} linha(s) importadas. Revise e clique em salvar.`);
     } catch (error) {
       toast.push(error instanceof Error ? error.message : 'Falha ao importar planilha.', 'danger');
@@ -445,6 +497,181 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
           {quality.outside.length > 6 ? ` … +${quality.outside.length - 6}` : ''}. Confirme se são
           válidos ou se a faixa precisa ser revista.
         </Alert>
+      ) : null}
+
+      {attribute ? (
+        <Card>
+          <CardHeader
+            title="Gabarito de referência"
+            description="Defina a categoria correta de cada item. A referência vale para todas as réplicas e avaliadores do mesmo item."
+            icon={<ClipboardList className="h-4 w-4" />}
+            action={
+              <div className="flex flex-wrap gap-1.5">
+                <Badge tone="outline">{attributeItems.length} item(ns)</Badge>
+                {missingReferenceItems.length ? (
+                  <Badge tone="warning">
+                    {missingReferenceItems.length} sem referência
+                  </Badge>
+                ) : null}
+                {conflictReferenceItems.length ? (
+                  <Badge tone="danger">
+                    {conflictReferenceItems.length} em conflito
+                  </Badge>
+                ) : null}
+              </div>
+            }
+          />
+          <CardBody className="space-y-3">
+            {attributeItems.length === 0 ? (
+              <p className="text-xs text-ink-500">
+                Nenhum item identificado. Preencha a coluna “Amostra”, use o plano ou importe a
+                coleta para definir o gabarito.
+              </p>
+            ) : (
+              <>
+                {conflictReferenceItems.length ? (
+                  <Alert tone="danger" title="Referências conflitantes">
+                    {conflictReferenceItems.length} item(ns) têm referências diferentes entre
+                    linhas. Defina uma única categoria por item antes de analisar; o estudo fica
+                    “não avaliado” enquanto houver conflito.
+                  </Alert>
+                ) : null}
+                <div className="flex flex-wrap items-end gap-2">
+                  <div className="min-w-[220px] flex-1">
+                    <label htmlFor="attribute-bulk-reference" className="field-label">
+                      Categoria para aplicação em massa
+                    </label>
+                    <input
+                      id="attribute-bulk-reference"
+                      className={`${inputClass} h-10`}
+                      list="attribute-reference-options"
+                      value={bulkReference}
+                      disabled={locked}
+                      onChange={(e) => setBulkReference(e.target.value)}
+                      placeholder="Ex.: conforme"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={locked || !bulkReference.trim()}
+                    onClick={() =>
+                      applyAttributeReference(
+                        attributeItems.map((item) => item.item),
+                        bulkReference,
+                      )
+                    }
+                  >
+                    Aplicar a todos
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={
+                      locked || !bulkReference.trim() || missingReferenceItems.length === 0
+                    }
+                    onClick={() =>
+                      applyAttributeReference(
+                        missingReferenceItems.map((item) => item.item),
+                        bulkReference,
+                      )
+                    }
+                  >
+                    Aplicar aos sem referência
+                  </Button>
+                  {conflictReferenceItems.length ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={locked || !bulkReference.trim()}
+                      onClick={() =>
+                        applyAttributeReference(
+                          conflictReferenceItems.map((item) => item.item),
+                          bulkReference,
+                        )
+                      }
+                    >
+                      Resolver conflitos
+                    </Button>
+                  ) : null}
+                </div>
+                <datalist id="attribute-reference-options">
+                  {attributeCategories.map((category) => (
+                    <option key={category} value={category} />
+                  ))}
+                </datalist>
+                <div className="max-h-[320px] overflow-auto rounded-xl border border-ink-200 dark:border-ink-800">
+                  <table className="data-table">
+                    <thead className="sticky top-0 z-10 bg-ink-50 dark:bg-ink-900">
+                      <tr>
+                        <th>Item (amostra)</th>
+                        <th className="text-right">Registros</th>
+                        <th>Referência atual</th>
+                        <th>Definir referência</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {attributeItems.map((item) => (
+                        <tr key={item.item}>
+                          <td className="font-mono text-xs">{item.item}</td>
+                          <td className="text-right font-mono text-xs">{item.rows}</td>
+                          <td>
+                            {item.conflict ? (
+                              <Badge tone="danger">conflito</Badge>
+                            ) : item.reference ? (
+                              <Badge tone="neutral">{item.reference}</Badge>
+                            ) : (
+                              <Badge tone="warning">sem referência</Badge>
+                            )}
+                          </td>
+                          <td>
+                            <div className="flex items-center gap-1">
+                              <input
+                                className={`${inputClass} w-40`}
+                                list="attribute-reference-options"
+                                value={referenceDrafts[item.item] ?? item.reference ?? ''}
+                                disabled={locked}
+                                onChange={(e) =>
+                                  setReferenceDrafts((prev) => ({
+                                    ...prev,
+                                    [item.item]: e.target.value,
+                                  }))
+                                }
+                                onBlur={() => commitReferenceDraft(item.item)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    commitReferenceDraft(item.item);
+                                  }
+                                }}
+                                placeholder="definir…"
+                                aria-label={`Categoria de referência do item ${item.item}`}
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                disabled={locked || referenceDrafts[item.item] === undefined}
+                                onClick={() => commitReferenceDraft(item.item)}
+                                title={`Aplicar referência ao item ${item.item}`}
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-[11px] text-ink-400">
+                  A aplicação substitui a referência existente nas linhas do item e grava a
+                  categoria em “Nível”. Salve a coleta para persistir. Para uma classificação
+                  cega, o avaliador não deve ver esta coluna nem este gabarito.
+                </p>
+              </>
+            )}
+          </CardBody>
+        </Card>
       ) : null}
 
       <Card>
@@ -700,6 +927,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
               variant="danger"
               onClick={() => {
                 setMeasurements([]);
+                setReferenceDrafts({});
                 setClearOpen(false);
                 toast.push('Tabela limpa. Clique em salvar para confirmar.');
               }}
