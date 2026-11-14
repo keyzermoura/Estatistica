@@ -127,8 +127,15 @@ Para cada parâmetro selecionado:
 
 - escreva uma **justificativa** curta (por que ele é relevante e como será
   avaliado);
-- confira os **critérios específicos** da validação. Eles se somam aos critérios
-  globais do método.
+- confira os **critérios específicos** da validação. Para a mesma métrica, um
+  critério específico **substitui** o critério global do método; métricas sem
+  específico continuam usando o global. Remova o específico para voltar ao
+  global.
+
+Os critérios globais aparecem marcados como “substituídos” quando há um
+critério específico para a mesma métrica. A análise usa apenas o critério
+efetivo, e o relatório registra a regra de precedência e as substituições
+aplicadas.
 
 Parâmetros disponíveis:
 

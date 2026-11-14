@@ -129,7 +129,8 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
         <>
           <p>
             Os critérios cadastrados aqui valem para todas as validações do método. Você pode
-            adicionar critérios específicos por validação na etapa de Parâmetros.
+            adicionar critérios específicos por validação na etapa de Parâmetros; para a mesma
+            métrica, o critério específico substitui o global.
           </p>
           <p className="mt-1">
             Sem critério cadastrado, o resultado correspondente será exibido como “não avaliado”.

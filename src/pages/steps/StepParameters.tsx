@@ -104,7 +104,8 @@ export function StepParameters({ bundle, goTo, reload }: StepProps) {
             ponto de partida: exclua parâmetros não aplicáveis e registre o motivo.
           </p>
           <p className="mt-1">
-            Critérios específicos desta validação somam-se aos critérios globais do método.
+            Critérios específicos desta validação substituem os critérios globais do método para a
+            mesma métrica. Métricas sem critério específico continuam usando o global.
           </p>
         </>
       }
@@ -153,6 +154,12 @@ export function StepParameters({ bundle, goTo, reload }: StepProps) {
             const definition = parameterDefinitions.get(parameter.key);
             const methodCriteria = bundle.method.criteria.filter(
               (criterion) => criterion.parameter === parameter.key,
+            );
+            const overriddenMetrics = new Set(
+              parameter.criteria.map((criterion) => criterion.metric),
+            );
+            const overridingCriteria = parameter.criteria.filter((criterion) =>
+              methodCriteria.some((method) => method.metric === criterion.metric),
             );
             const isSuggested = suggested.has(parameter.key);
             return (
@@ -215,9 +222,16 @@ export function StepParameters({ bundle, goTo, reload }: StepProps) {
                           {methodCriteria.map((criterion) => (
                             <span
                               key={criterion.id}
-                              className="rounded-full bg-ink-100 px-2 py-0.5 text-[11px] text-ink-600 dark:bg-ink-800 dark:text-ink-300"
+                              className={`rounded-full bg-ink-100 px-2 py-0.5 text-[11px] text-ink-600 dark:bg-ink-800 dark:text-ink-300 ${
+                                overriddenMetrics.has(criterion.metric)
+                                  ? 'opacity-60 line-through'
+                                  : ''
+                              }`}
                             >
                               {criterion.metric}: {criterionText(criterion)}
+                              {overriddenMetrics.has(criterion.metric) ? (
+                                <span className="ml-1 no-underline">(substituído)</span>
+                              ) : null}
                             </span>
                           ))}
                         </div>
@@ -227,6 +241,15 @@ export function StepParameters({ bundle, goTo, reload }: StepProps) {
                       <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">
                         Critérios específicos desta validação
                       </p>
+                      <p className="mb-1.5 text-[11px] text-ink-400">
+                        Substituem o critério global da mesma métrica. Remova o específico para
+                        voltar a usar o global.
+                      </p>
+                      {overridingCriteria.length ? (
+                        <p className="mb-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                          Substituindo: {overridingCriteria.map((criterion) => criterion.metric).join(', ')}.
+                        </p>
+                      ) : null}
                       <CriteriaTable
                         profile={profile}
                         parameter={parameter.key}

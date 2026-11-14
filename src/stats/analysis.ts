@@ -18,6 +18,7 @@ import type {
   ValidationParameter,
   Verdict,
 } from '../lib/types';
+import { resolveCriteriaDetailed } from '../lib/criteria';
 import { DEFAULT_PROFILE_ID, getProfile } from '../profiles/index';
 import type { MethodProfile } from '../profiles/types';
 import { describe, mean, describeGroups } from './descriptive';
@@ -90,10 +91,32 @@ export function analyzeValidation(
   const warnings: string[] = [];
   const analyses: ParameterAnalysis[] = [];
 
-  const attributeCriteria = attributeStudyCriteria([
-    ...criteria,
-    ...selected.flatMap((selection) => selection.criteria),
-  ]);
+  const resolvedCriteria = selected.map((selection) => ({
+    selection,
+    items: resolveCriteriaDetailed(criteria, selection.criteria, selection.key),
+  }));
+  const attributeCriteria = attributeStudyCriteria(
+    resolvedCriteria.flatMap(({ items }) => items.map((item) => item.criterion)),
+  );
+  const resolvedByKey = new Map(
+    resolvedCriteria.map(({ selection, items }) => [selection.key, items] as const),
+  );
+  const overriddenCriteria = resolvedCriteria.flatMap(({ selection, items }) => {
+    const parameter = profileParameter(profile, selection.key);
+    return items
+      .filter((item) => item.replaced !== null)
+      .map((item) => {
+        const metric = parameter.metrics.find((def) => def.key === item.criterion.metric);
+        return `${parameter.label} (${metric?.label ?? item.criterion.metric})`;
+      });
+  });
+  const criteriaAssumptions = overriddenCriteria.length
+    ? [
+        `Critérios específicos desta validação substituem os globais do método para a mesma métrica: ${[
+          ...new Set(overriddenCriteria),
+        ].join(', ')}.`,
+      ]
+    : [];
   const attributeOutcome = attributeMode
     ? buildAttributeStudy(measurements, { criteria: attributeCriteria })
     : null;
@@ -201,7 +224,7 @@ export function analyzeValidation(
         `O perfil de método "${profile.id}" não define análise para o parâmetro "${key}".`,
       );
     }
-    const criteriaForKey = [...criteria, ...selection.criteria];
+    const criteriaForKey = (resolvedByKey.get(key) ?? []).map((item) => item.criterion);
     analyses.push(analysis({ parameter, criteria: criteriaForKey, context }));
   }
 
@@ -286,11 +309,13 @@ export function analyzeValidation(
           'A referência do item é a categoria registrada em “Nível” (ou o valor de referência numérico).',
           'Dados faltantes tratados por lista (listwise), com n efetivo registrado; nenhuma observação é removida silenciosamente.',
           `Confiança = ${((options.confidence ?? 0.95) * 100).toFixed(0)}%; κ e intervalos calculados com essa confiança.`,
+          ...criteriaAssumptions,
         ]
       : [
           'Observações independentes; ausência de erros de transcrição não pode ser provada pelo software.',
           'Dados faltantes tratados por lista (listwise), com n efetivo registrado.',
           `α = ${options.alpha ?? 0.05}; confiança = ${((options.confidence ?? 0.95) * 100).toFixed(0)}%.`,
+          ...criteriaAssumptions,
         ],
     generatedAt: new Date().toISOString(),
   };

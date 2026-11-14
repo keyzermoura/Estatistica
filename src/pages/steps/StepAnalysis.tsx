@@ -16,6 +16,7 @@ import {
 import type { UncertaintyDistribution, UncertaintyItem, UncertaintyType } from '../../lib/types';
 import { clearAnalyses, replaceUncertainty, saveAnalysis, updateValidation } from '../../lib/repository';
 import { getProfileForMethod } from '../../profiles/index';
+import { resolveCriteria } from '../../lib/criteria';
 import { computeUncertainty, defaultDivisor } from '../../stats/uncertainty';
 import { fmt } from '../../stats/distributions';
 import { objectHash, uid } from '../../lib/utils';
@@ -147,7 +148,11 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
           inputHash: await objectHash({
             measurements: bundle.measurements,
             parameter: parameter.key,
-            criteria: bundle.parameters.find((item) => item.key === parameter.key)?.criteria ?? [],
+            criteria: resolveCriteria(
+              bundle.method.criteria,
+              bundle.parameters.find((item) => item.key === parameter.key)?.criteria ?? [],
+              parameter.key,
+            ),
           }),
           results: {
             verdict: parameter.verdict,

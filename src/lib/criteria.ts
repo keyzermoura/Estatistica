@@ -149,6 +149,67 @@ export function makeCriterion(
   };
 }
 
+export type CriterionSource = 'method' | 'validation';
+
+/** Critério efetivo com a origem e o global que ele substituiu, se houver. */
+export interface EffectiveCriterion {
+  criterion: AcceptanceCriterion;
+  source: CriterionSource;
+  /** Critério global do método substituído por um específico da validação. */
+  replaced: AcceptanceCriterion | null;
+}
+
+/**
+ * Resolve a precedência dos critérios de um parâmetro.
+ *
+ * Regra: para cada métrica, um critério específico da validação **substitui**
+ * o critério global do método. Métricas sem critério específico continuam
+ * usando o global; métricas novas são aditivas. A resolução é feita na
+ * avaliação e não altera os critérios persistidos, preservando a trilha de
+ * auditoria de cada lista.
+ */
+export function resolveCriteriaDetailed(
+  methodCriteria: readonly AcceptanceCriterion[],
+  validationCriteria: readonly AcceptanceCriterion[],
+  parameter: ParamKey,
+): EffectiveCriterion[] {
+  const specific = validationCriteria.filter((criterion) => criterion.parameter === parameter);
+  const overriddenMetrics = new Set(specific.map((criterion) => criterion.metric));
+  const replacedByMetric = new Map<string, AcceptanceCriterion>();
+  const method = methodCriteria.filter((criterion) => {
+    if (criterion.parameter !== parameter) return false;
+    if (!overriddenMetrics.has(criterion.metric)) return true;
+    if (!replacedByMetric.has(criterion.metric)) {
+      replacedByMetric.set(criterion.metric, criterion);
+    }
+    return false;
+  });
+
+  return [
+    ...method.map((criterion) => ({
+      criterion,
+      source: 'method' as const,
+      replaced: null,
+    })),
+    ...specific.map((criterion) => ({
+      criterion,
+      source: 'validation' as const,
+      replaced: replacedByMetric.get(criterion.metric) ?? null,
+    })),
+  ];
+}
+
+/** Lista efetiva de critérios de um parâmetro, já com a precedência aplicada. */
+export function resolveCriteria(
+  methodCriteria: readonly AcceptanceCriterion[],
+  validationCriteria: readonly AcceptanceCriterion[],
+  parameter: ParamKey,
+): AcceptanceCriterion[] {
+  return resolveCriteriaDetailed(methodCriteria, validationCriteria, parameter).map(
+    (item) => item.criterion,
+  );
+}
+
 export function criterionText(criterion: AcceptanceCriterion): string {
   if (criterion.operator === 'between') {
     return `entre ${fmt(criterion.limit)} e ${fmt(criterion.limit2 ?? criterion.limit)}${criterion.unit ? ` ${criterion.unit}` : ''}`;

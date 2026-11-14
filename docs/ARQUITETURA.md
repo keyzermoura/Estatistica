@@ -280,6 +280,13 @@ Todas as fórmulas ficam em `src/stats/*` e são catalogadas em
 exibido sem: **fórmula, valor, critério de aceitação e veredito** (quando há
 critério cadastrado).
 
+Os critérios globais pertencem ao método; a validação guarda apenas
+substituições. `resolveCriteria`, em `src/lib/criteria.ts`, aplica a precedência
+por parâmetro e métrica: o critério específico da validação substitui o global
+da mesma métrica, e as demais métricas continuam usando o global. A lista
+efetiva alimenta a análise, o hash de congelamento e os pressupostos do
+relatório; as listas originais permanecem intactas na trilha de auditoria.
+
 ## 6. Exportações
 
 - **XLSX/CSV**: planilha de coleta e dados brutos. Inclui as novas colunas de

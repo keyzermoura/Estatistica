@@ -158,7 +158,8 @@ export async function seedIfEmpty(): Promise<boolean> {
     key: definition.key,
     selected: Boolean(definition.defaultSelected),
     justification: definition.defaultJustification ?? '',
-    criteria: method.criteria.filter((c) => c.parameter === definition.key),
+    // Critérios globais ficam no método; a validação só guarda substituições.
+    criteria: [],
   }));
   saveParameters(validation.id, parameters);
 

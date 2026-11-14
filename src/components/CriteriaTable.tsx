@@ -62,7 +62,16 @@ export function CriteriaTable({
                     }}
                   >
                     {definitions.map((d) => (
-                      <option key={d.key} value={d.key}>
+                      <option
+                        key={d.key}
+                        value={d.key}
+                        disabled={
+                          d.key !== criterion.metric &&
+                          criteria.some(
+                            (item) => item.id !== criterion.id && item.metric === d.key,
+                          )
+                        }
+                      >
                         {d.label}
                       </option>
                     ))}

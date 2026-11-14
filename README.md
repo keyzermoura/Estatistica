@@ -95,7 +95,7 @@ Painel → Nova validação → 7 etapas → Relatório → Assinaturas → Apro
 1. **Método**: identificação, faixa, referências normativas e critérios de
    aceitação.
 2. **Parâmetros**: seleção do checklist, justificativas e critérios
-   específicos.
+   específicos (substituem os globais da mesma métrica).
 3. **Delineamento**: premissas estatísticas, n por parâmetro, poder, plano e
    ordem aleatorizada.
 4. **Coleta**: formulário, importação de planilha e verificações automáticas.
@@ -190,6 +190,9 @@ scripts/
 - **Normalidade**: Shapiro–Wilk é o teste principal; rejeições geram alerta, sem
   bloquear automaticamente a análise.
 - **Homogeneidade**: Levene é o teste de decisão; Bartlett é informativo.
+- **Critérios**: os globais do método valem para todas as validações; um
+  critério específico da validação substitui o global da mesma métrica. A regra
+  e as substituições aplicadas aparecem nos pressupostos do relatório.
 - **Outliers**: apenas sinalizados. A exclusão exige justificativa registrada.
 - **Atributo/qualitativo**: item = amostra, avaliador = analista, categoria
   observada = `category` (ou `textValue`/`value`) e referência = `level` (ou
