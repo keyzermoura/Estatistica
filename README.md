@@ -53,7 +53,8 @@ npm install
 npm run dev
 ```
 
-O Vite abre o sistema em `http://localhost:5173`.
+O Vite inicia o sistema em `http://localhost:5173`. Abra o endereço no
+navegador (ou use `npm start` para abrir automaticamente).
 
 Para instalar, verificar tipos, rodar os testes e gerar o build em um único
 comando:
@@ -75,9 +76,24 @@ npm run setup
 | `npm run typecheck` | Verificação de tipos (`tsc -b`) |
 | `npm test` | Testes de referência do núcleo estatístico |
 | `npm run test:watch` | Testes em modo observação |
+| `npm run test:e2e` | Testes de ponta a ponta no Chromium (Playwright) |
 | `npm run build` | Verificação de tipos + build de produção em `dist/` |
 | `npm run preview` | Serve o build de produção localmente |
 | `npm start` | Inicia o servidor de desenvolvimento e abre o navegador |
+
+### Testes de ponta a ponta
+
+Os testes E2E usam Chromium real e um banco novo (IndexedDB) por contexto. Na
+primeira execução, instale o navegador:
+
+```bash
+npx playwright install chromium
+npm run test:e2e
+```
+
+O Playwright sobe o Vite em `http://localhost:4173` automaticamente. Em caso de
+falha, screenshots e traces ficam em `test-results/` e o relatório HTML em
+`playwright-report/` (ambos ignorados pelo Git).
 
 ## Fluxo de uso
 
@@ -173,6 +189,7 @@ src/
   lib/              banco, repositório, tipos, critérios, relatório, exportação
   pages/            painel, configurações, wizard e etapas
   stats/            motor estatístico próprio e testes de referência
+e2e/                testes de ponta a ponta com Playwright
 docs/
   ARQUITETURA.md    arquitetura, modelo de dados e decisões
   FORMULAS.md       catálogo de fórmulas, referências e valores de teste
