@@ -28,6 +28,7 @@ import {
 import {
   computeAuditLogHash,
   GENESIS_HASH,
+  sha256Sync,
   verifyAuditChain,
   type AuditVerificationResult,
   type StoredAuditRow,
@@ -1149,6 +1150,8 @@ export function signReport(
   validationId: string,
   role: 'elaboration' | 'review' | 'approval',
   name: string,
+  roleTitle?: string,
+  meaning?: string,
   actor = 'sistema',
 ): ReportRecord | null {
   assertUnlocked(validationId);
@@ -1169,10 +1172,26 @@ export function signReport(
     next.approvedAt = timestamp;
     next.status = 'approved';
   }
+
+  // Gera o digest criptográfico da assinatura vinculando ao auditHash do relatório
+  const signatureDigest = sha256Sync(
+    `${report.content.auditHash || validationId}|${role}|${name}|${roleTitle || ''}|${meaning || ''}|${timestamp}`,
+  );
+
   next.content = {
     ...next.content,
     signatures: next.content.signatures?.map((s) =>
-      s.role === role ? { ...s, name, date: timestamp, signed: true } : s,
+      s.role === role
+        ? {
+            ...s,
+            name,
+            roleTitle: roleTitle || undefined,
+            meaning: meaning || undefined,
+            signatureDigest,
+            date: timestamp,
+            signed: true,
+          }
+        : s,
     ) ?? [],
   };
   return saveReport(next, actor);

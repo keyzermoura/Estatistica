@@ -31,6 +31,10 @@ import { formatDate, readFileAsDataUrl } from '../../lib/utils';
 import { ReportPreview } from '../../components/ReportPreview';
 import { StepShell } from '../../components/wizard';
 import {
+  ElectronicSignatureModal,
+  type ElectronicSignatureData,
+} from '../../components/ElectronicSignatureModal';
+import {
   Alert,
   Badge,
   Button,
@@ -70,6 +74,7 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
     review: bundle.report?.content.signatures.find((s) => s.role === 'review')?.name || bundle.validation.reviewer,
     approval: bundle.report?.content.signatures.find((s) => s.role === 'approval')?.name || bundle.validation.approver,
   });
+  const [signatureModalRole, setSignatureModalRole] = useState<ReportSignature['role'] | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const logoInput = useRef<HTMLInputElement>(null);
 
@@ -152,12 +157,7 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
     return generateReport();
   };
 
-  const sign = (role: ReportSignature['role']) => {
-    const name = names[role].trim();
-    if (!name) {
-      toast.push('Informe o nome do responsável pela assinatura.', 'danger');
-      return;
-    }
+  const openSignatureModal = (role: ReportSignature['role']) => {
     if (!report) {
       toast.push('Gere a prévia do relatório antes de assinar.', 'danger');
       return;
@@ -170,11 +170,26 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
       toast.push('A revisão deve ser assinada antes da aprovação.', 'danger');
       return;
     }
+    setSignatureModalRole(role);
+  };
+
+  const handleExecuteSignature = async (data: ElectronicSignatureData) => {
+    if (!signatureModalRole) return;
     try {
-      const next = signReport(bundle.validation.id, role, name, name);
+      const next = signReport(
+        bundle.validation.id,
+        signatureModalRole,
+        data.name,
+        data.roleTitle,
+        data.meaning,
+        data.name,
+      );
       if (next) {
         setReport(next);
-        toast.push(`${ROLE_LABELS[role]} assinada por ${name}.`);
+        setNames((prev) => ({ ...prev, [signatureModalRole]: data.name }));
+        toast.push(
+          `${ROLE_LABELS[signatureModalRole]} assinada eletronicamente (21 CFR Part 11) por ${data.name}.`,
+        );
         reload();
       }
     } catch (error) {
@@ -353,7 +368,11 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
           </Card>
 
           <Card>
-            <CardHeader title="Assinaturas eletrônicas" description="O nome e o instante ficam gravados no relatório e na auditoria." icon={<CheckCircle2 className="h-4 w-4" />} />
+            <CardHeader
+              title="Assinaturas eletrônicas (21 CFR Part 11)"
+              description="Assinaturas manifestam identidade, cargo/função, significado deliberado e digest criptográfico indelével."
+              icon={<CheckCircle2 className="h-4 w-4" />}
+            />
             <CardBody className="space-y-3">
               {(Object.keys(ROLE_LABELS) as Array<ReportSignature['role']>).map((role) => {
                 const signed = signatureSigned(role);
@@ -361,25 +380,53 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
                 return (
                   <div key={role} className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">{ROLE_LABELS[role]}</p>
-                      {signed ? <Badge tone="success">assinada</Badge> : <Badge tone="outline">pendente</Badge>}
+                      <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                        {ROLE_LABELS[role]}
+                      </p>
+                      {signed ? (
+                        <Badge tone="success">assinada (21 CFR Part 11)</Badge>
+                      ) : (
+                        <Badge tone="outline">pendente</Badge>
+                      )}
                     </div>
-                    <div className="mt-2 flex gap-2">
-                      <Input
-                        aria-label={`Nome — ${ROLE_LABELS[role]}`}
-                        className="h-9"
-                        value={names[role]}
-                        disabled={locked || signed}
-                        onChange={(e) => setNames((prev) => ({ ...prev, [role]: e.target.value }))}
-                        placeholder="Nome completo"
-                      />
-                      <Button size="sm" onClick={() => sign(role)} disabled={locked || signed || !report}>
-                        Assinar
-                      </Button>
-                    </div>
-                    {signature?.date ? (
-                      <p className="mt-1.5 text-[11px] text-ink-400">Assinada em {formatDate(signature.date)}</p>
-                    ) : null}
+                    {signed && signature ? (
+                      <div className="mt-2 space-y-1.5 text-xs">
+                        <div className="font-medium text-ink-800 dark:text-ink-200">
+                          {signature.name}
+                          {signature.roleTitle ? (
+                            <span className="ml-1 font-normal text-ink-500">({signature.roleTitle})</span>
+                          ) : null}
+                        </div>
+                        {signature.meaning && (
+                          <p className="italic text-ink-600 dark:text-ink-400">"{signature.meaning}"</p>
+                        )}
+                        <div className="flex flex-wrap items-center justify-between gap-1 pt-1 text-[11px] text-ink-400">
+                          <span>Assinada em {formatDate(signature.date)}</span>
+                          {signature.signatureDigest && (
+                            <span
+                              className="font-mono text-[10px] text-primary-600 dark:text-primary-400"
+                              title={`SHA-256 Digest: ${signature.signatureDigest}`}
+                            >
+                              Digest: {signature.signatureDigest.slice(0, 16)}…
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <span className="text-xs text-ink-500 truncate">
+                          {names[role] ? `Previsto: ${names[role]}` : 'Signatário não definido'}
+                        </span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => openSignatureModal(role)}
+                          disabled={locked || !report}
+                        >
+                          <PenLine className="h-3.5 w-3.5" /> Assinar
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -418,6 +465,18 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
         e banco SQLite com manifesto de hashes. A configuração padrão do laboratório também pode ser
         ajustada em Configurações.
       </Alert>
+
+      {signatureModalRole && (
+        <ElectronicSignatureModal
+          open={signatureModalRole !== null}
+          onClose={() => setSignatureModalRole(null)}
+          role={signatureModalRole}
+          roleLabel={ROLE_LABELS[signatureModalRole]}
+          initialName={names[signatureModalRole]}
+          auditHash={report?.content.auditHash}
+          onSign={handleExecuteSignature}
+        />
+      )}
     </StepShell>
   );
 }

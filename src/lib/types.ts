@@ -365,6 +365,9 @@ export interface ReportSignature {
   name: string;
   date: string | null;
   signed: boolean;
+  roleTitle?: string;
+  meaning?: string;
+  signatureDigest?: string;
 }
 
 export interface ReportContent {

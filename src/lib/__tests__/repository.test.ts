@@ -279,6 +279,31 @@ describe('repositório e persistência SQLite', () => {
     expectInvalidated('Medições alteradas após assinatura do relatório');
   });
 
+  it('registra assinaturas eletrônicas compatíveis com 21 CFR Part 11 com cargo, significado e digest SHA-256', () => {
+    const method = saveMethod(makeMethod('m-sig-21cfr'));
+    const validation = createValidation(method.id, 'Validação Regulada', 'Dra. Helena');
+    saveReport(makeDraftReport(validation.id, validation.version), 'Dra. Helena');
+
+    const signed = signReport(
+      validation.id,
+      'elaboration',
+      'Dra. Helena Souza',
+      'Metrologista Sênior',
+      'Declaro conformidade total com PO-LAB-042 e dados brutos auditáveis.',
+      'Dra. Helena Souza',
+    );
+
+    expect(signed).not.toBeNull();
+    const sig = signed!.content.signatures.find((s) => s.role === 'elaboration');
+    expect(sig).toBeDefined();
+    expect(sig?.signed).toBe(true);
+    expect(sig?.name).toBe('Dra. Helena Souza');
+    expect(sig?.roleTitle).toBe('Metrologista Sênior');
+    expect(sig?.meaning).toBe('Declaro conformidade total com PO-LAB-042 e dados brutos auditáveis.');
+    expect(sig?.signatureDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(verifyValidationAuditTrail(validation.id).isValid).toBe(true);
+  });
+
   it('preserva registro de auditoria ao excluir validação', () => {
     const method = saveMethod(makeMethod('m-del'));
     const validation = createValidation(method.id, 'Para excluir', 'Ana');

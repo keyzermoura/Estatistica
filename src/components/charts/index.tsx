@@ -26,6 +26,8 @@ import type { ConformityResult } from '../../stats/conformity';
 import { useApp } from '../../lib/app-context';
 import { getChartTheme, type ChartThemeTokens } from './theme';
 export * from './theme';
+export * from './chartExport';
+export * from './ExportableChartCard';
 
 function useChartTheme(): ChartThemeTokens {
   const { settings } = useApp();

@@ -7,6 +7,7 @@ import { fmt } from '../../../stats/distributions';
 import { mandelHCritical, mandelKCritical } from '../../../stats/iso5725';
 import { Alert, Badge, Card, CardBody, CardHeader } from '../../../components/ui';
 import {
+  ExportableChartCard,
   HistogramWithNormalCurveChart,
   MandelConsistencyPlotChart,
   NormalProbabilityPlotChart,
@@ -325,14 +326,22 @@ export function AnalysisQcTab({
 
                 <div className="mt-3 grid gap-3 lg:grid-cols-2">
                   {histogramResult ? (
-                    <div className="rounded-lg border border-ink-100 p-2 dark:border-ink-800">
+                    <ExportableChartCard
+                      title="Histograma com Curva Normal N(x̄, s²)"
+                      subtitle="Frequência empírica vs. teórica gaussiana"
+                      filenameBase="histograma-curva-normal"
+                    >
                       <HistogramWithNormalCurveChart result={histogramResult} height={240} />
-                    </div>
+                    </ExportableChartCard>
                   ) : null}
                   {qqResult ? (
-                    <div className="rounded-lg border border-ink-100 p-2 dark:border-ink-800">
+                    <ExportableChartCard
+                      title="Gráfico de Probabilidade Normal (Q-Q)"
+                      subtitle="Posições de Blom vs. quantis teóricos com IC de 95%"
+                      filenameBase="qq-plot-normalidade"
+                    >
                       <NormalProbabilityPlotChart result={qqResult} outlierIndices={outlierIndices} height={240} />
-                    </div>
+                    </ExportableChartCard>
                   ) : null}
                 </div>
               </div>
@@ -475,12 +484,20 @@ export function AnalysisQcTab({
                 ) : null}
                 {mandelCharts ? (
                   <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                    <div className="rounded-lg border border-ink-100 p-2 dark:border-ink-800">
+                    <ExportableChartCard
+                      title="Estatística de Mandel h (Entre-Grupos)"
+                      subtitle="Consistência entre médias com limites 95% e 99%"
+                      filenameBase="mandel-h-consistencia"
+                    >
                       <MandelConsistencyPlotChart chart={mandelCharts.hChart} height={220} />
-                    </div>
-                    <div className="rounded-lg border border-ink-100 p-2 dark:border-ink-800">
+                    </ExportableChartCard>
+                    <ExportableChartCard
+                      title="Estatística de Mandel k (Dentro dos Grupos)"
+                      subtitle="Consistência de dispersão interna com limites 95% e 99%"
+                      filenameBase="mandel-k-consistencia"
+                    >
                       <MandelConsistencyPlotChart chart={mandelCharts.kChart} height={220} />
-                    </div>
+                    </ExportableChartCard>
                   </div>
                 ) : null}
               </div>
@@ -494,22 +511,34 @@ export function AnalysisQcTab({
                 </p>
                 <div className="mt-2 grid gap-3 lg:grid-cols-2">
                   {analysis.qc.calibrationChart ? (
-                    <ScatterPlot
-                      data={analysis.qc.calibrationChart.data
-                        .map((point) => ({ x: Number(point.x), y: Number(point.y) }))
-                        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))}
-                      xLabel={analysis.qc.calibrationChart.xLabel}
-                      yLabel={analysis.qc.calibrationChart.yLabel}
-                      height={210}
-                    />
+                    <ExportableChartCard
+                      title="Curva de Calibração / Regressão"
+                      subtitle="Pontos experimentais e reta linear ajustada"
+                      filenameBase="regressao-linear-calibracao"
+                    >
+                      <ScatterPlot
+                        data={analysis.qc.calibrationChart.data
+                          .map((point) => ({ x: Number(point.x), y: Number(point.y) }))
+                          .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))}
+                        xLabel={analysis.qc.calibrationChart.xLabel}
+                        yLabel={analysis.qc.calibrationChart.yLabel}
+                        height={210}
+                      />
+                    </ExportableChartCard>
                   ) : null}
                   {analysis.qc.residualChart ? (
-                    <ResidualPlot
-                      data={analysis.qc.residualChart.data
-                        .map((point) => ({ x: Number(point.x), y: Number(point.y) }))
-                        .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))}
-                      height={210}
-                    />
+                    <ExportableChartCard
+                      title="Gráfico de Resíduos"
+                      subtitle="Dispersão residual ao redor do zero"
+                      filenameBase="residuos-regressao"
+                    >
+                      <ResidualPlot
+                        data={analysis.qc.residualChart.data
+                          .map((point) => ({ x: Number(point.x), y: Number(point.y) }))
+                          .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))}
+                        height={210}
+                      />
+                    </ExportableChartCard>
                   ) : null}
                 </div>
               </div>
