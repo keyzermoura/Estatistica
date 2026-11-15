@@ -17,6 +17,7 @@ export interface ChartThemeTokens {
   axisLine: string;
   tooltipBg: string;
   tooltipBorder: string;
+  tooltipText: string;
   confidenceBandFill: string;
   confidenceBandStroke: string;
   guardBandFill: string;
@@ -36,6 +37,7 @@ export const LIGHT_CHART_THEME: ChartThemeTokens = {
   axisLine: '#cbd5e1',       // slate-300
   tooltipBg: '#ffffff',
   tooltipBorder: '#e2e8f0',
+  tooltipText: '#0f172a',
   confidenceBandFill: 'rgba(2, 132, 199, 0.12)',
   confidenceBandStroke: '#0284c7',
   guardBandFill: 'rgba(16, 185, 129, 0.15)',
@@ -63,6 +65,7 @@ export const DARK_CHART_THEME: ChartThemeTokens = {
   axisLine: '#475569',       // slate-600
   tooltipBg: '#0f172a',      // slate-900
   tooltipBorder: '#334155',  // slate-700
+  tooltipText: '#e2e8f0',    // slate-200
   confidenceBandFill: 'rgba(56, 189, 248, 0.15)',
   confidenceBandStroke: '#38bdf8',
   guardBandFill: 'rgba(52, 211, 153, 0.20)',
@@ -80,10 +83,3 @@ export const DARK_CHART_THEME: ChartThemeTokens = {
 export function getChartTheme(isDark = false): ChartThemeTokens {
   return isDark ? DARK_CHART_THEME : LIGHT_CHART_THEME;
 }
-
-export const defaultAxisProps = {
-  stroke: '#94a3b8',
-  fontSize: 11,
-  tickLine: false,
-  axisLine: { stroke: '#cbd5e1' },
-};
