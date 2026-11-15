@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -106,7 +106,30 @@ export type AnalysisTab = 'parameters' | 'qc' | 'uncertainty' | 'conformity' | '
 export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
   const toast = useToast();
   const [activeTab, setActiveTab] = useState<AnalysisTab>('parameters');
+  const tablistRef = useRef<HTMLDivElement>(null);
   const locked = bundle.validation.locked;
+
+  const handleTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const buttons = Array.from(
+      tablistRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
+    );
+    if (!buttons.length) return;
+    const found = buttons.findIndex((button) => button.dataset.tab === activeTab);
+    const current = found < 0 ? 0 : found;
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? buttons.length - 1
+          : event.key === 'ArrowRight'
+            ? (current + 1) % buttons.length
+            : (current - 1 + buttons.length) % buttons.length;
+    const next = buttons[nextIndex];
+    next.focus();
+    setActiveTab(next.dataset.tab as AnalysisTab);
+  };
   const profile = getProfileForMethod(bundle.method);
   const attribute = profile.id === 'attribute';
   const toleranceProfile =
@@ -792,9 +815,21 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
       </div>
 
       {/* Navegação por Abas Especializadas */}
-      <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-ink-200 bg-ink-100/60 p-1.5 dark:border-ink-800 dark:bg-ink-900/60">
+      <div
+        ref={tablistRef}
+        role="tablist"
+        aria-label="Seções da análise"
+        onKeyDown={handleTabKeyDown}
+        className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-ink-200 bg-ink-100/60 p-1.5 dark:border-ink-800 dark:bg-ink-900/60"
+      >
         <button
           type="button"
+          role="tab"
+          id="analysis-tab-parameters"
+          data-tab="parameters"
+          aria-selected={activeTab === 'parameters'}
+          aria-controls="analysis-panel"
+          tabIndex={activeTab === 'parameters' ? 0 : -1}
           onClick={() => setActiveTab('parameters')}
           className={cn(
             'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
@@ -812,6 +847,12 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
 
         <button
           type="button"
+          role="tab"
+          id="analysis-tab-qc"
+          data-tab="qc"
+          aria-selected={activeTab === 'qc'}
+          aria-controls="analysis-panel"
+          tabIndex={activeTab === 'qc' ? 0 : -1}
           onClick={() => setActiveTab('qc')}
           className={cn(
             'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
@@ -834,6 +875,12 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         {uncertaintyDefinition ? (
           <button
             type="button"
+            role="tab"
+            id="analysis-tab-uncertainty"
+            data-tab="uncertainty"
+            aria-selected={activeTab === 'uncertainty'}
+            aria-controls="analysis-panel"
+            tabIndex={activeTab === 'uncertainty' ? 0 : -1}
             onClick={() => setActiveTab('uncertainty')}
             className={cn(
               'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
@@ -853,6 +900,12 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         {supportsConformityCard ? (
           <button
             type="button"
+            role="tab"
+            id="analysis-tab-conformity"
+            data-tab="conformity"
+            aria-selected={activeTab === 'conformity'}
+            aria-controls="analysis-panel"
+            tabIndex={activeTab === 'conformity' ? 0 : -1}
             onClick={() => setActiveTab('conformity')}
             className={cn(
               'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
@@ -873,6 +926,12 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
 
         <button
           type="button"
+          role="tab"
+          id="analysis-tab-assumptions"
+          data-tab="assumptions"
+          aria-selected={activeTab === 'assumptions'}
+          aria-controls="analysis-panel"
+          tabIndex={activeTab === 'assumptions' ? 0 : -1}
           onClick={() => setActiveTab('assumptions')}
           className={cn(
             'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
@@ -889,6 +948,13 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         </button>
       </div>
 
+      <div
+        role="tabpanel"
+        id="analysis-panel"
+        aria-labelledby={`analysis-tab-${activeTab}`}
+        tabIndex={0}
+        className="space-y-4"
+      >
       {activeTab === 'conformity' ? (
         supportsConformityCard ? (
         <Card>
@@ -1925,6 +1991,7 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
           </CardBody>
         </Card>
       ) : null}
+      </div>
     </StepShell>
   );
 }
