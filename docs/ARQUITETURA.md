@@ -43,7 +43,8 @@ estat2/
 ├─ docs/
 │  ├─ ARQUITETURA.md          ← este documento
 │  ├─ FORMULAS.md             ← catálogo de fórmulas e referências
-│  └─ GUIA_USUARIO.md         ← passo a passo para não estatísticos
+│  ├─ GUIA_USUARIO.md         ← passo a passo para não estatísticos
+│  └─ VALIDACAO_SOFTWARE.md   ← matriz de rastreabilidade e validação do software
 ├─ public/
 │  └─ favicon.svg
 ├─ src/
@@ -86,34 +87,44 @@ estat2/
 │  │  ├─ types.ts             ← contrato MethodProfile
 │  │  ├─ analytical.ts        ← catálogo e módulos do perfil analítico
 │  │  ├─ dimensional.ts       ← catálogo e módulos do perfil dimensional
+│  │  ├─ physical-common.ts   ← contrato compartilhado dos perfis físicos
+│  │  ├─ physical-destructive.ts    ← perfil físico destrutivo (ANOVA aninhada)
+│  │  ├─ physical-nondestructive.ts ← perfil físico não destrutivo (cruzado)
 │  │  ├─ attribute.ts         ← catálogo e módulos do perfil de atributo
+│  │  ├─ normative-templates.ts ← modelos normativos pré-configurados
 │  │  └─ index.ts             ← registro e seleção do perfil ativo
 │  └─ stats/
 │     ├─ distributions.ts     ← normais, t, χ², F, não centrais
 │     ├─ descriptive.ts
-│     ├─ sampleSize.ts        ← Módulo 3 (núcleo)
-│     ├─ design.ts            ← delineamentos + aleatorização
+│     ├─ sampleSize.ts        ← Módulo 3 (núcleo) + planos Gage R&R/aninhado/atributo
+│     ├─ design.ts            ← delineamentos + aleatorização reproduzível
 │     ├─ outliers.ts          ← Grubbs, Cochran, Hampel
-│     ├─ normality.ts         ← Shapiro-Wilk
+│     ├─ normality.ts         ← Shapiro-Wilk, Anderson-Darling, Jarque-Bera e Wilks
 │     ├─ variance.ts          ← Bartlett, Levene
-│     ├─ anova.ts             ← ANOVA 1/2 fatores + componentes
-│     ├─ gagerr.ts            ← Gage R&R cruzado por ANOVA
-│     ├─ nested.ts            ← ANOVA aninhada + Gage R&R destrutivo
-│     ├─ iso5725.ts           ← repetibilidade/reprodutibilidade
-│     ├─ regression.ts        ← linearidade, WLS, LOD/LOQ
-│     ├─ bias.ts              ← tendência, recuperação, z, En, TOST
+│     ├─ anova.ts             ← ANOVA 1/2 fatores + REML + componentes
+│     ├─ gagerr.ts            ← Gage R&R cruzado por ANOVA + Satterthwaite
+│     ├─ nested.ts            ← ANOVA aninhada 3 níveis + homogeneidade do lote
+│     ├─ iso5725.ts           ← repetibilidade/reprodutibilidade + Mandel h/k
+│     ├─ regression.ts        ← OLS, WLS, Mandel, efeito matriz e LD/LQ Eurachem
+│     ├─ lodProbit.ts         ← LoB/LoD CLSI EP17 e Probit IRLS (LOD95%)
+│     ├─ bias.ts              ← tendência, recuperação, z, ζ, z', En, TOST
+│     ├─ accuracyProfile.ts   ← perfil de exatidão (SFSTP / USP <1210>)
 │     ├─ gageBiasLinearity.ts ← tendência por nível + linearidade AIAG
+│     ├─ methodComparison.ts  ← Bland-Altman, Deming e Passing-Bablok (CLSI EP09c)
 │     ├─ stability.ts         ← cartas I-MR/X̄-R, alarmes e resolução
-│     ├─ attribute.ts         ← Cohen/Fleiss, kappa ponderado, FAR/FRR
+│     ├─ emp.ts               ← método EMP de Wheeler (ICC, PE, Classes I-IV)
+│     ├─ capabilityCg.ts      ← estudo Tipo 1 (Cg, Cgk, Q_MS, Q_MP VDA 5)
+│     ├─ attribute.ts         ← Cohen/Fleiss, kappa ponderado, FAR/FRR, Wilson/LR
 │     ├─ attribute-data.ts    ← medições → observações de atributo
-│     ├─ conformity.ts        ← regra de decisão, banda de guarda e riscos
-│     ├─ uncertainty.ts       ← GUM + Welch-Satterthwaite
+│     ├─ conformity.ts        ← regra de decisão, banda de guarda, riscos e U^tg
+│     ├─ uncertainty.ts       ← GUM + Welch-Satterthwaite + Top-Down + UfS
+│     ├─ monteCarlo.ts        ← simulação Monte Carlo JCGM 101 (Shunting-Yard)
 │     ├─ analysis.ts          ← orquestração genérica da análise
 │     ├─ analysis-types.ts    ← contratos de resultado
 │     ├─ analysis-utils.ts    ← métricas e resumos compartilhados
-│     ├─ parameters/          ← módulos analíticos/dimensionais/de atributo
+│     ├─ parameters/          ← módulos por família (analítico/dimensional/físico/atributo)
 │     ├─ index.ts
-│     └─ __tests__/           ← referência numérica + caracterização
+│     └─ __tests__/           ← referência numérica + caracterização (13 arquivos)
 ├─ scripts/
 │  └─ setup.mjs               ← instalação + verificação em 1 comando
 ├─ README.md
@@ -126,19 +137,20 @@ estat2/
 ### Perfis de método
 
 O catálogo de parâmetros, os rótulos, as métricas, os critérios sugeridos, os
-pressupostos e os templates de delineamento ficam em `src/profiles/`. Os perfis
-`analytical`, `dimensional` e `attribute` compartilham o mesmo contrato. O motor
-em `src/stats/analysis.ts` apenas orquestra os módulos indicados pelo perfil
-ativo e mantém as regras gerais de veredito, qualidade e auditoria.
+pressupostos e os templates de delineamento ficam em `src/profiles/`. Os cinco perfis
+ativos — `analytical`, `dimensional`, `physical-destructive`, `physical-nondestructive`
+e `attribute` — compartilham o mesmo contrato (`MethodProfile` em `src/profiles/types.ts`).
+O motor em `src/stats/analysis.ts` apenas orquestra os módulos indicados pelo perfil
+ativo e mantém as regras gerais de veredito, qualidade e auditoria. Modelos normativos
+pré-configurados residem em `src/profiles/normative-templates.ts`.
 
 Desde a migração v2, `methods.family` registra a família do ensaio
 (`analytical`, `dimensional`, `physical-destructive`,
-`physical-nondestructive` ou `attribute`). Famílias ainda sem perfil próprio
-usam o perfil analítico como fallback para não quebrar telas; métodos migrados
-de versões anteriores são lidos como `analytical`.
+`physical-nondestructive` ou `attribute`); métodos migrados de versões anteriores são
+lidos como `analytical`.
 
-O perfil `attribute` não exige migração de schema: ele reutiliza as colunas já
-existentes. O mapeamento é explícito em `src/stats/attribute-data.ts`:
+O perfil `attribute` reutiliza as colunas existentes e aceita também `part_id` e
+`category`, mapeados explicitamente em `src/stats/attribute-data.ts`:
 
 | Conceito do estudo | Coluna existente |
 |---|---|
@@ -149,21 +161,18 @@ existentes. O mapeamento é explícito em `src/stats/attribute-data.ts`:
 | Réplica | `replicate` |
 
 O estudo usa `attributeAgreementStudy` para κ de Cohen/Fleiss, concordância
-intra-avaliador, concordância com a referência, eficácia, FAR, FRR e cobertura.
-Falhas de coleta (item/avaliador/réplica duplicados, referências conflitantes)
-são capturadas e expostas como `not_evaluated`, com a mensagem no relatório.
-`QcSummary.attribute` leva dados, estudo e erro para a interface e o laudo.
-`attributeReferenceSheet` consolida a referência por item para o gabarito da
-coleta (visão derivada, sem coluna nova): aponta itens sem referência e
-conflitos, e a interface grava a categoria escolhida em `level`, limpando
-`reference_value`.
+intra-avaliador, concordância com a referência, eficácia, FAR, FRR, cobertura e
+métricas diagnósticas qualitativas (`computeQualitativeDiagnosticMetrics`: sensibilidade,
+especificidade, IC de Wilson, `LR⁺`/`LR⁻`, VPP/VPN). Falhas de coleta (item/avaliador/réplica
+duplicados, referências conflitantes) são capturadas e expostas como `not_evaluated`, com
+a mensagem no relatório.
 
-O módulo `src/stats/conformity.ts` é autônomo e entrega um bloco `report` com
-regra, valor, `U`, `k`, limites efetivos e veredito. Ele ainda não altera
-`ValidationAnalysis` nem os perfis existentes; a integração por perfil e a
-seção de conformidade do laudo entram nos Prompts 8–10. As métricas `%P/T`,
-`U/T` e `TUR/TAR` ficam em `src/lib/criteria.ts` e são aditivas: nenhuma
-métrica analítica anterior muda.
+O módulo `src/stats/conformity.ts` integra-se aos perfis de tolerância
+(`dimensional`, `physical-destructive` e `physical-nondestructive`) e alimenta a
+seção de conformidade do laudo (`composeReport` / DOCX / PDF) com regra de decisão,
+banda de guarda (`r·U`), probabilidade de conformidade, risco específico e
+avaliação compendial/individual (`individualLsl`). As métricas `%P/T`, `U/T` e `TUR/TAR`
+ficam em `src/lib/criteria.ts` e são aditivas: nenhuma métrica analítica anterior muda.
 
 ## 3. Modelo de dados (SQLite)
 
@@ -327,4 +336,9 @@ relatório; as listas originais permanecem intactas na trilha de auditoria.
 - round-trip XLSX/CSV de todas as colunas de medição e compatibilidade com
   planilhas antigas;
 - regras de integridade (`part_id` dimensional, `specimen` destrutivo e
-  `lsl < usl`).
+  `lsl < usl`);
+- perfis `dimensional`, `physical-destructive`, `physical-nondestructive` e `attribute`,
+  incluindo Gage R&R cruzado AIAG, ANOVA aninhada de Montgomery, homogeneidade
+  com justificativa obrigatória, não normalidade sem transformação automática (Wilks),
+  covariáveis ambientais e emissão de DOCX (`PK`) e PDF (`%PDF`) nas 5 famílias
+  (**18 arquivos de teste, 199 casos no total** — ver matriz em `docs/VALIDACAO_SOFTWARE.md`).

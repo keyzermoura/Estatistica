@@ -137,22 +137,37 @@ critério específico para a mesma métrica. A análise usa apenas o critério
 efetivo, e o relatório registra a regra de precedência e as substituições
 aplicadas.
 
-Parâmetros disponíveis:
+Parâmetros disponíveis variam conforme a **família de ensaio** selecionada na Etapa 1:
 
-- Seletividade / especificidade
-- Linearidade
-- Faixa de trabalho
-- Limites de detecção e quantificação (LD/LQ)
-- Repetibilidade
-- Precisão intermediária
-- Reprodutibilidade
-- Exatidão / tendência
-- Robustez
-- Incerteza de medição
+- **Analítico**: Seletividade, Linearidade (com falta de ajuste de Mandel e WLS), Faixa de trabalho, LD/LQ (por brancos Eurachem/EP17 ou curva), Repetibilidade, Precisão intermediária, Reprodutibilidade (ISO 5725-2 com Mandel *h/k*), Exatidão / recuperação (inclui TOST), Robustez e Incerteza de medição (GUM ou Top-Down Eurachem).
+- **Dimensional**: Resolução, Tendência, Linearidade (AIAG por nível), Estabilidade (cartas I-MR / X̄-R), Repetibilidade e Reprodutibilidade (Gage R&R cruzado + EMP Wheeler + Tipo 1 *C_g/C_gk*), Incerteza de medição (orçamento-modelo GUM) e Conformidade (JCGM 106 / ILAC-G8).
+- **Físico destrutivo**: Resolução, Tendência (verificação por ponto), Linearidade, Estabilidade, Repetibilidade e Reprodutibilidade por **ANOVA aninhada de 3 níveis** (com verificação de homogeneidade do lote), Incerteza de medição e Conformidade (inclusive limite individual unilateral compendial, ex.: ABNT NBR 13904 / USP `<881>`).
+- **Físico não destrutivo**: Mesmos blocos metrológicos, porém com **Gage R&R cruzado** (as mesmas peças são medidas pelos operadores sem destruição) e regressão de covariáveis ambientais (temperatura / umidade).
+- **Atributo (qualitativo)**: Repetibilidade (concordância intra-avaliador), Reprodutibilidade (κ de Fleiss / Cohen entre avaliadores), Eficácia / exatidão frente à referência, Riscos FAR/FRR, Métricas diagnósticas qualitativas (Sensibilidade, Especificidade, `LR⁺`/`LR⁻`, VPP/VPN) e Delineamento com amostras limítrofes.
 
 Se um parâmetro não tiver dados suficientes na etapa de análise, ele ficará
 **não avaliado** — não será reprovado automaticamente. O relatório mostrará o
 motivo.
+
+### 5.1 Escolhendo a família e interpretando os indicadores
+
+| Família | Quando usar | Principais indicadores em linguagem simples |
+|---|---|---|
+| **Analítico** | Cromatografia, espectroscopia, titulometria, ensaios químicos | `R²`, `LD/LQ`, `CV%`, recuperação `%`, `z / ζ / En`, `TOST`, incerteza expandida `U` |
+| **Dimensional** | Paquímetro, micrômetro, relógio comparador, CMM, calibradores | `%GRR ≤ 10%` (conforme; `10–30%` atenção; `> 30%` reprovado), `%P/T`, `ndc ≥ 5`, Classes EMP I–IV, `TUR ≥ 4` |
+| **Físico destrutivo** | Tração, ruptura, encastoamento, rasgamento, dissolução destrutiva | Gage R&R aninhado, aviso obrigatório sobre consumo do corpo de prova e verificação de homogeneidade do lote |
+| **Físico não destrutivo** | Dureza Shore, espessura ultrassônica, rugosidade, massa | Gage R&R cruzado + alerta de deriva térmica (`Temperatura`) ou higrométrica (`Umidade`) quando `p < 0,05` |
+| **Atributo** | Inspeção visual Passa/Não Passa, defeitos nominais/ordinais, triagem PCR | `κ` (`≥ 0,75` conforme; `0,40–0,75` atenção), eficácia `%`, falso alarme (`FAR`) e falsa aprovação (`FRR`) |
+
+**Como ler os 3 estados de conformidade (JCGM 106 / ILAC-G8):**
+- **Conforme**: a medição + banda de guarda `w = r·U` (ou probabilidade normal `P`) garante atendimento à tolerância `[LSL, USL]`.
+- **Zona de guarda — Inconclusivo**: a medição caiu na faixa cinzenta próxima ao limite (`[LSL − w, LSL + w]` ou `[USL − w, USL + w]`), exigindo critério de aceitação/rejeição acordado com o cliente.
+- **Não conforme**: a medição ultrapassou os limites de rejeição fora da tolerância estendida.
+
+**Regras de proteção estatística integradas:**
+- **Outliers**: o sistema sinaliza extremos por Grubbs, Cochran e Hampel, mas **nunca os remove automaticamente**.
+- **Não normalidade**: se Shapiro–Wilk e Anderson–Darling rejeitarem a normalidade, **nenhuma transformação é aplicada automaticamente**; o painel oferece explicitamente a leitura em escala logarítmica `ln(x)` e o intervalo de tolerância livre de distribuição de Wilks (`[mínimo, máximo]`).
+- **Exemplos prontos para explorar**: na inicialização de um banco vazio, são criados três processos demonstrativos completos: HPLC analítico, verificação destrutiva de fios de sutura (`SUT-TRA-13904`) e estudo dimensional com micrômetro (`DIM-MIC-025`).
 
 ## 6. Etapa 3 — Delineamento
 

@@ -233,6 +233,8 @@ scripts/
 - [Arquitetura](docs/ARQUITETURA.md)
 - [Fórmulas e decisões estatísticas](docs/FORMULAS.md)
 - [Guia do usuário](docs/GUIA_USUARIO.md)
+- [Plano de execução, benchmark competitivo e viabilidade](docs/PLANO_EXECUCAO_E_BENCHMARK.md)
+- [Arquitetura de integração como módulo do LIMS](docs/INTEGRACAO_MODULO_LIMS.md)
 
 ## Aviso
 

@@ -364,15 +364,30 @@ O IC de `σ_GRR` usa `gl·σ²_GRR/χ²`; o IC de `%GRR` usa a razão
 estimáveis, o IC fica explicitamente indisponível com alerta.
 
 Dados faltantes são descartados por lista (observações válidas restantes);
-o desenho passa a ser tratado como desbalanceado, com somas de quadrados
-sequenciais (peça → operador → interação), estimação por mínimos quadrados
-ponderados e `r_eff = N/células`. O resultado registra `N`, `r_eff`, o
-número de observações ausentes e alerta sobre a aproximação. `r = 1` falha
-claramente, pois não permite estimar a repetibilidade.
+por padrão (`unbalancedMethod: 'sequential_ls'`), o desenho desbalanceado usa
+somas de quadrados sequenciais (peça → operador → interação), estimação por
+mínimos quadrados ponderados e `r_eff = N/células`. O resultado registra `N`,
+`r_eff`, o número de observações ausentes e alerta sobre a aproximação. `r = 1`
+falha claramente, pois não permite estimar a repetibilidade.
+
+Alternativamente, o parâmetro `unbalancedMethod` e o comparador
+`gageRRUnbalancedMethods` suportam dois métodos exatos para desenhos
+desbalanceados (ou comparativos em desenhos balanceados):
+
+- **Método 3 de Henderson / Tipo III (`'type3_henderson'`)**: calcula somas de
+  quadrados parciais ortogonais `SS_P = R(P | μ, O)`, `SS_O = R(O | μ, P)` e
+  `SS_PO = R(PO | μ, P, O)` com coeficientes exatos da esperança matemática dos
+  quadrados médios (`E[MS] = tr(M·Z·Zᵀ)`) e ICs de Satterthwaite derivados da
+  combinação linear exata das médias quadráticas;
+- **REML cruzado de dois fatores (`'reml'`)**: minimiza a deviância restrita
+  exata `−2ℓ_R(γ) = (N−1)·ln σ²_e(γ) + ln|H(γ)| + ln(w₁ᵀ H(γ)⁻¹ w₁)` por
+  estatísticas suficientes de célula (`O(K³)` via fatoração de Cholesky e
+  otimização restrita com `γ = (σ²_peça/σ²_e, σ²_oper/σ²_e, σ²_inter/σ²_e) ≥ 0`).
 
 Referências: AIAG (2010), *Measurement Systems Analysis Reference Manual*,
 4. ed.; Montgomery (2020), cap. 13; Burdick, Borror & Montgomery (2003);
-Satterthwaite (1946); ISO 22514-7:2021.
+Satterthwaite (1946); ISO 22514-7:2021; Searle, Casella & McCulloch (1992),
+caps. 5–6; Henderson (1953); Patterson & Thompson (1971).
 
 ### 8.6 ANOVA aninhada e Gage R&R para ensaio destrutivo
 
@@ -503,8 +518,20 @@ por `p−1`. Os graus de liberdade de `s_R` usam Welch–Satterthwaite:
 ```
 
 Mandel `h` (média do laboratório) e `k` (desvio-padrão do laboratório) são
-calculados com `|h| > 2` e `k > 2` sinalizando discrepância. Referências:
-ISO 5725-1:2023; ISO 5725-2:2019, cláusulas 5–7; Mandel (1991).
+avaliados pelos limites críticos exatos da ISO 5725-2:2019 (Anexo B,
+Tabelas B.1 e B.2), com triagem em dois níveis: **5% (*straggler* / suspeito)**
+e **1% (*outlier* / aberrante)**:
+
+```
+h_crit(p, α)    = (p − 1) · t_{1−α/2, p−2} / √[p · (t²_{1−α/2, p−2} + p − 2)]   (p ≥ 3)
+k_crit(p, n, α) = √[ p · F_{1−α; n−1, (p−1)(n−1)} / (p − 1 + F) ]               (p ≥ 2, n ≥ 2)
+```
+
+`mandelHCritical`, `mandelKCritical` e `evaluateMandelConsistency` expõem os
+limiares exatos de 5% e 1%; em `iso5725Analysis`, `hFlag`/`kFlag` sinalizam
+violações ao limite de 1% (com fallback para `2` quando `p < 3` ou `n < 2`).
+Referências: ISO 5725-1:2023; ISO 5725-2:2019, cláusulas 5–7 e Anexo B;
+Mandel (1991); Wilrich (2013).
 
 ## 10. Regressão, linearidade e LD/LQ
 
@@ -965,8 +992,23 @@ o valor `x`, `u`, `k`, `U`, os limites efetivos, a probabilidade `P`, os riscos,
 regra de decisão e a incerteza expandida, como exige a ISO/IEC 17025:2017,
 7.8.2.1.
 
-Referências: JCGM 106:2012; ILAC-G8:09/2019; ISO/IEC 17025:2017, 7.8.2.1;
-ISO 14253-1:2017.
+### 13.5 Atualização bayesiana Normal–Normal e riscos globais `R_C` e `R_P`
+
+Quando uma distribuição a priori `Y ~ N(μ₀, σ₀²)` (`priorMean`, `priorStd`) é
+informada em `computeBayesianConformityRisks` ou em `conformityDecision`:
+
+```
+u_post² = 1 / (1/σ₀² + 1/u_m²) = σ₀²·u_m² / (σ₀² + u_m²)
+μ_post  = (u_m²·μ₀ + σ₀²·x) / (σ₀² + u_m²)
+R_C = ∫_{y ∉ T} f₀(y) · P(X ∈ A | Y = y) dy     (risco global do consumidor, JCGM 106 Eq. 19)
+R_P = ∫_{y ∈ T} f₀(y) · [1 − P(X ∈ A | Y = y)] dy (risco global do produtor, JCGM 106 Eq. 20)
+R_C* = R_C / P(X ∈ A) ;   R_P* = R_P / P(X ∉ A)
+```
+
+A integração numérica utiliza regra composta de Simpson (`N = 400`
+subintervalos por região suave sem descontinuidade) em `[μ₀ − 8σ₀, μ₀ + 8σ₀]`.
+Referências: JCGM 106:2012, seções 7.2 e 9.5; ILAC-G8:09/2019; ISO/IEC 17025:2017,
+7.8.2.1; ISO 14253-1:2017.
 
 ## 14. Incerteza de medição — GUM
 
@@ -976,18 +1018,23 @@ Arquivo: `src/stats/uncertainty.ts`.
 u_i = valor/divisor
 divisor = 1 (normal), √3 (retangular), √6 (triangular), √2 (forma U)
 contribuição_i = |c_i|·u_i
-u_c = √Σ(contribuição_i)²
-%contribuição_i = 100·contribuição_i²/u_c²
-ν_eff = u_c⁴ / Σ(u_i⁴/ν_i)          (Welch–Satterthwaite)
+u_c² = Σ(c_i·u_i)² + 2·Σ_{i<j} c_i·c_j·u_i·u_j·r(x_i, x_j)   (r ∈ [−1, 1], JCGM 100 §5.2 Eq. 13)
+%contribuição_i = 100·(c_i·u_i)²/u_c²
+ν_eff = u_c⁴ / Σ(u_i⁴/ν_i)          (Welch–Satterthwaite; ν_B = ∞ ⇒ u_B⁴/∞ = 0)
 U = k·u_c
 k = t_{1−α/2, ν_eff}               (quando ν_eff é conhecido)
-k = 2                              (quando faltam graus de liberdade)
+k = 2                              (quando faltam graus de liberdade em fontes Tipo A)
 ```
 
 Tipo A: `u = s/√n`, `ν = n−1`. Tipo B normal a partir de incerteza expandida:
-`u = U/k`. Quando todas as fontes têm `ν` mas o denominador é zero, o sistema
-usa `ν_eff = 10⁶` e `k ≈ 1,96`. Referências: JCGM 100:2008 (GUM), cláusulas 5
-e G; JCGM 101:2008; EURACHEM/CITAC (2012).
+`u = U/k`. Conforme JCGM 100:2008 §G.4.2, fontes Tipo B sem graus de liberdade
+informados (`dof: null`) ou `dof: Infinity` são tratadas como `ν_i = ∞` (parcela
+nula no denominador de Welch–Satterthwaite); apenas fontes Tipo A exigem `ν`
+finito para calcular `ν_eff`. Quando todas as fontes têm `ν = ∞` (denominador
+zero), o sistema adota `ν_eff = 10⁶` (`k ≈ 1,96`). Pares correlacionados
+`r(x_i, x_j)` usam os coeficientes de sensibilidade com sinal (`c_i·c_j`).
+Referências: JCGM 100:2008 (GUM), cláusulas 5 (Eq. 13) e G (§G.4.2);
+JCGM 101:2008; EURACHEM/CITAC (2012).
 
 ## 15. Como cada parâmetro é calculado e julgado
 
@@ -1071,16 +1118,56 @@ são tratados por lista (listwise) e registrados.
 - **Aleatorização**: mulberry32 + Fisher–Yates; a semente fica gravada.
 - **Incerteza**: entradas independentes; GUM com Welch–Satterthwaite.
 
-## 17. Testes de referência
+## 17. Orçamentos-modelo, covariáveis ambientais e não normalidade (Perfis Dimensional e Físico)
 
-`npm test` executa 150 casos: 136 casos estatísticos (18 referências numéricas
-de `stats.test.ts`, 15 de `gagerr.test.ts`, 33 de `nested.test.ts`, 9 de
-`gageBiasLinearity.test.ts`, 15 de `stability.test.ts`, 24 de
-`attribute.test.ts`, 21 de `conformity.test.ts` e 1 teste de caracterização que
-congela a saída completa da análise analítica anterior à introdução dos perfis
-de método) e 14 testes de infraestrutura de dados (migração versionada,
-round-trip XLSX/CSV, validações do modelo v2 e métricas relativas à
-tolerância). Os principais valores de referência estatísticos:
+### 17.1 Diagnóstico de não normalidade e alternativas não paramétricas (`src/stats/normality.ts`)
+
+`evaluateNonNormalityAndOptions` aplica simultaneamente Shapiro–Wilk e Anderson–Darling ao nível `α` editável (padrão `0,05`). **Nenhuma transformação é aplicada automaticamente**:
+
+- **Opção A — Transformação logarítmica explícita** (quando todos os valores são positivos, `n ≥ 3`): calcula `y_i = ln(x_i)`, média geométrica `x̄_g = exp(ȳ)` e desvio-padrão geométrico `s_g = exp(s_y)`, e reaplica Shapiro–Wilk aos valores transformados. Só retorna `transformedValues` quando o usuário ou módulo solicita `applyLogTransform: true`.
+- **Opção B — Intervalo de tolerância não paramétrico de Wilks (ISO 16269-6:2014)**: utiliza os extremos amostrais `[x_(1), x_(n)]` como limites livres de distribuição para cobertura alvo `q` (padrão `0,95`), com confiança bilateral atingida:
+
+```
+γ = 1 − n · q^(n−1) + (n − 1) · q^n
+```
+
+O tamanho amostral mínimo `n_min` (`wilksMinimumN`) é o menor inteiro `n ≥ 2` tal que `γ ≥ 1 − α` (ex.: `n_min = 93` para `q = 0,95` e `γ ≥ 0,95`). Referências: Wilks (1941), *Ann. Math. Statist.* 12:91–96; ISO 16269-6:2014.
+
+### 17.2 Covariáveis ambientais (`src/stats/parameters/physical.ts`)
+
+`analyzeEnvironmentalConditions` ajusta regressão linear simples `y = a + b · x_cov` (`linearRegression`) entre as medições numéricas e cada covariável ambiental registrada em `condition_json` (`temperature` em `°C`; `humidity` em `% UR`), quando há `n ≥ 3` pares e ao menos 2 níveis distintos. Emite alerta explícito se `p_declive < 0,05` (Montgomery, Peck & Vining, 2021; ISO/IEC 17025:2017, 6.3).
+
+### 17.3 Orçamentos-modelo metrológicos GUM (`src/stats/parameters/dimensional.ts` e `physical.ts`)
+
+- **`dimensionalUncertaintyBudget`**: pré-popula fontes Type A e Type B típicas de metrologia dimensional (`u_res = (d/2)/√3`, calibração `u_cal = U_cal/k`, dilatação térmica diferencial `u_temp = (L · α · ΔT)/√3`, repetibilidade `s_r / √n`, reprodutibilidade entre operadores `u_oper`, padrão de referência `u_ref`, planicidade, paralelismo e força de medição retangulares `a / √3`).
+- **`physicalUncertaintyBudget`**: pré-popula fontes para ensaios físicos destrutivos e não destrutivos (`u_res = (d/2)/√3`, calibração `U_cal/k`, repetibilidade entre corpos de prova `s_r / √n`, reprodutibilidade entre operadores `u_oper`, heterogeneidade do lote `σ_amostra` separada na ANOVA aninhada, alinhamento/fixação, velocidade de ensaio e deriva ambiental retangulares `a / √3`).
+
+### 17.4 Verificação metrológica por ponto do equipamento (`physicalBiasAnalysis`)
+
+Para cada ponto de calibração/referência `j`, apresenta o erro relativo percentual ao valor de referência (`100 · (x̄_j − x_ref,j) / x_ref,j`) com a incerteza-padrão da referência `u_ref`, permitindo comparação contra o critério de classe editável cadastrado pelo laboratório (ex.: ISO 7500-1 ou OIML R76) sem embutir limiares normativos fixos.
+
+## 18. Módulos complementares e pacotes Eurachem/CITAC
+
+| Funcionalidade | Módulo / Função | Equação / Regra principal | Referência |
+|---|---|---|---|
+| **Incerteza Top-Down** | `uncertainty.ts` (`computeTopDownUncertainty`) | `u(bias) = √(bias̄² + s_bias²/n + u_ref²)`; `u_c = √(u(R_w)² + u(bias)²)` | Eurachem/CITAC QUAM (3ª ed., 2012) |
+| **Incerteza da amostragem** | `uncertainty.ts` (`computeSamplingDuplicateUncertainty`) | ANOVA aninhada (Alvo > Subamostra > Réplica): `s²_amost = (MS_S − MS_A)/n_r` | Eurachem/CITAC/Nordtest UfS (2ª ed., 2019) |
+| **Proficiência `ζ` e `z'`** | `bias.ts` (`zetaScore`, `zPrimeScore`) | `ζ = (x − x_ref)/√(u_lab² + u_ref²)`; `z' = (x − x_pt)/√(σ_pt² + u_pt²)` | ISO 13528:2022 (§9.4–9.5); Eurachem PT (2021) |
+| **Efeito matriz (%ME)** | `parameters/selectivity.ts` (`computeMatrixEffectCurves`) | `%ME = 100·(b_matriz/b_solv − 1)`; teste t de Welch sobre `b_matriz − b_solv` | Eurachem Fitness for Purpose (2025) |
+| **Brancos corrigidos** | `regression.ts` (`lodLoqEurachemBlanks`) | `s₀' = s_b·√(1/n + 1/n_b)`; `LD = t_{1−α,ν}·s₀'`; `LQ = k_Q·s₀'` | Eurachem Blanks Guide (2025) |
+| **Linearidade de Mandel e WLS** | `regression.ts` (`mandelLinearityTest`, `compareCalibrationWeightings`) | Teste F quadrático `DS²/s_{y2}²`; seleção entre OLS, `1/x` e `1/x²` | ISO 8466-1:2021; EMA/FDA bioanalítico |
+| **Incerteza-Alvo e Horwitz** | `conformity.ts` (`computeTargetUncertainty`) | `U^tg ≤ T/4` (moderado), `≤ T/8` (rigoroso); `σ_H` por fração mássica `c` | Eurachem Target Uncertainty (2015); Thompson |
+| **Qualitativo diagnóstico** | `attribute.ts` (`computeQualitativeDiagnosticMetrics`) | Sensibilidade/Especificidade (IC Wilson), `LR⁺`, `LR⁻`, VPP/VPN, Youden `J` | Eurachem Qualitative (2021) |
+| **LoB / LoD / Probit** | `lodProbit.ts` (`clsiEp17Limits`, `probitLod95`) | `LoB = μ_B + c_p·σ_B` (paramétrico e quantil); regressão Probit IRLS + Fieller | CLSI EP17-A2; Finney (1971) |
+| **Perfil de Exatidão** | `accuracyProfile.ts` (`computeAccuracyProfile`) | Intervalo de tolerância `β`-expectation `[L_j, U_j]` vs. `±λ (%)`; `LLOQ`/`ULOQ` | Hubert et al. (SFSTP 2007); USP `<1210>` |
+| **EMP (Wheeler)** | `emp.ts` (`computeEmp`) | `ICC = σ²_peça/(σ²_peça + σ²_med)`; `PE = 0,6745·σ_rep`; Classes I–IV | Wheeler (2006) *EMP III* |
+| **Capabilidade Tipo 1** | `capabilityCg.ts` (`computeCapabilityCg`) | `C_g = (k%·T)/(m·s)`; `C_{gk} = (0,5·k%·T − |bias|)/(0,5·m·s)`; `Q_MS`, `Q_MP` | AIAG MSA / Bosch / VDA 5:2021 |
+| **Comparação de métodos** | `methodComparison.ts` (`blandAltman`, `demingRegression`, `passingBablokRegression`) | Limites de concordância 95%, Deming ortogonal e Passing–Bablok (Kendall/Sen) | CLSI EP09c; Bland & Altman (1986); Passing–Bablok (1983) |
+| **Monte Carlo** | `monteCarlo.ts` (`runMonteCarloUncertainty`) | Parser Shunting-Yard seguro + amostragem determinística vs. linearização GUM | JCGM 101:2008 (Suplemento 1 do GUM) |
+
+## 19. Testes de referência
+
+`npm test` executa **203 casos** distribuídos em **18 arquivos de teste**: **184 casos estatísticos e de perfis** (21 em `stats.test.ts`, 15 em `gagerr.test.ts`, 33 em `nested.test.ts`, 9 em `gageBiasLinearity.test.ts`, 15 em `stability.test.ts`, 24 em `attribute.test.ts`, 21 em `conformity.test.ts`, 10 em `attribute-profile.test.ts`, 9 em `physical-profile.test.ts`, 2 em `dimensional-profile.test.ts`, 18 em `advanced-features.test.ts`, 6 em `criteria-precedence.test.ts` e 1 teste de caracterização em `analysis-characterization.test.ts` que congela a saída completa da análise analítica original) e **19 testes de infraestrutura de dados** (5 em `repository.test.ts`, 4 em `validation.test.ts`, 5 em `criteria.test.ts`, 2 em `migration.test.ts` e 3 em `spreadsheet.test.ts`). Os principais valores de referência estatísticos:
 
 | Caso | Referência | Tolerância |
 |---|---|---|
@@ -1127,8 +1214,15 @@ tolerância). Os principais valores de referência estatísticos:
 | Banda vazia | `w > T/2` deixa a zona de aceitação vazia e gera alerta de que nenhuma aceitação é possível | exata |
 | `u = 0` | distribuição degenerada: `P = 1` dentro dos limites fechados, `0` fora; riscos `0`/`1`; `TUR` nulo | exata |
 | Métricas de tolerância | `T = 2`, `U = 0,5`: `%P/T = 25%`, `U/T = 0,25`, `TUR/TAR = 2`; `U = 0` → métricas `0` e `TUR` nulo | 1e-12 |
+| Wilks não paramétrico | `n = 12`, `q = 0,95`: `γ = 1 − 12·0,95^11 + 11·0,95^12`; `n_min(0,95; 0,95) = 93` | 1e-9 |
+| Não normalidade | série exponencial rejeitada em S–W e A–D mantém `logTransform.applied = false` até ação explícita | exata |
+| Covariáveis ambientais | regressão linear `y ~ temperatura` detecta `p < 0,05` e gera alerta ambiental | 1e-6 |
+| Orçamentos e relatórios | `seedDimensionalDemo` aprova 8 parâmetros; DOCX (`PK`) e PDF (`%PDF`) válidos nas 5 famílias | estrutural |
+| Módulos complementares | EMP Wheeler, `Cg/Cgk`, EP09c Deming/Passing–Bablok, Probit IRLS, Monte Carlo JCGM 101 e Eurachem | conferida |
+| Refinamentos metrológicos | Mandel `h`/`k` exatos (5%/1%), GUM `ν_B = ∞` e `r(x_i,x_j)`, Henderson Tipo III/REML (invariância à transposição) e JCGM 106 bayesiano (`R_C = R_P = 0,125` em Sheppard) | 1e-7 a 1e-9 |
 
-Os testes de referência ficam em `src/stats/__tests__/`; a caracterização da
-análise analítica fica em
+Os testes de referência ficam em `src/stats/__tests__/` e `src/lib/__tests__/`; a
+caracterização da análise analítica fica em
 `src/stats/__tests__/analysis-characterization.test.ts` e é executada também
-pelo `scripts/setup.mjs`.
+pelo `scripts/setup.mjs`. A matriz completa de rastreabilidade entre requisitos,
+funções, testes e fontes independentes consta em `docs/VALIDACAO_SOFTWARE.md`.
