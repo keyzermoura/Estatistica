@@ -44,11 +44,26 @@ export interface AnalysisTable {
 }
 
 export interface AnalysisChart {
-  kind: 'scatter' | 'residual' | 'line' | 'box' | 'bar' | 'power';
+  kind:
+    | 'scatter'
+    | 'residual'
+    | 'line'
+    | 'box'
+    | 'bar'
+    | 'power'
+    | 'histogram'
+    | 'qq'
+    | 'control'
+    | 'bland_altman'
+    | 'mandel'
+    | 'interaction'
+    | 'pareto'
+    | 'density';
   title: string;
   xLabel?: string;
   yLabel?: string;
-  data: Array<Record<string, string | number | null>>;
+  data: Array<Record<string, string | number | boolean | null>>;
+  meta?: Record<string, unknown>;
 }
 
 export interface ParameterAnalysis {
@@ -131,6 +146,8 @@ export interface AnalysisOptions {
   processVariation?: number | null;
   /** Regra de decisão de conformidade e dados do valor medido. */
   conformity?: DimensionalConformityOptions;
+  /** Inclui regressão de Deming, Passing-Bablok e Bland-Altman no parâmetro de exatidão. */
+  includeMethodComparison?: boolean;
 }
 
 /** Parâmetros da avaliação de conformidade do perfil dimensional. */
@@ -151,6 +168,8 @@ export interface DimensionalConformityOptions {
   /** Limites que sobrepõem `lsl`/`usl` globais. */
   lsl?: number | null;
   usl?: number | null;
+  /** Limite inferior individual por corpo de prova (ex.: ABNT NBR 13904 / USP <881>). */
+  individualLsl?: number | null;
 }
 
 /**

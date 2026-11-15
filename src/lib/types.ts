@@ -139,6 +139,11 @@ export interface ReportConfig {
   showFormulas: boolean;
   showCharts: boolean;
   version: string;
+  conformityRule?: 'simple_acceptance' | 'guard_band' | 'probability';
+  guardBandFactor?: number;
+  probabilityThreshold?: number;
+  processVariation?: number | null;
+  individualLsl?: number | null;
 }
 
 export interface Validation {
@@ -235,6 +240,8 @@ export interface RunRow {
   partId?: string;
   /** Identificação do corpo de prova em delineamentos destrutivos. */
   specimen?: string;
+  /** Marca a linha como ensaio destrutivo (corpo de prova consumido). */
+  destructive?: boolean;
   combination: string;
   factorValues: Record<string, string>;
 }
@@ -541,6 +548,11 @@ export const DEFAULT_REPORT_CONFIG: ReportConfig = {
   showFormulas: true,
   showCharts: true,
   version: '1.0',
+  conformityRule: 'guard_band',
+  guardBandFactor: 1,
+  probabilityThreshold: 0.95,
+  processVariation: null,
+  individualLsl: null,
 };
 
 export const DEFAULT_DESIGN_INPUT: DesignInput = {
