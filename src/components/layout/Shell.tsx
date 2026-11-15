@@ -182,7 +182,11 @@ export function Shell({ children }: { children?: ReactNode }) {
                 : 'Validação de métodos analíticos com rastreabilidade estatística'}
             </p>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            <div className="hidden items-center gap-1.5 rounded-full border border-emerald-200/80 bg-emerald-50/80 px-2.5 py-1 text-[11px] font-medium text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300 md:flex" title="Banco de dados SQLite compilado para WebAssembly persistido localmente no IndexedDB">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Offline · SQLite sincronizado</span>
+            </div>
             <Button variant="ghost" size="icon" onClick={() => setGlossaryOpen(true)} title="Glossário">
               <BookOpen className="h-4 w-4" />
             </Button>
