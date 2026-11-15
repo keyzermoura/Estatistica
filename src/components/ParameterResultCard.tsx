@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
-import { AlertTriangle, Info } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
+import { AlertTriangle, HelpCircle, Info } from 'lucide-react';
 import type { ParameterAnalysis } from '../stats/analysis';
 import { fmt } from '../stats/distributions';
+import { ExplainableDecisionDrawer, type ExplainableDecisionData } from './ExplainableDecisionDrawer';
 import {
   AccuracyProfilePlotChart,
   BarSeriesChart,
@@ -244,6 +245,8 @@ export function ParameterResultCard({
   analysis: ParameterAnalysis;
   compact?: boolean;
 }) {
+  const [selectedDecision, setSelectedDecision] = useState<ExplainableDecisionData | null>(null);
+
   return (
     <Card>
       <CardHeader
@@ -269,6 +272,7 @@ export function ParameterResultCard({
                   <th className="text-right">Valor</th>
                   <th>Critério</th>
                   <th>Veredito</th>
+                  <th className="w-9 text-center" title="Demonstração da decisão"></th>
                 </tr>
               </thead>
               <tbody>
@@ -286,6 +290,51 @@ export function ParameterResultCard({
                     <td className="text-xs text-ink-500">{metric.criterionText}</td>
                     <td>
                       <VerdictBadge verdict={metric.verdict} />
+                    </td>
+                    <td className="text-center">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSelectedDecision({
+                            title: metric.label,
+                            parameterLabel: analysis.label,
+                            verdict: metric.verdict,
+                            formulaText: metric.formula || undefined,
+                            observedValueText:
+                              metric.value !== null && Number.isFinite(metric.value)
+                                ? `${fmt(metric.value)}${metric.unit ? ` ${metric.unit}` : ''}`
+                                : 'Não apurado',
+                            criterionText: metric.criterionText || 'Critério não configurado',
+                            stepByStepText: [
+                              `Valor apurado: ${fmt(metric.value)}${metric.unit ? ` ${metric.unit}` : ''}`,
+                              `Critério exigido: ${metric.criterionText || '—'}`,
+                              `Veredito: ${
+                                metric.verdict === 'pass'
+                                  ? 'Conforme (Aprovado)'
+                                  : metric.verdict === 'fail'
+                                    ? 'Não conforme (Reprovado)'
+                                    : metric.verdict === 'warning'
+                                      ? 'Atenção (Marginal)'
+                                      : 'Não avaliado'
+                              }`,
+                            ],
+                            normativeReference: analysis.reference || 'Eurachem / ISO / Normas aplicáveis',
+                            interpretationText:
+                              metric.verdict === 'pass'
+                                ? `A métrica '${metric.label}' atende rigorosamente ao critério estabelecido (${metric.criterionText}).`
+                                : metric.verdict === 'fail'
+                                  ? `A métrica '${metric.label}' ultrapassou o limiar de aceitação (${metric.criterionText}). Recomenda-se investigação técnica de desvio ou reensaio.`
+                                  : metric.verdict === 'warning'
+                                    ? `A métrica '${metric.label}' encontra-se em faixa de atenção em relação ao critério cadastrado (${metric.criterionText}).`
+                                    : `A métrica '${metric.label}' não pôde ser avaliada devido a ausência de critério numérico ou dados insuficientes na coleta.`,
+                          })
+                        }
+                        className="rounded-lg p-1 text-ink-400 hover:bg-brand-50 hover:text-brand-600 dark:hover:bg-brand-950/50 dark:hover:text-brand-300 transition"
+                        title="Ver demonstração da decisão"
+                        aria-label={`Demonstração de ${metric.label}`}
+                      >
+                        <HelpCircle className="h-3.5 w-3.5" />
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -357,6 +406,11 @@ export function ParameterResultCard({
           </div>
         ) : null}
       </CardBody>
+      <ExplainableDecisionDrawer
+        isOpen={Boolean(selectedDecision)}
+        onClose={() => setSelectedDecision(null)}
+        data={selectedDecision}
+      />
     </Card>
   );
 }
