@@ -211,16 +211,39 @@ export const ReportPreview = forwardRef<
           </ul>
         </Section>
 
-        <Section number={content.uncertainty ? '10' : '9'} title="Assinaturas">
+        <Section number={content.uncertainty ? '10' : '9'} title="Assinaturas Eletrônicas (21 CFR Part 11)">
           <div className="grid gap-3 sm:grid-cols-3">
             {content.signatures.map((signature) => (
-              <div key={signature.role} className="rounded-xl border border-ink-200 p-3 text-center">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">
-                  {ROLE_LABELS[signature.role]}
-                </p>
-                <p className="mt-1 text-sm font-medium">{signature.name || '—'}</p>
-                <p className="text-[11px] text-ink-400">{signature.date ? formatDate(signature.date) : 'Não assinado'}</p>
-                <div className="mt-4 border-t border-ink-300 pt-1 text-[10px] text-ink-400">Assinatura</div>
+              <div key={signature.role} className="flex flex-col justify-between rounded-xl border border-ink-200 p-3 text-center">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-ink-500">
+                    {ROLE_LABELS[signature.role]}
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-ink-800 dark:text-ink-100">{signature.name || '—'}</p>
+                  {signature.roleTitle && (
+                    <p className="text-[11px] text-ink-500">{signature.roleTitle}</p>
+                  )}
+                  {signature.meaning && (
+                    <p className="mt-1.5 text-[10px] italic text-ink-600 dark:text-ink-300">"{signature.meaning}"</p>
+                  )}
+                  <p className="mt-1 text-[11px] text-ink-400">
+                    {signature.date ? `Assinado em ${formatDate(signature.date)}` : 'Não assinado'}
+                  </p>
+                </div>
+                <div className="mt-3 border-t border-ink-200 pt-1.5 text-[10px] text-ink-400 dark:border-ink-700">
+                  {signature.signed && signature.signatureDigest ? (
+                    <div className="space-y-0.5">
+                      <span className="inline-block rounded bg-primary-50 px-1.5 py-0.5 text-[9px] font-semibold text-primary-700 dark:bg-primary-950 dark:text-primary-300">
+                        21 CFR Part 11
+                      </span>
+                      <p className="font-mono text-[9px] text-ink-500" title={`SHA-256: ${signature.signatureDigest}`}>
+                        {signature.signatureDigest.slice(0, 16)}…
+                      </p>
+                    </div>
+                  ) : (
+                    'Assinatura pendente'
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -230,6 +253,7 @@ export const ReportPreview = forwardRef<
           Documento gerado por ValidaMétodo · hash de auditoria {content.auditHash}
           <div className="mt-1 flex flex-wrap justify-center gap-1">
             <Badge tone="brand">ISO/IEC 17025</Badge>
+            <Badge tone="brand">FDA 21 CFR Part 11</Badge>
             <Badge tone="brand">GUM</Badge>
             <Badge tone="brand">ISO 5725</Badge>
           </div>

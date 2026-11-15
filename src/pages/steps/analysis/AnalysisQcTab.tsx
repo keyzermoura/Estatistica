@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { BarChart3, HelpCircle } from 'lucide-react';
+import { Archive, BarChart3, HelpCircle } from 'lucide-react';
 import type { ValidationAnalysis } from '../../../stats/analysis';
 import type { HistogramResult, NormalProbabilityPlotResult } from '../../../stats/normality';
 import type { AnalysisChart } from '../../../stats/analysis-types';
 import { fmt } from '../../../stats/distributions';
 import { mandelHCritical, mandelKCritical } from '../../../stats/iso5725';
-import { Alert, Badge, Card, CardBody, CardHeader } from '../../../components/ui';
+import { Alert, Badge, Button, Card, CardBody, CardHeader, useToast } from '../../../components/ui';
 import {
   ExportableChartCard,
   HistogramWithNormalCurveChart,
@@ -13,6 +13,7 @@ import {
   NormalProbabilityPlotChart,
   ResidualPlot,
   ScatterPlot,
+  exportAllChartsAsZip,
 } from '../../../components/charts';
 import {
   ExplainableDecisionDrawer,
@@ -37,6 +38,32 @@ export function AnalysisQcTab({
   mandelCharts: { hChart: AnalysisChart | null; kChart: AnalysisChart | null } | null;
 }) {
   const [selectedDecision, setSelectedDecision] = useState<ExplainableDecisionData | null>(null);
+  const [exportingAllCharts, setExportingAllCharts] = useState(false);
+  const toast = useToast();
+
+  const handleExportAllChartsZip = async () => {
+    setExportingAllCharts(true);
+    try {
+      const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-export-chart-card]'));
+      if (!cards.length) {
+        toast.push('Nenhum gráfico disponível para exportação.', 'danger');
+        return;
+      }
+      const items = cards.map((card) => ({
+        filename: card.getAttribute('data-export-filename') || 'grafico-metrologico',
+        target: card,
+      }));
+      await exportAllChartsAsZip(items, 'figuras-validacao-alta-resolucao.zip');
+      toast.push(`Pacote com ${items.length} figuras exportado com sucesso (ZIP com SVG e PNG 300 DPI).`);
+    } catch (err) {
+      toast.push(
+        err instanceof Error ? err.message : 'Falha ao exportar pacote de gráficos.',
+        'danger',
+      );
+    } finally {
+      setExportingAllCharts(false);
+    }
+  };
 
   const descriptive = analysis.qc.descriptive;
   const calibration = analysis.qc.regression;
@@ -297,13 +324,25 @@ export function AnalysisQcTab({
                       Histograma com distribuição normal teórica N(x̄, s²) e Gráfico de Probabilidade Normal (Q-Q) com posições de Blom e bandas de confiança de 95%.
                     </p>
                   </div>
-                  {analysis.qc.normality ? (
-                    <Badge tone={analysis.qc.normality.normal ? 'success' : 'warning'}>
-                      {analysis.qc.normality.normal
-                        ? `Normal (${analysis.qc.normality.method.includes('Anderson') ? 'A*' : 'W'} = ${fmt(analysis.qc.normality.statistic)}, p = ${fmt(analysis.qc.normality.pValue)})`
-                        : `Não normal (${analysis.qc.normality.method.includes('Anderson') ? 'A*' : 'W'} = ${fmt(analysis.qc.normality.statistic)}, p = ${fmt(analysis.qc.normality.pValue)})`}
-                    </Badge>
-                  ) : null}
+                  <div className="flex items-center gap-2">
+                    {analysis.qc.normality ? (
+                      <Badge tone={analysis.qc.normality.normal ? 'success' : 'warning'}>
+                        {analysis.qc.normality.normal
+                          ? `Normal (${analysis.qc.normality.method.includes('Anderson') ? 'A*' : 'W'} = ${fmt(analysis.qc.normality.statistic)}, p = ${fmt(analysis.qc.normality.pValue)})`
+                          : `Não normal (${analysis.qc.normality.method.includes('Anderson') ? 'A*' : 'W'} = ${fmt(analysis.qc.normality.statistic)}, p = ${fmt(analysis.qc.normality.pValue)})`}
+                      </Badge>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleExportAllChartsZip}
+                      loading={exportingAllCharts}
+                      title="Exportar todas as figuras da análise em um pacote ZIP contendo arquivos .svg e .png (300 DPI)"
+                    >
+                      <Archive className="h-3.5 w-3.5 text-brand-600 dark:text-brand-400" />
+                      <span>Exportar Figuras (ZIP 300 DPI)</span>
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="mt-2 rounded-lg bg-ink-50 p-2.5 text-[11px] text-ink-600 dark:bg-ink-900/60 dark:text-ink-300">

@@ -59,6 +59,8 @@ export function ExportableChartCard({
 
   return (
     <div
+      data-export-chart-card="true"
+      data-export-filename={filenameBase}
       className={`rounded-xl border border-ink-200 bg-surface-50/50 p-3 dark:border-ink-800 dark:bg-ink-950/20 ${className}`}
     >
       {(title || headerAction || badge) && (

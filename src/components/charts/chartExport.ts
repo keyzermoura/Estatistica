@@ -1,3 +1,5 @@
+import JSZip from 'jszip';
+
 /**
  * Utilitários de exportação gráfica em alta resolução para relatórios metrológicos,
  * auditorias e publicações científicas/periódicos (ISO 5725 / Eurachem / GUM).
@@ -5,6 +7,7 @@
  * Suporta:
  * 1. Exportação Vetorial SVG nativo (editável em Illustrator, Inkscape, LaTeX).
  * 2. Exportação Raster PNG em 300 DPI (alta resolução de impressão, escala 3.125x sobre 96 DPI).
+ * 3. Exportação em lote de todas as figuras da análise em pacote ZIP organizado.
  */
 
 export interface ExportChartOptions {
@@ -125,14 +128,12 @@ export function exportChartAsSvg(
 }
 
 /**
- * Exporta o gráfico como imagem rasterizada PNG em 300 DPI (alta resolução).
+ * Renderiza um elemento gráfico SVG para Blob PNG com resolução configurável (padrão 300 DPI).
  */
-export async function exportChartAsPng300Dpi(
+export async function renderSvgToPngBlob(
   target: HTMLElement | SVGSVGElement,
-  filename = 'grafico-metrologico-300dpi.png',
   options: ExportChartOptions = {},
-): Promise<void> {
-  const safeFilename = filename.endsWith('.png') ? filename : `${filename}.png`;
+): Promise<Blob> {
   const dpi = options.dpi ?? 300;
   // Escala de DPI relativa ao padrão 96 DPI dos navegadores
   const scale = dpi / 96;
@@ -173,8 +174,61 @@ export async function exportChartAsPng300Dpi(
       throw new Error('Falha ao gerar Blob PNG a partir do Canvas.');
     }
 
-    triggerDownload(pngBlob, safeFilename);
+    return pngBlob;
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/**
+ * Exporta o gráfico como imagem rasterizada PNG em 300 DPI (alta resolução).
+ */
+export async function exportChartAsPng300Dpi(
+  target: HTMLElement | SVGSVGElement,
+  filename = 'grafico-metrologico-300dpi.png',
+  options: ExportChartOptions = {},
+): Promise<void> {
+  const safeFilename = filename.endsWith('.png') ? filename : `${filename}.png`;
+  const pngBlob = await renderSvgToPngBlob(target, options);
+  triggerDownload(pngBlob, safeFilename);
+}
+
+export interface ChartExportItem {
+  filename: string;
+  target: HTMLElement | SVGSVGElement;
+}
+
+/**
+ * Empacota uma lista de gráficos em um único arquivo .ZIP contendo as versões .svg e .png (300 DPI).
+ */
+export async function exportAllChartsAsZip(
+  charts: ChartExportItem[],
+  zipFilename = 'pacote-graficos-300dpi.zip',
+): Promise<void> {
+  if (!charts.length) {
+    throw new Error('Nenhum gráfico encontrado para exportação.');
+  }
+
+  const zip = new JSZip();
+  const svgFolder = zip.folder('svg_vetorial') ?? zip;
+  const pngFolder = zip.folder('png_300dpi') ?? zip;
+
+  for (let i = 0; i < charts.length; i++) {
+    const item = charts[i];
+    const prefix = String(i + 1).padStart(2, '0');
+    const baseName = `${prefix}_${item.filename.replace(/\.(svg|png)$/i, '')}`;
+
+    // SVG
+    const { svgString } = serializeSvg(item.target);
+    svgFolder.file(`${baseName}.svg`, svgString);
+
+    // PNG 300 DPI
+    const pngBlob = await renderSvgToPngBlob(item.target, { dpi: 300 });
+    const pngBytes = await pngBlob.arrayBuffer();
+    pngFolder.file(`${baseName}-300dpi.png`, pngBytes);
+  }
+
+  const zipBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+  const safeZipFilename = zipFilename.endsWith('.zip') ? zipFilename : `${zipFilename}.zip`;
+  triggerDownload(zipBlob, safeZipFilename);
 }

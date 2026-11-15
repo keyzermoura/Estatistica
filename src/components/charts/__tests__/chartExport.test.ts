@@ -168,4 +168,72 @@ describe('chartExport - Exportação Gráfica em Alta Resolução', () => {
 
     vi.restoreAllMocks();
   });
+
+  it('empacota múltiplos gráficos em arquivo ZIP estruturado com pastas svg_vetorial e png_300dpi', async () => {
+    const svg1 = createMockSvg(400, 200);
+    const svg2 = createMockSvg(500, 250);
+
+    const mockAnchor: any = {
+      href: '',
+      download: '',
+      click: vi.fn(),
+    };
+
+    vi.stubGlobal('document', {
+      createElement: (tag: string) => {
+        if (tag === 'canvas') {
+          return {
+            width: 0,
+            height: 0,
+            getContext: () => ({
+              fillStyle: '',
+              fillRect: vi.fn(),
+              drawImage: vi.fn(),
+            }),
+            toBlob: (callback: any) => {
+              callback(new Blob(['png-bytes'], { type: 'image/png' }));
+            },
+          };
+        }
+        if (tag === 'a') {
+          return mockAnchor;
+        }
+        return {};
+      },
+      body: {
+        appendChild: vi.fn(),
+        removeChild: vi.fn(),
+      },
+    });
+
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn().mockReturnValue('blob:test-zip-url'),
+      revokeObjectURL: vi.fn(),
+    });
+
+    vi.stubGlobal(
+      'Image',
+      class MockImage {
+        onload: (() => void) | null = null;
+        set src(_val: string) {
+          setTimeout(() => this.onload && this.onload(), 5);
+        }
+      },
+    );
+
+    const { exportAllChartsAsZip } = await import('../chartExport');
+
+    await exportAllChartsAsZip(
+      [
+        { filename: 'histograma', target: svg1 },
+        { filename: 'qq-plot', target: svg2 },
+      ],
+      'lote-figuras.zip',
+    );
+
+    expect(mockAnchor.download).toBe('lote-figuras.zip');
+    expect(mockAnchor.click).toHaveBeenCalled();
+
+    vi.restoreAllMocks();
+  });
 });

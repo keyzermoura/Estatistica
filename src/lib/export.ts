@@ -275,17 +275,19 @@ export async function buildReportDocx(
   for (const assumption of content.assumptions) children.push(bullet(assumption));
   children.push(heading('9. Referências'));
   for (const reference of content.references) children.push(bullet(reference));
-  children.push(heading('10. Assinaturas'));
+  children.push(heading('10. Assinaturas Eletrônicas (FDA 21 CFR Part 11)'));
   children.push(
     table(
-      ['Papel', 'Nome', 'Data', 'Assinatura'],
+      ['Papel', 'Signatário & Função', 'Data / Hora', 'Manifestação & Digest Criptográfico'],
       content.signatures.map((s) => [
         s.role === 'elaboration' ? 'Elaboração' : s.role === 'review' ? 'Revisão' : 'Aprovação',
-        s.name || '—',
+        s.name ? (s.roleTitle ? `${s.name}\n${s.roleTitle}` : s.name) : '—',
         s.date ? new Date(s.date).toLocaleString('pt-BR') : '—',
-        s.signed ? 'Assinado eletronicamente' : '_______________________',
+        s.signed
+          ? `Assinado eletronicamente (21 CFR Part 11)\n${s.meaning ? `"${s.meaning}"\n` : ''}${s.signatureDigest ? `SHA-256: ${s.signatureDigest.slice(0, 24)}...` : ''}`
+          : 'Pendente',
       ]),
-      [22, 30, 24, 24],
+      [18, 28, 20, 34],
     ),
   );
   children.push(
@@ -550,17 +552,19 @@ export async function buildReportPdf(
   for (const assumption of content.assumptions) pdfText(ctx, `• ${assumption}`, 8.5);
   pdfHeading(ctx, '9. Referências');
   for (const reference of content.references) pdfText(ctx, `• ${reference}`, 8.5);
-  pdfHeading(ctx, '10. Assinaturas');
+  pdfHeading(ctx, '10. Assinaturas Eletrônicas (FDA 21 CFR Part 11)');
   pdfTable(
     ctx,
-    ['Papel', 'Nome', 'Data', 'Assinatura'],
+    ['Papel', 'Signatário / Cargo', 'Data / Hora', 'Status & Digest Criptográfico'],
     content.signatures.map((s) => [
       s.role === 'elaboration' ? 'Elaboração' : s.role === 'review' ? 'Revisão' : 'Aprovação',
-      s.name || '—',
+      s.name ? (s.roleTitle ? `${s.name} (${s.roleTitle})` : s.name) : '—',
       s.date ? new Date(s.date).toLocaleString('pt-BR') : '—',
-      s.signed ? 'Assinado eletronicamente' : '________________',
+      s.signed
+        ? `21 CFR Part 11: ${s.signatureDigest ? s.signatureDigest.slice(0, 16) + '...' : 'Válida'}`
+        : 'Pendente',
     ]),
-    [20, 30, 26, 24],
+    [18, 36, 22, 24],
   );
   const pages = doc.getNumberOfPages();
   for (let i = 1; i <= pages; i++) {
@@ -635,6 +639,12 @@ export async function buildEvidenceZip(
     `Versão: ${bundle.validation.version}`,
     `Gerado em: ${new Date().toISOString()}`,
     `Hash do relatório: ${report.content.auditHash}`,
+    `Assinaturas 21 CFR Part 11: ${
+      report.content.signatures
+        .filter((s) => s.signed)
+        .map((s) => `${s.role}:${s.name} [${s.signatureDigest?.slice(0, 16)}...]`)
+        .join('; ') || 'Nenhuma assinatura registrada'
+    }`,
     '',
     'Arquivos e hashes SHA-256:',
   ];
