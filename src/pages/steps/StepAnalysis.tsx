@@ -65,6 +65,7 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Checkbox,
   Field,
   Input,
   Select,
@@ -135,6 +136,12 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
       ? String(bundle.validation.reportConfig.individualLsl)
       : '',
   );
+  const [homogeneityCheck, setHomogeneityCheck] = useState<boolean>(
+    bundle.validation.reportConfig.homogeneityCheck === true,
+  );
+  const [homogeneityJustification, setHomogeneityJustification] = useState<string>(
+    bundle.validation.reportConfig.homogeneityJustification ?? '',
+  );
   const [lslInput, setLslInput] = useState<string>(
     bundle.method.lsl !== null && bundle.method.lsl !== undefined
       ? String(bundle.method.lsl)
@@ -175,6 +182,10 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         bundle.validation.reportConfig.individualLsl !== undefined
         ? String(bundle.validation.reportConfig.individualLsl)
         : '',
+    );
+    setHomogeneityCheck(bundle.validation.reportConfig.homogeneityCheck === true);
+    setHomogeneityJustification(
+      bundle.validation.reportConfig.homogeneityJustification ?? '',
     );
     setLslInput(
       bundle.method.lsl !== null && bundle.method.lsl !== undefined
@@ -224,12 +235,14 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
             probabilityThreshold,
             processVariation: pv,
             individualLsl: indLsl,
+            homogeneityCheck,
+            homogeneityJustification: homogeneityJustification.trim(),
           },
         },
         actor,
-        'Parâmetros de conformidade e processo',
+        'Parâmetros de conformidade, processo e homogeneidade',
       );
-      toast.push('Parâmetros de conformidade salvos.');
+      toast.push('Parâmetros de conformidade e homogeneidade salvos.');
       reload();
     } catch (error) {
       toast.push(error instanceof Error ? error.message : 'Falha ao salvar configuração.', 'danger');
@@ -778,7 +791,7 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         <Card>
           <CardHeader
             title="Parâmetros de Conformidade, Incerteza-Alvo e Regra de Decisão (Eurachem 2015/2021 · ILAC G8)"
-            description="Configure a regra de decisão, banda de guarda, limites de especificação (LSL/USL) e fração mássica para calcular U^tg e risco de falso aceite/rejeite."
+            description="Configure a regra de decisão, banda de guarda, limites de especificação (LSL/USL), fração mássica e, no perfil físico destrutivo, a verificação de homogeneidade do lote."
             icon={<CheckCircle2 className="h-4 w-4" />}
             action={
               <Button
@@ -885,6 +898,33 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
                   placeholder="Ex.: 13,4"
                   hint="Mín. por amostra (compendial)"
                 />
+              </div>
+            ) : null}
+
+            {profile.id === 'physical-destructive' ? (
+              <div className="space-y-3 rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                <Checkbox
+                  checked={homogeneityCheck}
+                  disabled={locked}
+                  onChange={(e) => setHomogeneityCheck(e.target.checked)}
+                  label="Verificar homogeneidade do lote (ANOVA entre amostras, Cochran e razão de variâncias)"
+                />
+                <Textarea
+                  label="Justificativa técnica para heterogeneidade do lote"
+                  value={homogeneityJustification}
+                  disabled={locked || !homogeneityCheck}
+                  onChange={(e) => setHomogeneityJustification(e.target.value)}
+                  placeholder="Ex.: dispersão decorrente de sublotes certificados no histórico do fornecedor."
+                  hint="Obrigatória somente quando o teste rejeita a homogeneidade; fica registrada no relatório e na auditoria."
+                  className="min-h-[70px]"
+                />
+                <p className="text-xs text-ink-500">
+                  Os grupos são derivados da coluna <strong>Amostra</strong> da coleta; use o
+                  mesmo identificador de amostra para todos os operadores. São necessárias pelo
+                  menos 2 amostras com 2 ou mais corpos de prova cada. Se o lote for rejeitado sem
+                  justificativa, a repetibilidade e a reprodutibilidade ficam
+                  <strong> não avaliadas</strong>.
+                </p>
               </div>
             ) : null}
 

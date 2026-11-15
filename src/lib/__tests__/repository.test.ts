@@ -19,6 +19,7 @@ import {
   saveParameters,
   saveReport,
   signReport,
+  updateValidation,
 } from '../repository';
 import { composeReport } from '../report';
 import { seedSutureVerification } from '../seed';
@@ -429,5 +430,30 @@ describe('repositório e persistência SQLite', () => {
     expect(report.content.title).toContain('Verificação de Método');
     expect(report.content.method.referenceNorm).toContain('ABNT NBR 13904');
     expect(report.content.conclusion).toContain('item 7.2.1.5');
+  });
+
+  it('persiste a configuração de homogeneidade do lote no relatório da validação', () => {
+    const method = saveMethod(makeMethod('m-homogeneity'));
+    const validation = createValidation(method.id, 'Validação com homogeneidade', 'Ana');
+    const bundle = getBundle(validation.id)!;
+
+    updateValidation(
+      {
+        ...bundle.validation,
+        reportConfig: {
+          ...bundle.validation.reportConfig,
+          homogeneityCheck: true,
+          homogeneityJustification: 'Sublotes certificados no histórico do fornecedor.',
+        },
+      },
+      'Ana',
+      'Configuração de homogeneidade',
+    );
+
+    const reloaded = getBundle(validation.id)!;
+    expect(reloaded.validation.reportConfig.homogeneityCheck).toBe(true);
+    expect(reloaded.validation.reportConfig.homogeneityJustification).toBe(
+      'Sublotes certificados no histórico do fornecedor.',
+    );
   });
 });

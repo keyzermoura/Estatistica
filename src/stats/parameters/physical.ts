@@ -32,7 +32,11 @@ import type {
 import { buildMetric, emptyParameter, parameterSummary } from '../analysis-utils';
 import { evaluateParameter } from '../../lib/criteria';
 import { fmt } from '../distributions';
-import { gageRRNested, type GageRRNestedResult } from '../nested';
+import {
+  gageRRNested,
+  type GageRRNestedResult,
+  type NestedHomogeneityInput,
+} from '../nested';
 import { computeEmp } from '../emp';
 import { linearRegression, type RegressionResult } from '../regression';
 import {
@@ -360,6 +364,24 @@ function duplicateSpecimenError(duplicates: Array<[string, Measurement[]]>): str
   return `Corpo de prova duplicado: ${visible}${extra} Em ensaio destrutivo cada corpo de prova é consumido uma única vez; corrija a identificação na coleta.`;
 }
 
+/**
+ * Deriva os grupos de homogeneidade do lote a partir da coluna `Amostra`.
+ * Cada amostra reúne os corpos de prova medidos por todos os operadores.
+ */
+function homogeneityGroupsFrom(
+  rows: NumericMeasurement[],
+): { labels: string[]; groups: number[][] } {
+  const bySample = new Map<string, number[]>();
+  for (const measurement of rows) {
+    const sample = sampleOf(measurement);
+    const values = bySample.get(sample) ?? [];
+    values.push(measurement.value);
+    bySample.set(sample, values);
+  }
+  const labels = localeSort([...bySample.keys()]);
+  return { labels, groups: labels.map((label) => bySample.get(label)!) };
+}
+
 function unbalancedError(
   cells: Array<{ label: string; count: number }>,
   expected: number,
@@ -525,6 +547,30 @@ function nestedStudy(
     }),
   );
   const sampleLabels = operators.map((operator) => samplesByOperator.get(operator)!);
+
+  let homogeneity: NestedHomogeneityInput | null = null;
+  if (context.options.homogeneity?.enabled) {
+    const derived = homogeneityGroupsFrom(destructiveRows);
+    const eligible = derived.groups.filter((group) => group.length >= 2);
+    if (eligible.length < 2) {
+      return {
+        error:
+          'A verificação de homogeneidade do lote requer pelo menos 2 amostras com 2 ou mais corpos de prova cada. Ajuste a coluna “Amostra” na coleta ou desative a verificação.',
+      };
+    }
+    homogeneity = {
+      groups: derived.groups,
+      labels: derived.labels,
+      alpha:
+        context.options.homogeneity.alpha ??
+        context.options.alpha ??
+        0.05,
+      justification: context.options.homogeneity.justification ?? null,
+      maxVarianceRatio:
+        context.options.homogeneity.maxVarianceRatio ?? null,
+    };
+  }
+
   const specimens: SpecimenObservation[] = [];
   operators.forEach((operator, operatorIndex) => {
     sampleLabels[operatorIndex].forEach((sample, sampleIndex) => {
@@ -565,6 +611,7 @@ function nestedStudy(
         alpha: context.options.alpha ?? 0.05,
         criteria: nativeCriteria,
         unit: unitOf(context.options),
+        homogeneity,
       },
     );
     return {

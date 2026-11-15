@@ -11,7 +11,11 @@ import { PHYSICAL_NONDESTRUCTIVE_PROFILE } from '../../profiles/physical-nondest
 import type { PhysicalParamKey } from '../../profiles/physical-common';
 import { analyzeValidation } from '../analysis';
 import { buildDesign } from '../design';
-import { gageRRNested, NESTED_DESTRUCTIVE_WARNING } from '../nested';
+import {
+  gageRRNested,
+  NESTED_DESTRUCTIVE_WARNING,
+  type GageRRNestedResult,
+} from '../nested';
 import { evaluateNonNormalityAndOptions } from '../normality';
 import {
   analyzeEnvironmentalConditions,
@@ -129,6 +133,41 @@ function destructiveMeasurements(): Measurement[] {
           }),
         );
       }
+    });
+  });
+  return out;
+}
+
+/**
+ * Lote heterogêneo para a verificação de homogeneidade: 2 operadores ×
+ * 2 amostras × 3 corpos de prova. A amostra A-2 tem dispersão muito maior.
+ */
+function heterogeneousLotMeasurements(): Measurement[] {
+  const operators = ['Op1', 'Op2'];
+  const sampleValues: Record<string, number[]> = {
+    'A-1': [9.9, 10.0, 10.1],
+    'A-2': [4.0, 10.0, 16.0],
+  };
+  const out: Measurement[] = [];
+  let order = 0;
+  operators.forEach((operator, operatorIndex) => {
+    Object.entries(sampleValues).forEach(([sample, values]) => {
+      values.forEach((value, replicateIndex) => {
+        order += 1;
+        out.push(
+          measurement({
+            id: `h-${order}`,
+            runOrder: order,
+            analyst: operator,
+            lot: 'Lote-heterogeneo',
+            sample,
+            specimen: `CP-H-${String(order).padStart(3, '0')}`,
+            destructive: true,
+            replicate: replicateIndex + 1,
+            value: Number((value + operatorIndex * 0.01).toFixed(2)),
+          }),
+        );
+      });
     });
   });
   return out;
@@ -495,6 +534,56 @@ describe('perfis físicos (destrutivo e não destrutivo)', () => {
     );
     expect(justified.homogeneity?.homogeneous).toBe(false);
     expect(justified.warnings.some((w) => w.includes('Dispersão decorrente de sublotes'))).toBe(true);
+  });
+
+  it('conecta a homogeneidade do lote ao fluxo fisico destrutivo', () => {
+    const parameters = physicalParameters('physical-destructive', ['repeatability']);
+    const rows = heterogeneousLotMeasurements();
+
+    const defaults = analyzeValidation(parameters, rows, [], {
+      profileId: 'physical-destructive',
+    });
+    const defaultParameter = defaults.parameters[0];
+    expect(defaultParameter.verdict).not.toBe('not_evaluated');
+    const defaultNested = defaultParameter.results.gageRRNested as GageRRNestedResult;
+    expect(defaultNested.homogeneity).toBeNull();
+    expect(
+      defaultParameter.warnings.some((warning) =>
+        warning.includes('Homogeneidade do lote não avaliada'),
+      ),
+    ).toBe(true);
+
+    const withoutJustification = analyzeValidation(parameters, rows, [], {
+      profileId: 'physical-destructive',
+      homogeneity: { enabled: true },
+    });
+    expect(withoutJustification.parameters[0].verdict).toBe('not_evaluated');
+    expect(withoutJustification.parameters[0].summary).toContain(
+      'Homogeneidade do lote rejeitada',
+    );
+
+    const withJustification = analyzeValidation(parameters, rows, [], {
+      profileId: 'physical-destructive',
+      homogeneity: {
+        enabled: true,
+        justification:
+          'Sublotes certificados com dispersão distinta no histórico do fornecedor.',
+      },
+    });
+    const justifiedParameter = withJustification.parameters[0];
+    expect(justifiedParameter.verdict).not.toBe('not_evaluated');
+    const justifiedNested =
+      justifiedParameter.results.gageRRNested as GageRRNestedResult;
+    expect(justifiedNested.homogeneity?.homogeneous).toBe(false);
+    expect(justifiedNested.homogeneity?.justified).toBe(true);
+    expect(
+      justifiedParameter.tables.some((table) => table.title === 'Homogeneidade do lote'),
+    ).toBe(true);
+    expect(
+      justifiedParameter.warnings.some((warning) =>
+        warning.includes('Sublotes certificados'),
+      ),
+    ).toBe(true);
   });
 
   it('diagnostica não normalidade sem transformar automaticamente e calcula intervalo não paramétrico de Wilks', () => {

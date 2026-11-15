@@ -1662,7 +1662,7 @@ export function gageRRNested(
     }
     if (homogeneity.homogeneous === false && !homogeneity.justified) {
       throw new Error(
-        'Homogeneidade do lote rejeitada. Registre uma justificativa técnica na opção homogeneity.justification antes de prosseguir.',
+        'Homogeneidade do lote rejeitada. Registre uma justificativa técnica na etapa Análise antes de prosseguir.',
       );
     }
   }

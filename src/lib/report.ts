@@ -248,6 +248,17 @@ export async function composeReport(
               `Variação do processo informada (PV = 6·σ): ${bundle.validation.reportConfig.processVariation} ${bundle.method.toleranceUnit || bundle.method.unit}.`,
             ]
           : []),
+        ...(bundle.method.family === 'physical-destructive'
+          ? [
+              bundle.validation.reportConfig.homogeneityCheck
+                ? `Verificação de homogeneidade do lote habilitada (ANOVA entre amostras, Cochran e razão de variâncias).${
+                    bundle.validation.reportConfig.homogeneityJustification?.trim()
+                      ? ` Justificativa registrada: ${bundle.validation.reportConfig.homogeneityJustification.trim()}`
+                      : ''
+                  }`
+                : 'Homogeneidade do lote não verificada; a repetibilidade do ensaio destrutivo pressupõe amostras homogêneas dentro do lote.',
+            ]
+          : []),
         ...((bundle.method.lsl !== null && bundle.method.usl === null) ||
         (bundle.method.lsl === null && bundle.method.usl !== null)
           ? [

@@ -111,6 +111,14 @@ export function ValidationWizard() {
         unit: bundle.method.unit,
         processVariation: bundle.validation.reportConfig.processVariation ?? null,
         includeMethodComparison: true,
+        homogeneity:
+          profile.id === 'physical-destructive'
+            ? {
+                enabled: bundle.validation.reportConfig.homogeneityCheck === true,
+                justification:
+                  bundle.validation.reportConfig.homogeneityJustification ?? null,
+              }
+            : undefined,
         conformity: toleranceProfile
           ? {
               rule: bundle.validation.reportConfig.conformityRule ?? 'guard_band',

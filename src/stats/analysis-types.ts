@@ -148,6 +148,20 @@ export interface AnalysisOptions {
   conformity?: DimensionalConformityOptions;
   /** Inclui regressão de Deming, Passing-Bablok e Bland-Altman no parâmetro de exatidão. */
   includeMethodComparison?: boolean;
+  /** Verificação de homogeneidade do lote no perfil físico destrutivo. */
+  homogeneity?: HomogeneityAnalysisOptions | null;
+}
+
+/** Opções da verificação de homogeneidade do lote (ensaio destrutivo). */
+export interface HomogeneityAnalysisOptions {
+  /** Quando falso/ausente, o lote não é verificado. */
+  enabled?: boolean;
+  /** Justificativa técnica obrigatória quando o teste rejeita a homogeneidade. */
+  justification?: string | null;
+  /** Nível de significância; padrão α do delineamento. */
+  alpha?: number;
+  /** Limite máximo descritivo da razão de variâncias; padrão: teste F de Bonferroni. */
+  maxVarianceRatio?: number | null;
 }
 
 /** Parâmetros da avaliação de conformidade do perfil dimensional. */

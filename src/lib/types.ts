@@ -144,6 +144,10 @@ export interface ReportConfig {
   probabilityThreshold?: number;
   processVariation?: number | null;
   individualLsl?: number | null;
+  /** Habilita a verificação de homogeneidade do lote no ensaio destrutivo. */
+  homogeneityCheck?: boolean;
+  /** Justificativa técnica quando a homogeneidade do lote é rejeitada. */
+  homogeneityJustification?: string;
 }
 
 export interface Validation {
@@ -553,6 +557,8 @@ export const DEFAULT_REPORT_CONFIG: ReportConfig = {
   probabilityThreshold: 0.95,
   processVariation: null,
   individualLsl: null,
+  homogeneityCheck: false,
+  homogeneityJustification: '',
 };
 
 export const DEFAULT_DESIGN_INPUT: DesignInput = {
