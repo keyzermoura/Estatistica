@@ -19,6 +19,11 @@ import {
   listMethods,
   saveMethod,
 } from '../lib/repository';
+import { seedSutureVerification } from '../lib/seed';
+import {
+  applyNormativeTemplate,
+  NORMATIVE_TEMPLATES,
+} from '../profiles/normative-templates';
 import type { Method, MethodFamily, MethodType, ValidationType } from '../lib/types';
 import {
   METHOD_FAMILY_LABELS,
@@ -61,7 +66,10 @@ export function Dashboard() {
   const [items, setItems] = useState(() => getValidationSummaries());
   const [methods, setMethods] = useState<Method[]>(() => listMethods());
   const [newOpen, setNewOpen] = useState(false);
-  const [tab, setTab] = useState<'existing' | 'new'>('existing');
+  const [tab, setTab] = useState<'existing' | 'new' | 'template'>('existing');
+  const [selectedTemplate, setSelectedTemplate] = useState(
+    NORMATIVE_TEMPLATES[0]?.id ?? '',
+  );
   const [selectedMethod, setSelectedMethod] = useState('');
   const [title, setTitle] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -105,6 +113,25 @@ export function Dashboard() {
   useEffect(() => {
     if (!selectedMethod && methods.length) setSelectedMethod(methods[0].id);
   }, [methods, selectedMethod]);
+
+  const createFromTemplate = () => {
+    if (!selectedTemplate) {
+      toast.push('Selecione um template normativo.', 'danger');
+      return;
+    }
+    try {
+      const { validation } = applyNormativeTemplate(selectedTemplate, 'usuario');
+      toast.push('Método e validação criados a partir do template normativo.');
+      setNewOpen(false);
+      bumpRefresh();
+      navigate(`/validation/${validation.id}`);
+    } catch (error) {
+      toast.push(
+        error instanceof Error ? error.message : 'Falha ao aplicar template normativo.',
+        'danger',
+      );
+    }
+  };
 
   const createFromExisting = () => {
     if (!selectedMethod) {
@@ -186,10 +213,25 @@ export function Dashboard() {
             Cada processo combina delineamento estatístico, dados brutos, análise auditável, orçamento de incerteza e relatório exportável.
           </p>
         </div>
-        <Button onClick={() => { reload(); setNewOpen(true); }}>
-          <Plus className="h-4 w-4" />
-          Nova validação
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            onClick={() => {
+              const id = seedSutureVerification();
+              reload();
+              bumpRefresh();
+              toast.push('Exemplo de verificação ABNT NBR 13904 / USP <881> carregado.');
+              navigate(`/validation/${id}`);
+            }}
+          >
+            <FlaskConical className="h-4 w-4" />
+            Carregar exemplo ABNT NBR 13904 (Sutura)
+          </Button>
+          <Button onClick={() => { reload(); setNewOpen(true); }}>
+            <Plus className="h-4 w-4" />
+            Nova validação
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -342,6 +384,8 @@ export function Dashboard() {
             <Button variant="ghost" onClick={() => setNewOpen(false)}>Cancelar</Button>
             {tab === 'existing' ? (
               <Button onClick={createFromExisting}>Criar validação</Button>
+            ) : tab === 'template' ? (
+              <Button onClick={createFromTemplate}>Aplicar template e iniciar</Button>
             ) : (
               <Button onClick={createFromNewMethod}>Criar método e validação</Button>
             )}
@@ -351,10 +395,11 @@ export function Dashboard() {
         <Tabs
           items={[
             { id: 'existing', label: `Método existente (${methods.length})` },
+            { id: 'template', label: `Templates normativos (${NORMATIVE_TEMPLATES.length})` },
             { id: 'new', label: 'Novo método' },
           ]}
           value={tab}
-          onChange={(id) => setTab(id as 'existing' | 'new')}
+          onChange={(id) => setTab(id as 'existing' | 'new' | 'template')}
         />
         {tab === 'existing' ? (
           <div className="mt-4 space-y-3">
@@ -376,6 +421,43 @@ export function Dashboard() {
               onChange={(e) => setTitle(e.target.value)}
               hint="Se vazio, o sistema cria um título automático."
             />
+          </div>
+        ) : tab === 'template' ? (
+          <div className="mt-4 space-y-3">
+            <Alert tone="info">
+              Crie método, parâmetros, especificações e regra de decisão pré-configurados em 1 clique segundo a norma escolhida.
+            </Alert>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {NORMATIVE_TEMPLATES.map((tpl) => {
+                const active = selectedTemplate === tpl.id;
+                return (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    onClick={() => setSelectedTemplate(tpl.id)}
+                    className={`rounded-xl border p-3 text-left transition-colors ${
+                      active
+                        ? 'border-brand-600 bg-brand-50/70 ring-2 ring-brand-500/20 dark:border-brand-400 dark:bg-brand-950/40'
+                        : 'border-ink-200 hover:border-ink-300 dark:border-ink-800 dark:hover:border-ink-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-brand-700 dark:text-brand-300">
+                        {tpl.code}
+                      </span>
+                      <Badge tone="outline">{METHOD_FAMILY_LABELS[tpl.family]}</Badge>
+                    </div>
+                    <p className="mt-1 text-sm font-semibold text-ink-900 dark:text-ink-50">
+                      {tpl.title}
+                    </p>
+                    <p className="mt-0.5 text-xs text-ink-600 dark:text-ink-300">{tpl.subtitle}</p>
+                    <p className="mt-1.5 text-[11px] text-ink-500 dark:text-ink-400">
+                      {tpl.recommendedSamplePlan}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
