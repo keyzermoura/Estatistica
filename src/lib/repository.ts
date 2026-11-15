@@ -391,6 +391,19 @@ export function saveMethod(method: Method, actor = 'sistema'): Method {
         next.updatedAt,
       ],
     );
+    if (existing) {
+      const unlocked = rows<{ id: string }>(
+        'SELECT id FROM validations WHERE method_id = ? AND locked = 0',
+        [next.id],
+      );
+      for (const item of unlocked) {
+        invalidateCurrentReportIfSigned(
+          item.id,
+          actor,
+          'Método atualizado após assinatura do relatório',
+        );
+      }
+    }
     logAudit(
       'global',
       'method',
@@ -423,6 +436,70 @@ export function listValidations(): Validation[] {
 export function getValidation(id: string): Validation | null {
   const r = row('SELECT * FROM validations WHERE id = ?', [id]);
   return r ? mapValidation(r) : null;
+}
+
+/**
+ * Se a versão atual da validação tiver relatório assinado ou fora de rascunho,
+ * invalida as assinaturas e retorna o relatório para 'draft' após edição dos dados.
+ */
+function invalidateCurrentReportIfSigned(
+  validationId: string,
+  actor: string,
+  reason: string,
+): void {
+  const validation = getValidation(validationId);
+  if (!validation || validation.locked) return;
+  const raw = row(
+    'SELECT * FROM reports WHERE validation_id = ? AND version = ? ORDER BY version DESC LIMIT 1',
+    [validationId, validation.version],
+  );
+  if (!raw) return;
+  const report = mapReport(raw);
+  const hasSignatureOrReview = Boolean(
+    report.elaboratedAt ||
+      report.reviewedAt ||
+      report.approvedAt ||
+      report.status !== 'draft' ||
+      report.content.signatures?.some((signature) => signature.signed),
+  );
+  if (!hasSignatureOrReview) return;
+  const timestamp = nowIso();
+  const next: ReportRecord = {
+    ...report,
+    status: 'draft',
+    locked: false,
+    elaboratedAt: null,
+    reviewedAt: null,
+    approvedAt: null,
+    reviewedBy: '',
+    approvedBy: '',
+    updatedAt: timestamp,
+    content: {
+      ...report.content,
+      signatures: (report.content.signatures ?? []).map((signature) => ({
+        ...signature,
+        date: null,
+        signed: false,
+      })),
+    },
+  };
+  run(
+    `UPDATE reports SET status=?, content_json=?, reviewed_by=?, approved_by=?, elaborated_at=?, reviewed_at=?, approved_at=?, locked=?, updated_at=?
+     WHERE id=?`,
+    [
+      next.status,
+      JSON.stringify(next.content),
+      next.reviewedBy,
+      next.approvedBy,
+      next.elaboratedAt,
+      next.reviewedAt,
+      next.approvedAt,
+      next.locked ? 1 : 0,
+      next.updatedAt,
+      next.id,
+    ],
+  );
+  logAudit(validationId, 'report', 'invalidate', actor, report, next, reason);
 }
 
 /** Impede escrita em processo aprovado; a saída é abrir nova versão. */
@@ -579,9 +656,8 @@ export function deleteValidation(id: string, actor = 'sistema') {
       run(`DELETE FROM ${table} WHERE validation_id = ?`, [id]);
     }
     run('DELETE FROM validations WHERE id = ?', [id]);
+    logAudit(id, 'validation', 'delete', actor, before, null, 'Exclusão da validação');
   });
-  // auditoria fica órfã por design? registra em console
-  console.info(`Validação ${id} excluída por ${actor}`, before);
 }
 
 export function duplicateValidation(id: string, actor = 'sistema'): Validation {
@@ -668,6 +744,11 @@ export function saveParameters(
         [validationId, p.key, p.selected ? 1 : 0, p.justification, JSON.stringify(p.criteria)],
       );
     }
+    invalidateCurrentReportIfSigned(
+      validationId,
+      actor,
+      'Parâmetros alterados após assinatura do relatório',
+    );
     logAudit(validationId, 'parameters', 'update', actor, before, parameters, reason);
   });
 }
@@ -708,6 +789,11 @@ export function saveDesign(design: DesignRecord, actor = 'sistema', reason = '')
         design.seed,
         design.createdAt,
       ],
+    );
+    invalidateCurrentReportIfSigned(
+      design.validationId,
+      actor,
+      'Delineamento alterado após assinatura do relatório',
     );
     logAudit(design.validationId, 'design', 'save', actor, before, design, reason);
   });
@@ -766,6 +852,11 @@ export function replaceMeasurements(
         ],
       );
     }
+    invalidateCurrentReportIfSigned(
+      validationId,
+      actor,
+      'Medições substituídas após assinatura do relatório',
+    );
     logAudit(
       validationId,
       'measurements',
@@ -784,34 +875,41 @@ export function addMeasurement(measurement: Measurement, actor = 'sistema'): Mea
   if (validation?.locked) throw new Error('Validação bloqueada.');
   const next = normalizeMeasurement(measurement);
   assertMeasurementIdentities([next], methodFamilyForValidation(measurement.validationId));
-  run(
-    `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, part_id, specimen, destructive, condition_json, ref_value, ref_uncertainty, category, replicate, value, reference_value, text_value, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      next.id,
-      next.validationId,
-      next.runOrder,
-      next.level,
-      next.analyst,
-      next.day,
-      next.equipment,
-      next.lot,
-      next.sample,
-      next.partId,
-      next.specimen,
-      next.destructive ? 1 : 0,
-      conditionToJson(next.condition),
-      next.refValue,
-      next.refUncertainty,
-      next.category,
-      next.replicate,
-      next.value,
-      next.referenceValue ?? null,
-      next.textValue,
-      next.notes,
-    ],
-  );
-  logAudit(measurement.validationId, 'measurement', 'create', actor, null, next);
+  transaction(() => {
+    run(
+      `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, part_id, specimen, destructive, condition_json, ref_value, ref_uncertainty, category, replicate, value, reference_value, text_value, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        next.id,
+        next.validationId,
+        next.runOrder,
+        next.level,
+        next.analyst,
+        next.day,
+        next.equipment,
+        next.lot,
+        next.sample,
+        next.partId,
+        next.specimen,
+        next.destructive ? 1 : 0,
+        conditionToJson(next.condition),
+        next.refValue,
+        next.refUncertainty,
+        next.category,
+        next.replicate,
+        next.value,
+        next.referenceValue ?? null,
+        next.textValue,
+        next.notes,
+      ],
+    );
+    invalidateCurrentReportIfSigned(
+      measurement.validationId,
+      actor,
+      'Medições alteradas após assinatura do relatório',
+    );
+    logAudit(measurement.validationId, 'measurement', 'create', actor, null, next);
+  });
   return next;
 }
 
@@ -820,47 +918,61 @@ export function updateMeasurement(measurement: Measurement, actor = 'sistema'): 
   const before = row('SELECT * FROM measurements WHERE id = ?', [measurement.id]);
   const next = normalizeMeasurement(measurement);
   assertMeasurementIdentities([next], methodFamilyForValidation(measurement.validationId));
-  run(
-    `UPDATE measurements SET run_order=?, level=?, analyst=?, day=?, equipment=?, lot=?, sample=?, part_id=?, specimen=?, destructive=?, condition_json=?, ref_value=?, ref_uncertainty=?, category=?, replicate=?, value=?, reference_value=?, text_value=?, notes=?
-     WHERE id=?`,
-    [
-      next.runOrder,
-      next.level,
-      next.analyst,
-      next.day,
-      next.equipment,
-      next.lot,
-      next.sample,
-      next.partId,
-      next.specimen,
-      next.destructive ? 1 : 0,
-      conditionToJson(next.condition),
-      next.refValue,
-      next.refUncertainty,
-      next.category,
-      next.replicate,
-      next.value,
-      next.referenceValue ?? null,
-      next.textValue,
-      next.notes,
-      next.id,
-    ],
-  );
-  logAudit(
-    measurement.validationId,
-    'measurement',
-    'update',
-    actor,
-    before ? mapMeasurement(before) : null,
-    next,
-  );
+  transaction(() => {
+    run(
+      `UPDATE measurements SET run_order=?, level=?, analyst=?, day=?, equipment=?, lot=?, sample=?, part_id=?, specimen=?, destructive=?, condition_json=?, ref_value=?, ref_uncertainty=?, category=?, replicate=?, value=?, reference_value=?, text_value=?, notes=?
+       WHERE id=?`,
+      [
+        next.runOrder,
+        next.level,
+        next.analyst,
+        next.day,
+        next.equipment,
+        next.lot,
+        next.sample,
+        next.partId,
+        next.specimen,
+        next.destructive ? 1 : 0,
+        conditionToJson(next.condition),
+        next.refValue,
+        next.refUncertainty,
+        next.category,
+        next.replicate,
+        next.value,
+        next.referenceValue ?? null,
+        next.textValue,
+        next.notes,
+        next.id,
+      ],
+    );
+    invalidateCurrentReportIfSigned(
+      measurement.validationId,
+      actor,
+      'Medições alteradas após assinatura do relatório',
+    );
+    logAudit(
+      measurement.validationId,
+      'measurement',
+      'update',
+      actor,
+      before ? mapMeasurement(before) : null,
+      next,
+    );
+  });
   return next;
 }
 
 export function deleteMeasurement(measurement: Measurement, actor = 'sistema', reason = '') {
   assertUnlocked(measurement.validationId);
-  run('DELETE FROM measurements WHERE id = ?', [measurement.id]);
-  logAudit(measurement.validationId, 'measurement', 'delete', actor, measurement, null, reason);
+  transaction(() => {
+    run('DELETE FROM measurements WHERE id = ?', [measurement.id]);
+    invalidateCurrentReportIfSigned(
+      measurement.validationId,
+      actor,
+      'Medições alteradas após assinatura do relatório',
+    );
+    logAudit(measurement.validationId, 'measurement', 'delete', actor, measurement, null, reason);
+  });
 }
 
 // ── Análises ───────────────────────────────────────────────────────────────
@@ -931,6 +1043,11 @@ export function replaceUncertainty(
         ],
       );
     }
+    invalidateCurrentReportIfSigned(
+      validationId,
+      actor,
+      'Orçamento de incerteza alterado após assinatura do relatório',
+    );
     logAudit(validationId, 'uncertainty', 'replace', actor, before, items);
   });
   return listUncertainty(validationId);

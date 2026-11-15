@@ -16,7 +16,32 @@ let SQL: SqlJsStatic | null = null;
 let database: Database | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let dirty = false;
+let txDepth = 0;
+let lifecycleRegistered = false;
 const listeners = new Set<() => void>();
+
+function registerLifecycleFlush(): void {
+  if (typeof window === 'undefined' || lifecycleRegistered) return;
+  lifecycleRegistered = true;
+  window.addEventListener('pagehide', () => {
+    if (dirty && database) void flush();
+  });
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && dirty && database) void flush();
+    });
+  }
+}
+
+export function setDatabaseForTests(next: Database | null): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+  database = next;
+  dirty = false;
+  txDepth = 0;
+}
 
 export async function initDb(): Promise<Database> {
   if (database) return database;
@@ -44,6 +69,7 @@ export async function initDb(): Promise<Database> {
   // nenhuma escrita de domínio aconteça nesta sessão.
   dirty = true;
   await persist();
+  registerLifecycleFlush();
   return database;
 }
 
@@ -89,6 +115,7 @@ export async function importDatabase(bytes: Uint8Array): Promise<void> {
   next.run('PRAGMA foreign_keys = ON');
   initializeSchema(next);
   database = next;
+  txDepth = 0;
   dirty = true;
   await persist();
   listeners.forEach((listener) => listener());
@@ -99,6 +126,7 @@ export async function resetDatabase(): Promise<void> {
   database = new SQL.Database();
   initializeSchema(database);
   await del(STORAGE_KEY);
+  txDepth = 0;
   dirty = true;
   await persist();
   listeners.forEach((listener) => listener());
@@ -142,13 +170,32 @@ export function run(
 
 export function transaction<T>(fn: () => T): T {
   const d = db();
+  if (txDepth > 0) {
+    const sp = `sp_${txDepth + 1}`;
+    d.run(`SAVEPOINT ${sp}`);
+    txDepth += 1;
+    try {
+      const result = fn();
+      txDepth -= 1;
+      d.run(`RELEASE SAVEPOINT ${sp}`);
+      return result;
+    } catch (error) {
+      txDepth -= 1;
+      d.run(`ROLLBACK TO SAVEPOINT ${sp}`);
+      d.run(`RELEASE SAVEPOINT ${sp}`);
+      throw error;
+    }
+  }
   d.run('BEGIN');
+  txDepth = 1;
   try {
     const result = fn();
+    txDepth = 0;
     d.run('COMMIT');
     markDirty();
     return result;
   } catch (error) {
+    txDepth = 0;
     d.run('ROLLBACK');
     throw error;
   }
