@@ -2,14 +2,181 @@ import type { ReactNode } from 'react';
 import { AlertTriangle, Info } from 'lucide-react';
 import type { ParameterAnalysis } from '../stats/analysis';
 import { fmt } from '../stats/distributions';
-import { BarSeriesChart, ResidualPlot, ScatterPlot } from './charts';
+import {
+  AccuracyProfilePlotChart,
+  BarSeriesChart,
+  BlandAltmanPlotChart,
+  ConformityDensityChartPlot,
+  HistogramWithNormalCurveChart,
+  InteractionPlot,
+  MandelConsistencyPlotChart,
+  NormalProbabilityPlotChart,
+  ParetoPlotChart,
+  ResidualPlot,
+  ScatterPlot,
+  ShewhartControlChartPlot,
+} from './charts';
 import { Card, CardBody, CardHeader, VerdictBadge } from './ui';
 
 function chartFor(
   chart: ParameterAnalysis['charts'][number],
   compact?: boolean,
 ): ReactNode {
-  const height = compact ? 190 : 240;
+  const height = compact ? 200 : 250;
+
+  if (chart.kind === 'histogram') {
+    return (
+      <HistogramWithNormalCurveChart
+        data={chart.data as any}
+        mean={chart.meta?.mean as number | undefined}
+        sd={chart.meta?.sd as number | undefined}
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+      />
+    );
+  }
+
+  if (chart.kind === 'qq') {
+    return (
+      <NormalProbabilityPlotChart
+        data={chart.data as any}
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+      />
+    );
+  }
+
+  if (chart.kind === 'control') {
+    return (
+      <ShewhartControlChartPlot
+        data={chart.data as any}
+        center={chart.meta?.center as number | undefined}
+        lcl={chart.meta?.lcl as number | undefined}
+        ucl={chart.meta?.ucl as number | undefined}
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+      />
+    );
+  }
+
+  if (chart.kind === 'bland_altman') {
+    const data = chart.data
+      .map((p) => ({ x: Number(p.x), y: Number(p.y) }))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    return (
+      <BlandAltmanPlotChart
+        data={data}
+        dBar={chart.meta?.dBar as number | undefined}
+        loaLower={chart.meta?.loaLower as number | undefined}
+        loaUpper={chart.meta?.loaUpper as number | undefined}
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+      />
+    );
+  }
+
+  if (chart.kind === 'mandel') {
+    return (
+      <MandelConsistencyPlotChart
+        data={chart.data as any}
+        statKey={(chart.meta?.statKey as string) ?? 'h'}
+        crit05={chart.meta?.crit05 as number | undefined}
+        crit01={chart.meta?.crit01 as number | undefined}
+        bilateral={chart.meta?.bilateral as boolean | undefined}
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+      />
+    );
+  }
+
+  if (chart.kind === 'interaction') {
+    return (
+      <InteractionPlot
+        data={chart.data as any}
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+      />
+    );
+  }
+
+  if (chart.kind === 'pareto') {
+    const first = chart.data[0] ?? {};
+    const xKey = Object.keys(first).find((k) => typeof first[k] === 'string') ?? 'fator';
+    const yKey = Object.keys(first).find((k) => typeof first[k] === 'number') ?? 'efeito';
+    return (
+      <ParetoPlotChart
+        data={chart.data as any}
+        xKey={xKey}
+        yKey={yKey}
+        cutoffLine={chart.meta?.youdenCrit as number | undefined}
+        cutoffLabel="Youden d_crit"
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+      />
+    );
+  }
+
+  if (chart.kind === 'density') {
+    return (
+      <ConformityDensityChartPlot
+        data={chart.data as any}
+        value={chart.meta?.value as number | undefined}
+        lsl={chart.meta?.lsl as number | null | undefined}
+        usl={chart.meta?.usl as number | null | undefined}
+        effectiveLower={chart.meta?.effectiveLower as number | null | undefined}
+        effectiveUpper={chart.meta?.effectiveUpper as number | null | undefined}
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+      />
+    );
+  }
+
+  if (chart.kind === 'line') {
+    const first = chart.data[0] ?? {};
+    if (first.ponto !== undefined) {
+      return (
+        <ShewhartControlChartPlot
+          data={chart.data as any}
+          center={chart.meta?.center as number | undefined}
+          lcl={chart.meta?.lcl as number | undefined}
+          ucl={chart.meta?.ucl as number | undefined}
+          xLabel={chart.xLabel}
+          yLabel={chart.yLabel}
+          height={height}
+        />
+      );
+    }
+    if (first.part !== undefined && first.operator !== undefined) {
+      return (
+        <InteractionPlot
+          data={chart.data as any}
+          xLabel={chart.xLabel}
+          yLabel={chart.yLabel}
+          height={height}
+        />
+      );
+    }
+    if (first.itInferior !== undefined) {
+      return (
+        <AccuracyProfilePlotChart
+          data={chart.data as any}
+          acceptanceLimit={chart.meta?.acceptanceLimit as number | undefined}
+          xLabel={chart.xLabel}
+          yLabel={chart.yLabel}
+          height={height}
+        />
+      );
+    }
+  }
+
   if (chart.kind === 'scatter' || chart.kind === 'line' || chart.kind === 'residual') {
     const data = chart.data
       .map((point) => ({ x: Number(point.x), y: Number(point.y) }))
@@ -21,8 +188,35 @@ function chartFor(
       <ScatterPlot data={data} xLabel={chart.xLabel} yLabel={chart.yLabel} height={height} line={chart.kind === 'line'} />
     );
   }
+
   if (chart.kind === 'bar') {
     const first = chart.data[0] ?? {};
+    if (first.part !== undefined && first.operator !== undefined && first.range !== undefined) {
+      return (
+        <InteractionPlot
+          data={chart.data as any}
+          xLabel={chart.xLabel}
+          yLabel="Amplitude"
+          height={height}
+        />
+      );
+    }
+    if (chart.meta?.youdenCrit !== undefined) {
+      const xKey = Object.keys(first).find((key) => typeof first[key] === 'string') ?? 'fator';
+      const yKey = Object.keys(first).find((key) => typeof first[key] === 'number') ?? 'efeito';
+      return (
+        <ParetoPlotChart
+          data={chart.data as any}
+          xKey={xKey}
+          yKey={yKey}
+          cutoffLine={chart.meta?.youdenCrit as number | undefined}
+          cutoffLabel="Limite Youden"
+          xLabel={chart.xLabel}
+          yLabel={chart.yLabel}
+          height={height}
+        />
+      );
+    }
     const xKey = Object.keys(first).find((key) => typeof first[key] === 'string') ?? 'name';
     const yKey = Object.keys(first).find((key) => typeof first[key] === 'number') ?? 'value';
     const data = chart.data
@@ -135,7 +329,7 @@ export function ParameterResultCard({
 
         {analysis.charts.length ? (
           <div className={compact ? 'grid gap-3 lg:grid-cols-2' : 'grid gap-3 lg:grid-cols-2'}>
-            {analysis.charts.slice(0, 2).map((chart) => {
+            {analysis.charts.map((chart) => {
               const rendered = chartFor(chart, compact);
               return rendered ? (
                 <div key={chart.title} className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
