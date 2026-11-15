@@ -22,6 +22,7 @@ test('abre a análise da validação de demonstração', async ({ page }) => {
   await expect(
     page.getByRole('heading', { name: /^Linearidade/ }).first(),
   ).toBeVisible();
+  await page.getByRole('button', { name: /^Pressupostos/ }).click();
   await expect(page.getByText('Pressupostos da análise')).toBeVisible();
   await expect(page.getByText('Diagnóstico do estudo de atributo')).toHaveCount(0);
 });

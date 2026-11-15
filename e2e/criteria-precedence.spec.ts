@@ -6,7 +6,10 @@ test('critério específico da validação substitui o global na análise', asyn
 }) => {
   await openDemoAnalysis(page);
 
-  await page.getByRole('button', { name: /Parâmetros/ }).click();
+  await page
+    .getByRole('main')
+    .getByRole('button', { name: /Etapa 2 Parâmetros/ })
+    .click();
   await expect(
     page.getByRole('heading', { name: 'Parâmetros e critérios da validação' }),
   ).toBeVisible();
@@ -28,7 +31,10 @@ test('critério específico da validação substitui o global na análise', asyn
   await page.getByRole('button', { name: 'Salvar', exact: true }).click();
   await expect(page.getByText('Parâmetros e critérios salvos.')).toBeVisible();
 
-  await page.getByRole('button', { name: /Análise/ }).click();
+  await page
+    .getByRole('main')
+    .getByRole('button', { name: /Etapa 5 Análise/ })
+    .click();
   await expect(
     page.getByRole('heading', { name: 'Análise estatística e incerteza' }),
   ).toBeVisible();

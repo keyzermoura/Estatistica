@@ -10,6 +10,7 @@ import {
   LineChart,
   Plus,
   Save,
+  ShieldCheck,
   Sigma,
   Trash2,
 } from 'lucide-react';
@@ -47,7 +48,7 @@ import {
   computeHistogramWithNormalCurve,
   computeNormalProbabilityPlot,
 } from '../../stats/normality';
-import { objectHash, uid } from '../../lib/utils';
+import { cn, objectHash, uid } from '../../lib/utils';
 import { ParameterResultCard } from '../../components/ParameterResultCard';
 import {
   ConformityDensityChartPlot,
@@ -100,8 +101,11 @@ function newUncertaintyItem(validationId: string): UncertaintyItem {
   };
 }
 
+export type AnalysisTab = 'parameters' | 'qc' | 'uncertainty' | 'conformity' | 'assumptions';
+
 export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
   const toast = useToast();
+  const [activeTab, setActiveTab] = useState<AnalysisTab>('parameters');
   const locked = bundle.validation.locked;
   const profile = getProfileForMethod(bundle.method);
   const attribute = profile.id === 'attribute';
@@ -787,7 +791,106 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         )}
       </div>
 
-      {supportsConformityCard ? (
+      {/* Navegação por Abas Especializadas */}
+      <div className="flex flex-wrap items-center gap-1.5 rounded-2xl border border-ink-200 bg-ink-100/60 p-1.5 dark:border-ink-800 dark:bg-ink-900/60">
+        <button
+          type="button"
+          onClick={() => setActiveTab('parameters')}
+          className={cn(
+            'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
+            activeTab === 'parameters'
+              ? 'bg-white text-ink-900 shadow-sm dark:bg-ink-800 dark:text-white font-semibold'
+              : 'text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-white',
+          )}
+        >
+          <CheckCircle2 className="h-4 w-4 text-brand-600 dark:text-brand-400" />
+          <span>Parâmetros</span>
+          <Badge tone={analysis.overallVerdict === 'pass' ? 'success' : analysis.overallVerdict === 'fail' ? 'danger' : 'neutral'} className="text-[10px] px-1.5 py-0">
+            {analysis.parameters.length}
+          </Badge>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('qc')}
+          className={cn(
+            'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
+            activeTab === 'qc'
+              ? 'bg-white text-ink-900 shadow-sm dark:bg-ink-800 dark:text-white font-semibold'
+              : 'text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-white',
+          )}
+        >
+          <BarChart3 className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+          <span>Controle de Qualidade</span>
+          {analysis.qc.outliers?.outlier ? (
+            <Badge tone="danger" className="text-[10px] px-1.5 py-0">Outlier</Badge>
+          ) : analysis.qc.normality ? (
+            <Badge tone={analysis.qc.normality.normal ? 'success' : 'warning'} className="text-[10px] px-1.5 py-0">
+              {analysis.qc.normality.normal ? 'Normal' : 'Não normal'}
+            </Badge>
+          ) : null}
+        </button>
+
+        {uncertaintyDefinition ? (
+          <button
+            type="button"
+            onClick={() => setActiveTab('uncertainty')}
+            className={cn(
+              'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
+              activeTab === 'uncertainty'
+                ? 'bg-white text-ink-900 shadow-sm dark:bg-ink-800 dark:text-white font-semibold'
+                : 'text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-white',
+            )}
+          >
+            <Sigma className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <span>Incerteza GUM</span>
+            <Badge tone="neutral" className="text-[10px] px-1.5 py-0">
+              {items.length} {items.length === 1 ? 'fonte' : 'fontes'}
+            </Badge>
+          </button>
+        ) : null}
+
+        {supportsConformityCard ? (
+          <button
+            type="button"
+            onClick={() => setActiveTab('conformity')}
+            className={cn(
+              'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
+              activeTab === 'conformity'
+                ? 'bg-white text-ink-900 shadow-sm dark:bg-ink-800 dark:text-white font-semibold'
+                : 'text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-white',
+            )}
+          >
+            <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Conformidade & Regra</span>
+            {conformityPreview ? (
+              <Badge tone={conformityPreview.verdict === 'pass' ? 'success' : conformityPreview.verdict === 'fail' ? 'danger' : 'warning'} className="text-[10px] px-1.5 py-0">
+                {conformityPreview.decision}
+              </Badge>
+            ) : null}
+          </button>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('assumptions')}
+          className={cn(
+            'flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-medium transition',
+            activeTab === 'assumptions'
+              ? 'bg-white text-ink-900 shadow-sm dark:bg-ink-800 dark:text-white font-semibold'
+              : 'text-ink-600 hover:text-ink-900 dark:text-ink-400 dark:hover:text-white',
+          )}
+        >
+          <Info className="h-4 w-4 text-ink-500" />
+          <span>Pressupostos</span>
+          <Badge tone="outline" className="text-[10px] px-1.5 py-0">
+            {analysis.assumptions.length}
+          </Badge>
+        </button>
+      </div>
+
+      {activeTab === 'conformity' ? (
+        supportsConformityCard ? (
         <Card>
           <CardHeader
             title="Parâmetros de Conformidade, Incerteza-Alvo e Regra de Decisão (Eurachem 2015/2021 · ILAC G8)"
@@ -1006,9 +1109,14 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
             ) : null}
           </CardBody>
         </Card>
-      ) : null}
+      ) : (
+        <Alert tone="info" title="Não aplicável">
+          O perfil de atributo não utiliza limites numéricos de especificação (LSL/USL).
+        </Alert>
+      )) : null}
 
-      {uncertaintyDefinition ? (
+      {activeTab === 'uncertainty' ? (
+        uncertaintyDefinition ? (
         <Card>
           <CardHeader
             title="Orçamento de incerteza (GUM)"
@@ -1341,28 +1449,36 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
           ) : null}
           </CardBody>
         </Card>
+      ) : (
+        <Alert tone="info" title="Sem orçamento de incerteza">
+          O perfil ativo não prevê avaliação de incerteza de medição.
+        </Alert>
+      )) : null}
+
+      {activeTab === 'parameters' ? (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h3 className="section-title">Resultados por parâmetro</h3>
+              <p className="muted">Cada tabela mostra a métrica, a fórmula, o critério cadastrado e o veredito.</p>
+            </div>
+            <Badge tone="outline">{analysis.parameters.length} parâmetro(s) selecionado(s)</Badge>
+          </div>
+          {analysis.parameters.length === 0 ? (
+            <Alert tone="warning" title="Nenhum parâmetro selecionado">
+              Volte à etapa de Parâmetros e selecione ao menos um parâmetro.
+            </Alert>
+          ) : (
+            analysis.parameters.map((parameter) => (
+              <ParameterResultCard key={parameter.key} analysis={parameter} />
+            ))
+          )}
+        </div>
       ) : null}
 
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div>
-            <h3 className="section-title">Resultados por parâmetro</h3>
-            <p className="muted">Cada tabela mostra a métrica, a fórmula, o critério cadastrado e o veredito.</p>
-          </div>
-          <Badge tone="outline">{analysis.parameters.length} parâmetro(s) selecionado(s)</Badge>
-        </div>
-        {analysis.parameters.length === 0 ? (
-          <Alert tone="warning" title="Nenhum parâmetro selecionado">
-            Volte à etapa de Parâmetros e selecione ao menos um parâmetro.
-          </Alert>
-        ) : (
-          analysis.parameters.map((parameter) => (
-            <ParameterResultCard key={parameter.key} analysis={parameter} />
-          ))
-        )}
-      </div>
-
-      {attribute ? (
+      {activeTab === 'qc' ? (
+        <>
+          {attribute ? (
         <Card>
           <CardHeader
             title="Diagnóstico do estudo de atributo"
@@ -1794,17 +1910,21 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         </div>
       </Card>
       ) : null}
+      </>
+      ) : null}
 
-      <Card>
-        <CardHeader title="Pressupostos da análise" />
-        <CardBody>
-          <ul className="list-disc space-y-1 pl-5 text-xs leading-relaxed text-ink-500">
-            {analysis.assumptions.map((assumption) => (
-              <li key={assumption}>{assumption}</li>
-            ))}
-          </ul>
-        </CardBody>
-      </Card>
+      {activeTab === 'assumptions' ? (
+        <Card>
+          <CardHeader title="Pressupostos da análise" />
+          <CardBody>
+            <ul className="list-disc space-y-1 pl-5 text-xs leading-relaxed text-ink-500">
+              {analysis.assumptions.map((assumption) => (
+                <li key={assumption}>{assumption}</li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      ) : null}
     </StepShell>
   );
 }

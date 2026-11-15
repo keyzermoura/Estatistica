@@ -57,6 +57,7 @@ test('cria validação de atributo, importa coleta e aplica o gabarito', async (
   await expect(
     page.getByRole('heading', { name: 'Análise estatística e incerteza' }),
   ).toBeVisible();
+  await page.getByRole('button', { name: /Controle de Qualidade/ }).click();
   await expect(
     page.getByRole('heading', { name: 'Diagnóstico do estudo de atributo' }),
   ).toBeVisible();
