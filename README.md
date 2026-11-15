@@ -1,9 +1,9 @@
 # ValidaMétodo
 
-Sistema web **offline-first** para validação de métodos analíticos e
-qualitativos. Combina um fluxo guiado de sete etapas, delineamento amostral
-estatístico, análise auditável, orçamento de incerteza (GUM) e relatório
-exportável em DOCX, PDF e pacote de evidências.
+Sistema web **offline-first** para validação de métodos analíticos,
+dimensionais, físicos e qualitativos. Combina um fluxo guiado de sete etapas,
+delineamento amostral estatístico, análise auditável, orçamento de incerteza
+(GUM) e relatório exportável em DOCX, PDF e pacote de evidências.
 
 O princípio central: **nenhum resultado é declarado conforme sem dado válido
 e critério de aceitação cadastrado**. Quando falta um dos dois, o veredito é
@@ -19,6 +19,19 @@ e critério de aceitação cadastrado**. Quando falta um dos dois, o veredito é
 - Análise com fórmula, valor, critério e veredito em cada métrica.
 - Estatística descritiva, normalidade, homogeneidade, ANOVA, ISO 5725-2,
   regressão/linearidade, LD/LQ, tendência/recuperação/TOST, robustez e GUM.
+- **Cinco perfis de método**: analítico, dimensional, físico destrutivo, físico
+  não destrutivo e atributo, cada um com catálogo de parâmetros, critérios
+  sugeridos e análises próprias.
+- **Perfil físico destrutivo** com Gage R&R aninhado (operador > amostra >
+  corpo de prova) e verificação opcional de homogeneidade do lote; **perfil não
+  destrutivo** com Gage R&R cruzado e regressão de covariáveis ambientais.
+- **Biblioteca de templates normativos** (ABNT NBR 13904/USP `<881>`, ANVISA
+  RDC 166/ICH Q2(R2), ISO/IEC 17025/DOQ-CGCRE-008, AIAG MSA/VDA 5 e outros)
+  para criar método e validação pré-configurados em um clique.
+- **Pacotes avançados**: EMP de Wheeler, `C_g/C_gk` (VDA 5), CLSI EP17/Probit,
+  perfil de exatidão SFSTP, Passing–Bablok/Deming/Bland–Altman, Monte Carlo
+  (JCGM 101), Mandel/WLS, incerteza Top-Down/UfS e conformidade bayesiana
+  (JCGM 106).
 - Concordância de atributo para métodos qualitativos: kappa de Cohen/Fleiss,
   concordância intra e interavaliadores, eficácia, FAR, FRR e cobertura de
   referência, com itens limítrofes e códigos cegados.
@@ -142,7 +155,16 @@ localmente para garantir reprodutibilidade e funcionamento offline.
 | `bias.ts` | tendência, recuperação, TOST, proficiência, tolerância |
 | `attribute.ts` | Cohen/Fleiss kappa, concordância intra/inter, FAR/FRR, IC de Wilson |
 | `attribute-data.ts` | mapeamento das medições para o estudo de atributo e diagnósticos |
-| `uncertainty.ts` | GUM, Welch–Satterthwaite, incerteza expandida |
+| `uncertainty.ts` | GUM, Welch–Satterthwaite, incerteza expandida, Top-Down/UfS |
+| `nested.ts` | ANOVA aninhada 3 níveis, Gage R&R destrutivo e homogeneidade do lote |
+| `gagerr.ts` | Gage R&R cruzado, Henderson Tipo III e REML |
+| `emp.ts` | avaliação do sistema de medição (EMP de Wheeler) |
+| `capabilityCg.ts` | `C_g/C_gk` e capacidade de medição (VDA 5) |
+| `lodProbit.ts` | LD/LQ por Probit (CLSI EP17) |
+| `methodComparison.ts` | Bland–Altman, Deming e Passing–Bablok |
+| `monteCarlo.ts` | propagação Monte Carlo (JCGM 101) |
+| `accuracyProfile.ts` | perfil de exatidão SFSTP / USP `<1210>` |
+| `conformity.ts` | regras de decisão e riscos de conformidade (JCGM 106 / ILAC-G8) |
 | `analysis.ts` | orquestração genérica dos parâmetros e vereditos |
 
 O catálogo de parâmetros, critérios sugeridos, pressupostos e templates de cada
@@ -194,6 +216,7 @@ docs/
   ARQUITETURA.md    arquitetura, modelo de dados e decisões
   FORMULAS.md       catálogo de fórmulas, referências e valores de teste
   GUIA_USUARIO.md   guia para usuários sem formação estatística
+  INTEGRACAO_MODULO_LIMS.md  arquitetura da integração corporativa (Onda 4)
 scripts/
   setup.mjs         instalação + verificação + testes + build
 ```
@@ -207,6 +230,13 @@ scripts/
 - **Normalidade**: Shapiro–Wilk é o teste principal; rejeições geram alerta, sem
   bloquear automaticamente a análise.
 - **Homogeneidade**: Levene é o teste de decisão; Bartlett é informativo.
+- **Homogeneidade do lote (físico destrutivo)**: verificação opcional por ANOVA
+  entre amostras, Cochran e razão de variâncias, com grupos derivados da coluna
+  `Amostra`. Se o lote for rejeitado, é obrigatório registrar justificativa
+  técnica; sem ela, repetibilidade e reprodutibilidade ficam **não avaliadas**.
+- **Perfis físicos**: ensaio destrutivo usa Gage R&R aninhado e consome um corpo
+  de prova por réplica; ensaio não destrutivo usa Gage R&R cruzado. Nenhuma
+  transformação ou exclusão é automática.
 - **Critérios**: os globais do método valem para todas as validações; um
   critério específico da validação substitui o global da mesma métrica. A regra
   e as substituições aplicadas aparecem nos pressupostos do relatório.

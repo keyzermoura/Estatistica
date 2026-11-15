@@ -247,7 +247,10 @@ Regras de integridade:
 5. **Análise** — descritiva, gráficos, outliers, normalidade, homogeneidade,
    ANOVA, componentes de variância, ISO 5725-2, regressão/linearidade, LD/LQ,
    tendência/recuperação, z/En, TOST, orçamento de incerteza GUM e, no perfil de
-   atributo, κ, eficácia, FAR, FRR e cobertura de referência.
+   atributo, κ, eficácia, FAR, FRR e cobertura de referência. No perfil físico
+   destrutivo, a homogeneidade do lote é opcional e combina ANOVA entre
+   amostras, Cochran e razão de variâncias, com justificativa obrigatória em
+   caso de rejeição.
 6. **Relatório** — prévia auditável, assinaturas, DOCX/PDF, pacote de evidências.
 7. **Auditoria** — log, versões, bloqueio.
 
@@ -268,6 +271,7 @@ registrada no relatório. Os padrões abaixo são apenas recomendações iniciai
 | Arredondamento | para cima | Garante o poder nominal |
 | Normalidade | Shapiro-Wilk (α=0,05) | Quando rejeitada, o sistema alerta e sugere métodos não paramétricos/alternativos; não bloqueia automaticamente |
 | Homogeneidade | Levene (robusto) e Bartlett | Bartlett é sensível à não normalidade; Levene é o padrão de decisão |
+| Homogeneidade do lote (físico destrutivo) | Opcional; ANOVA entre amostras, Cochran e razão de variâncias | Grupos derivados da coluna `Amostra`; rejeição sem justificativa deixa repetibilidade/reprodutibilidade não avaliadas. Opção e justificativa ficam em `ReportConfig` e no relatório |
 | Outliers | Grubbs bilateral, Cochran (variâncias), Hampel | Nenhum outlier é removido automaticamente; exige justificativa registrada |
 | ANOVA | 1 fator (balanceada/desbalanceada); 2 fatores cruzados balanceados; modelo misto REML para 1 fator aleatório desbalanceado | Para desenhos cruzados desbalanceados, o sistema emite alerta e usa aproximação ANOVA, registrando a limitação |
 | Componentes de variância | método dos momentos (ANOVA) para balanceado; REML para 1 fator | Coincide com ISO 5725-2 no caso balanceado |
@@ -341,4 +345,4 @@ relatório; as listas originais permanecem intactas na trilha de auditoria.
   incluindo Gage R&R cruzado AIAG, ANOVA aninhada de Montgomery, homogeneidade
   com justificativa obrigatória, não normalidade sem transformação automática (Wilks),
   covariáveis ambientais e emissão de DOCX (`PK`) e PDF (`%PDF`) nas 5 famílias
-  (**18 arquivos de teste, 207 casos no total** — ver matriz em `docs/VALIDACAO_SOFTWARE.md`).
+  (**18 arquivos de teste, 209 casos no total** — ver matriz em `docs/VALIDACAO_SOFTWARE.md`).

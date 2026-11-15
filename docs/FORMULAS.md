@@ -466,6 +466,19 @@ teste rejeitar; se rejeitada, é obrigatório registrar justificativa técnica
 para prosseguir, e o aceite fica registrado no resultado. Quando falta um dos
 testes, o veredito é “não avaliado”, nunca conforme por omissão.
 
+No fluxo físico destrutivo, a verificação é habilitada por
+`ReportConfig.homogeneityCheck` e a justificativa é persistida em
+`ReportConfig.homogeneityJustification`. O adaptador
+`src/stats/parameters/physical.ts` deriva um grupo por valor distinto da coluna
+`Amostra`, reunindo os corpos de prova medidos por todos os operadores. São
+necessários pelo menos 2 grupos com 2 ou mais observações. A opção chega ao
+motor por `AnalysisOptions.homogeneity` e é repassada ao `gageRRNested`. Se o
+lote for rejeitado sem justificativa, o parâmetro é devolvido como
+**não avaliado** com a mensagem acionável; com justificativa, o estudo prossegue
+e a tabela de homogeneidade, os testes e a justificativa acompanham o
+resultado e o relatório. Quando a opção está desabilitada, o resultado registra
+que a homogeneidade não foi avaliada.
+
 `nestedDesignN` mantém fixos operadores (`a`) e amostras por operador (`b`) e
 busca o menor número de réplicas `n` que atinja a largura-alvo do IC de
 `σ_GRR` ou o erro relativo-alvo de `s_r`, reutilizando `findN`:
@@ -1167,7 +1180,7 @@ Para cada ponto de calibração/referência `j`, apresenta o erro relativo perce
 
 ## 19. Testes de referência
 
-`npm test` executa **203 casos** distribuídos em **18 arquivos de teste**: **184 casos estatísticos e de perfis** (21 em `stats.test.ts`, 15 em `gagerr.test.ts`, 33 em `nested.test.ts`, 9 em `gageBiasLinearity.test.ts`, 15 em `stability.test.ts`, 24 em `attribute.test.ts`, 21 em `conformity.test.ts`, 10 em `attribute-profile.test.ts`, 9 em `physical-profile.test.ts`, 2 em `dimensional-profile.test.ts`, 18 em `advanced-features.test.ts`, 6 em `criteria-precedence.test.ts` e 1 teste de caracterização em `analysis-characterization.test.ts` que congela a saída completa da análise analítica original) e **19 testes de infraestrutura de dados** (5 em `repository.test.ts`, 4 em `validation.test.ts`, 5 em `criteria.test.ts`, 2 em `migration.test.ts` e 3 em `spreadsheet.test.ts`). Os principais valores de referência estatísticos:
+`npm test` executa **209 casos** distribuídos em **18 arquivos de teste**: **189 casos estatísticos e de perfis** (21 em `stats.test.ts`, 15 em `gagerr.test.ts`, 33 em `nested.test.ts`, 9 em `gageBiasLinearity.test.ts`, 15 em `stability.test.ts`, 24 em `attribute.test.ts`, 21 em `conformity.test.ts`, 10 em `attribute-profile.test.ts`, 10 em `physical-profile.test.ts`, 2 em `dimensional-profile.test.ts`, 22 em `advanced-features.test.ts`, 6 em `criteria-precedence.test.ts` e 1 teste de caracterização em `analysis-characterization.test.ts` que congela a saída completa da análise analítica original) e **20 testes de infraestrutura de dados** (6 em `repository.test.ts`, 4 em `validation.test.ts`, 5 em `criteria.test.ts`, 2 em `migration.test.ts` e 3 em `spreadsheet.test.ts`). Os principais valores de referência estatísticos:
 
 | Caso | Referência | Tolerância |
 |---|---|---|

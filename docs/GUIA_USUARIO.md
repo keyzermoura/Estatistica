@@ -340,7 +340,26 @@ adota `k = 2` e avisa. Clique em **Salvar orçamento** antes de sair.
   experimento necessário e mantém o parâmetro como não avaliado até que você
   registre a evidência no relatório.
 
-### 8.4 Congelar resultados
+### 8.4 Homogeneidade do lote (perfil físico destrutivo)
+
+No perfil **Físico destrutivo**, a repetibilidade inclui a variação entre
+corpos de prova. Para verificar se essa variação é compatível com um lote
+homogêneo:
+
+1. Na etapa **Coleta**, identifique cada grupo de corpos de prova na coluna
+   **Amostra**, usando o mesmo identificador para a mesma amostra do lote em
+   todos os operadores. São necessárias pelo menos 2 amostras com 2 ou mais
+   corpos de prova cada.
+2. Na etapa **Análise**, marque **Verificar homogeneidade do lote**. O sistema
+   calcula ANOVA entre amostras, Cochran e razão de variâncias.
+3. Se o lote for rejeitado, preencha a **Justificativa técnica** e clique em
+   **Salvar regra**. Sem justificativa, repetibilidade e reprodutibilidade ficam
+   **não avaliadas**; com justificativa, o resultado prossegue e a justificativa
+   aparece no relatório.
+4. A verificação é opcional e vem desabilitada por padrão. Quando desabilitada,
+   o relatório registra que a homogeneidade do lote não foi verificada.
+
+### 8.5 Congelar resultados
 
 Clique em **Congelar resultados** para gravar uma cópia dos resultados da versão
 atual na tabela `analyses`. Isso preserva o que foi analisado mesmo que os

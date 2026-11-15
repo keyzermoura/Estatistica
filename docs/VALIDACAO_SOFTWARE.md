@@ -52,21 +52,21 @@ BPL**.
 | Requisito / Prompt | Módulo / Funções | Arquivo de Teste (`vitest`) | Fonte / Referência Independente |
 |---|---|---|---|
 | **P1 — Perfis configuráveis e preservação analítica** | `src/profiles/{types,analytical,index}.ts`, `src/stats/analysis.ts` | `src/stats/__tests__/analysis-characterization.test.ts` (1), `criteria-precedence.test.ts` (6) | Snapshot JSON integral pré-refatoração; precedência método vs. validação |
-| **P2 — Modelo v2, migração, auditoria e planilhas** | `src/lib/{schema,repository,validation,spreadsheet}.ts` | `src/lib/__tests__/{migration,repository,validation,spreadsheet,criteria}.test.ts` (19) | Banco legado `schema-v1.sqlite`, round-trip XLSX/CSV, regras `part_id`, `specimen`, `lsl < usl` |
+| **P2 — Modelo v2, migração, auditoria e planilhas** | `src/lib/{schema,repository,validation,spreadsheet}.ts` | `src/lib/__tests__/{migration,repository,validation,spreadsheet,criteria}.test.ts` (20) | Banco legado `schema-v1.sqlite`, round-trip XLSX/CSV, regras `part_id`, `specimen`, `lsl < usl` |
 | **P3 — Gage R&R cruzado por ANOVA, Henderson Tipo III e REML** | `src/stats/gagerr.ts` | `src/stats/__tests__/gagerr.test.ts` (15), `advanced-features.test.ts` (invariância Tipo III / REML) | Exemplo AIAG MSA 10×3×3 (`tol = 1e-6`), R `lme4`/ANOVA, Henderson (1953) / Searle et al. (1992), REML exato |
 | **P4 — ANOVA aninhada e ensaio destrutivo** | `src/stats/nested.ts`, `design.ts`, `sampleSize.ts` | `src/stats/__tests__/nested.test.ts` (33) | Montgomery (2020) Example 14-1 (`tol = 1e-9`), planilha 2×2×3 exata, `b = 1` = ISO 5725-2, Cochran e justificativa obrigatória |
 | **P5 — Tendência por nível, linearidade, I-MR/X̄-R e resolução** | `src/stats/gageBiasLinearity.ts`, `stability.ts` | `src/stats/__tests__/gageBiasLinearity.test.ts` (9), `stability.test.ts` (15) | AIAG 5×10 conferido em NumPy (`tol = 1e-9`), Welch–Satterthwaite com `u_ref`, constantes ASTM MNL 7 |
 | **P6 — Concordância para dados de atributo** | `src/stats/attribute.ts`, `attribute-data.ts` | `src/stats/__tests__/attribute.test.ts` (24), `attribute-profile.test.ts` (10) | `sklearn` 2×2/3×3, R `irr` (anxiety/diagnoses), Fleiss (1971) 10×14×5, Wilson exact, `p_e = 1`, conflito de referência |
 | **P7 — Conformidade, banda de guarda, posterior bayesiano e riscos globais** | `src/stats/conformity.ts`, `src/lib/criteria.ts` | `src/stats/__tests__/conformity.test.ts` (21), `advanced-features.test.ts` (JCGM 106 bayesiano) | Integração numérica de Simpson independente (`tol = 1e-6`), ILAC-G8 / JCGM 106 §7 e §9.5 (Sheppard `R_C = 0,125`), `u = 0`, `w > T/2` |
-| **P8/P9/P10 — Perfis Dimensional, Físico (Destrutivo / Não Destrutivo), Não Normalidade, Covariáveis, Orçamentos-Modelo e Relatórios** | `src/stats/normality.ts`, `parameters/{dimensional,physical}.ts`, `lib/{seed,report,export}.ts`, `pages/steps/StepAnalysis.tsx` | `src/stats/__tests__/physical-profile.test.ts` (9), `dimensional-profile.test.ts` (2) | `seedSutureVerification` (ABNT NBR 13904), `seedDimensionalDemo`, Wilks / ISO 16269-6 (`n_min = 93`), regressão ambiental e exportação DOCX/PDF nas 5 famílias |
-| **Núcleo estatístico analítico + Pacotes avançados Eurachem/CLSI/VDA/JCGM 101** | `src/stats/{distributions,sampleSize,outliers,normality,variance,anova,iso5725,regression,bias,uncertainty,accuracyProfile,emp,capabilityCg,lodProbit,methodComparison,monteCarlo}.ts` | `src/stats/__tests__/stats.test.ts` (21), `advanced-features.test.ts` (18) | R `power.t.test`, `shapiro.test`, ISO 5725-2 Tabelas B.1/B.2 (Mandel 5%/1%), ISO 8466-1, JCGM 100 §5.2 (`r`) & §G.4.2 (`ν_B = ∞`), Eurachem, SFSTP, Wheeler EMP, VDA 5, EP09c, EP17-A2, JCGM 101 |
+| **P8/P9/P10 — Perfis Dimensional, Físico (Destrutivo / Não Destrutivo), Não Normalidade, Covariáveis, Orçamentos-Modelo e Relatórios** | `src/stats/normality.ts`, `parameters/{dimensional,physical}.ts`, `lib/{seed,report,export}.ts`, `pages/steps/StepAnalysis.tsx` | `src/stats/__tests__/physical-profile.test.ts` (10, incluindo a integração da homogeneidade ao fluxo destrutivo), `dimensional-profile.test.ts` (2) | `seedSutureVerification` (ABNT NBR 13904), `seedDimensionalDemo`, Wilks / ISO 16269-6 (`n_min = 93`), regressão ambiental e exportação DOCX/PDF nas 5 famílias |
+| **Núcleo estatístico analítico + Pacotes avançados Eurachem/CLSI/VDA/JCGM 101** | `src/stats/{distributions,sampleSize,outliers,normality,variance,anova,iso5725,regression,bias,uncertainty,accuracyProfile,emp,capabilityCg,lodProbit,methodComparison,monteCarlo}.ts` | `src/stats/__tests__/stats.test.ts` (21), `advanced-features.test.ts` (22) | R `power.t.test`, `shapiro.test`, ISO 5725-2 Tabelas B.1/B.2 (Mandel 5%/1%), ISO 8466-1, JCGM 100 §5.2 (`r`) & §G.4.2 (`ν_B = ∞`), Eurachem, SFSTP, Wheeler EMP, VDA 5, EP09c, EP17-A2, JCGM 101 |
 
 ## 4. Como reproduzir a verificação localmente
 
 Pré-requisitos: Node.js 18+ (recomendado 20 LTS) e `npm`.
 
 ```bash
-# Instalação completa + verificação de tipos + todos os 207 testes + build de produção
+# Instalação completa + verificação de tipos + todos os 209 testes + build de produção
 npm run setup
 
 # Ou executando cada etapa individualmente (no Windows PowerShell usar npm.cmd):
@@ -77,7 +77,7 @@ npm run build
 
 Critério de aceite da verificação do software:
 - `npm run typecheck` (`tsc -b`) termina com código `0` e zero erros de tipo;
-- `npm test` (`vitest run`) aprova todos os **18 arquivos de teste / 207 casos**, sem testes pulados ou modificados para relaxar asserções;
+- `npm test` (`vitest run`) aprova todos os **18 arquivos de teste / 209 casos**, sem testes pulados ou modificados para relaxar asserções;
 - `npm run build` gera o bundle estático em `dist/` com código `0`.
 
 ## 5. Limitações conhecidas e declarações de uso
