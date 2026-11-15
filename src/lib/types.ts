@@ -468,6 +468,8 @@ export interface AuditLog {
   after: unknown;
   reason: string;
   timestamp: string;
+  previousHash?: string | null;
+  currentHash?: string | null;
 }
 
 export interface AppSettings {

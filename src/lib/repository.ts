@@ -26,6 +26,13 @@ import {
   type ValidationVersion,
 } from './types';
 import {
+  computeAuditLogHash,
+  GENESIS_HASH,
+  verifyAuditChain,
+  type AuditVerificationResult,
+  type StoredAuditRow,
+} from './auditChain';
+import {
   assertMeasurementIdentities,
   assertMethodTolerance,
   normalizeMethodFamily,
@@ -297,6 +304,8 @@ function mapAudit(r: Row): AuditLog {
     after: json(r.after_json, null),
     reason: str(r.reason),
     timestamp: str(r.timestamp),
+    previousHash: r.previous_hash ? str(r.previous_hash) : null,
+    currentHash: r.current_hash ? str(r.current_hash) : null,
   };
 }
 
@@ -313,19 +322,47 @@ export function logAudit(
   after: unknown,
   reason = '',
 ) {
+  const id = uid('aud');
+  const timestamp = nowIso();
+  const actorStr = actor || 'sistema';
+  const beforeJson = before === undefined ? null : JSON.stringify(before);
+  const afterJson = after === undefined ? null : JSON.stringify(after);
+
+  // Busca o hash do registro mais recente para esta validação
+  const lastRows = rows<{ current_hash: string | null }>(
+    'SELECT current_hash FROM audit_logs WHERE validation_id = ? ORDER BY timestamp DESC, rowid DESC LIMIT 1',
+    [validationId],
+  );
+  const prevHash = lastRows[0]?.current_hash ?? GENESIS_HASH;
+
+  const currentHash = computeAuditLogHash({
+    previousHash: prevHash,
+    id,
+    validationId,
+    entity,
+    action,
+    actor: actorStr,
+    beforeJson,
+    afterJson,
+    reason,
+    timestamp,
+  });
+
   run(
-    `INSERT INTO audit_logs (id, validation_id, entity, action, actor, before_json, after_json, reason, timestamp)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO audit_logs (id, validation_id, entity, action, actor, before_json, after_json, reason, timestamp, previous_hash, current_hash)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
-      uid('aud'),
+      id,
       validationId,
       entity,
       action,
-      actor || 'sistema',
-      before === undefined ? null : JSON.stringify(before),
-      after === undefined ? null : JSON.stringify(after),
+      actorStr,
+      beforeJson,
+      afterJson,
       reason,
-      nowIso(),
+      timestamp,
+      prevHash,
+      currentHash,
     ],
   );
 }
@@ -1258,6 +1295,17 @@ export function listAudit(validationId: string): AuditLog[] {
   return rows('SELECT * FROM audit_logs WHERE validation_id = ? ORDER BY timestamp DESC', [
     validationId,
   ]).map(mapAudit);
+}
+
+/**
+ * Valida a integridade criptográfica da cadeia de auditoria (21 CFR Part 11) de uma validação.
+ */
+export function verifyValidationAuditTrail(validationId: string): AuditVerificationResult {
+  const auditRows = rows<StoredAuditRow>(
+    'SELECT * FROM audit_logs WHERE validation_id = ? ORDER BY timestamp ASC, rowid ASC',
+    [validationId],
+  );
+  return verifyAuditChain(auditRows);
 }
 
 // ── Configurações ──────────────────────────────────────────────────────────

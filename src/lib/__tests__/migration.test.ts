@@ -52,6 +52,18 @@ const MEASUREMENT_V1_COLUMNS = [
   'notes',
 ];
 
+const AUDIT_LOG_V1_COLUMNS = [
+  'id',
+  'validation_id',
+  'entity',
+  'action',
+  'actor',
+  'before_json',
+  'after_json',
+  'reason',
+  'timestamp',
+];
+
 const LEGACY_TABLES = [
   'validations',
   'validation_parameters',
@@ -60,7 +72,6 @@ const LEGACY_TABLES = [
   'uncertainty_items',
   'reports',
   'validation_versions',
-  'audit_logs',
   'settings',
 ];
 
@@ -82,6 +93,10 @@ function snapshotLegacy(db: Database) {
     measurements: query(
       db,
       `SELECT ${MEASUREMENT_V1_COLUMNS.join(', ')} FROM measurements ORDER BY id`,
+    ),
+    audit_logs: query(
+      db,
+      `SELECT ${AUDIT_LOG_V1_COLUMNS.join(', ')} FROM audit_logs ORDER BY rowid`,
     ),
   };
   for (const table of LEGACY_TABLES) {
@@ -111,7 +126,7 @@ describe('migração versionada do banco', () => {
 
     expect(result.from).toBe(0);
     expect(result.to).toBe(LATEST_SCHEMA_VERSION);
-    expect(result.applied).toEqual([1, 2]);
+    expect(result.applied).toEqual([1, 2, 3]);
     expect(getSchemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
 
     const after = snapshotLegacy(db);
@@ -204,6 +219,12 @@ describe('migração versionada do banco', () => {
       expect(info?.notnull, `${column} deve aceitar nulo`).toBe(0);
     }
 
+    const auditInfo = query(db, 'PRAGMA table_info(audit_logs)');
+    for (const column of ['previous_hash', 'current_hash']) {
+      const info = auditInfo.find((row) => row.name === column);
+      expect(info?.notnull, `${column} deve aceitar nulo`).toBe(0);
+    }
+
     // Um banco migrado continua aceitando inserts no formato antigo, com
     // defaults/null para as colunas novas.
     db.run(
@@ -248,7 +269,7 @@ describe('migração versionada do banco', () => {
   it('é idempotente em execuções repetidas', async () => {
     const db = await openFixture();
     const first = initializeSchema(db);
-    expect(first.applied).toEqual([1, 2]);
+    expect(first.applied).toEqual([1, 2, 3]);
 
     const second = applyMigrations(db);
     expect(second).toEqual({
@@ -262,8 +283,8 @@ describe('migração versionada do banco', () => {
       db,
       'SELECT version, description FROM schema_migrations ORDER BY version',
     );
-    expect(versions).toHaveLength(2);
-    expect(versions.map((row) => row.version)).toEqual([1, 2]);
+    expect(versions).toHaveLength(3);
+    expect(versions.map((row) => row.version)).toEqual([1, 2, 3]);
     db.close();
   });
 });

@@ -44,6 +44,7 @@ export function AnalysisUncertaintyTab({
   synthesizeTopDown,
   applySymbolicDerivatives,
   runMonteCarlo,
+  mcRunning = false,
 }: {
   items: UncertaintyItem[];
   locked: boolean;
@@ -69,6 +70,7 @@ export function AnalysisUncertaintyTab({
   synthesizeTopDown: () => void;
   applySymbolicDerivatives: () => void;
   runMonteCarlo: () => void;
+  mcRunning?: boolean;
 }) {
   if (!uncertaintyDefinition) {
     return (
@@ -409,7 +411,13 @@ export function AnalysisUncertaintyTab({
                   onChange={(e) => setMcSeed(Number(e.target.value) || 17025)}
                   title="Semente PRNG"
                 />
-                <Button size="sm" variant="outline" onClick={runMonteCarlo}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={runMonteCarlo}
+                  loading={mcRunning}
+                  disabled={locked || mcRunning}
+                >
                   <Sigma className="h-3.5 w-3.5" /> Simular Monte Carlo
                 </Button>
               </div>

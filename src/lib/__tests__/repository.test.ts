@@ -20,6 +20,7 @@ import {
   saveReport,
   signReport,
   updateValidation,
+  verifyValidationAuditTrail,
 } from '../repository';
 import { composeReport } from '../report';
 import { seedSutureVerification } from '../seed';
@@ -455,5 +456,38 @@ describe('repositório e persistência SQLite', () => {
     expect(reloaded.validation.reportConfig.homogeneityJustification).toBe(
       'Sublotes certificados no histórico do fornecedor.',
     );
+  });
+
+  it('registra eventos em audit_logs com hash-chaining SHA-256 e valida a trilha (21 CFR Part 11)', () => {
+    const method = saveMethod(makeMethod('m-audit-test'));
+    const validation = createValidation(method.id, 'Validação com Trilha Criptográfica', 'Carlos');
+
+    replaceMeasurements(
+      validation.id,
+      [makeMeasurement(validation.id, 'm-1', 1)],
+      'Carlos',
+      'Inserção inicial',
+    );
+    updateValidation(
+      {
+        ...getBundle(validation.id)!.validation,
+        title: 'Validação com Trilha Criptográfica - Atualizada',
+      },
+      'Carlos',
+      'Edição de título',
+    );
+
+    const auditList = listAudit(validation.id);
+    expect(auditList.length).toBeGreaterThanOrEqual(3);
+    for (const log of auditList) {
+      expect(log.currentHash).toBeDefined();
+      expect(log.previousHash).toBeDefined();
+      expect(log.currentHash).toHaveLength(64);
+    }
+
+    const verification = verifyValidationAuditTrail(validation.id);
+    expect(verification.isValid).toBe(true);
+    expect(verification.verifiedLogs).toBe(auditList.length);
+    expect(verification.tamperedLogId).toBeNull();
   });
 });

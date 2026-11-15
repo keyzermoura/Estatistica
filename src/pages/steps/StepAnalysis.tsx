@@ -40,10 +40,10 @@ import {
 import { referenceOf } from '../../stats/analysis-utils';
 import {
   numericalSensitivity,
-  runMonteCarloUncertainty,
   type MonteCarloResult,
   type MonteCarloVariableInput,
 } from '../../stats/monteCarlo';
+import { executeMonteCarloAsync } from '../../workers';
 import { fmt } from '../../stats/distributions';
 import { buildMandelCharts } from '../../stats/iso5725';
 import {
@@ -167,6 +167,7 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
   const [mcTrials, setMcTrials] = useState(20000);
   const [mcSeed, setMcSeed] = useState(17025);
   const [mcResult, setMcResult] = useState<MonteCarloResult | null>(null);
+  const [mcRunning, setMcRunning] = useState(false);
   const [measurandExpr, setMeasurandExpr] = useState('');
   const [nominalEstimates, setNominalEstimates] = useState<Record<string, string>>({});
 
@@ -532,7 +533,7 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
     }
   };
 
-  const runMonteCarlo = () => {
+  const runMonteCarlo = async () => {
     if (!items.length) return;
     try {
       const expr = measurandExpr.trim();
@@ -559,7 +560,9 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
           dof: item.dof,
         };
       });
-      const res = runMonteCarloUncertainty({
+
+      setMcRunning(true);
+      const res = await executeMonteCarloAsync({
         expression: expr || undefined,
         variables,
         trials: mcTrials,
@@ -567,12 +570,14 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
         seed: mcSeed,
       });
       setMcResult(res);
-      toast.push(`Simulação Monte Carlo concluída (${res.trials.toLocaleString('pt-BR')} iterações).`);
+      toast.push(`Simulação Monte Carlo concluída (${res.trials.toLocaleString('pt-BR')} iterações via Web Worker).`);
     } catch (error) {
       toast.push(
         error instanceof Error ? error.message : 'Falha na simulação Monte Carlo.',
         'danger',
       );
+    } finally {
+      setMcRunning(false);
     }
   };
 
@@ -1036,6 +1041,7 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
           synthesizeTopDown={synthesizeTopDown}
           applySymbolicDerivatives={applySymbolicDerivatives}
           runMonteCarlo={runMonteCarlo}
+          mcRunning={mcRunning}
         />
       ) : null}
 

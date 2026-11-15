@@ -13,7 +13,7 @@
 
 import type { Database } from 'sql.js';
 
-export const LATEST_SCHEMA_VERSION = 2;
+export const LATEST_SCHEMA_VERSION = 3;
 
 export const SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -170,7 +170,9 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   before_json TEXT,
   after_json TEXT,
   reason TEXT DEFAULT '',
-  timestamp TEXT NOT NULL
+  timestamp TEXT NOT NULL,
+  previous_hash TEXT,
+  current_hash TEXT
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -299,6 +301,14 @@ const MIGRATIONS: Migration[] = [
       // cobre tanto NULL (bancos muito antigos) quanto string vazia.
       db.run("UPDATE methods SET family = 'analytical' WHERE family IS NULL OR TRIM(family) = ''");
       db.run('UPDATE measurements SET destructive = 0 WHERE destructive IS NULL');
+    },
+  },
+  {
+    version: 3,
+    description: 'Trilha de auditoria com hash-chaining (21 CFR Part 11)',
+    up: (db, addedColumns) => {
+      addColumnIfMissing(db, 'audit_logs', 'previous_hash', 'TEXT', addedColumns);
+      addColumnIfMissing(db, 'audit_logs', 'current_hash', 'TEXT', addedColumns);
     },
   },
 ];

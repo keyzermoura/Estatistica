@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   Clock,
@@ -18,6 +19,7 @@ import {
   approveValidation,
   createVersionSnapshot,
   newVersion,
+  verifyValidationAuditTrail,
 } from '../../lib/repository';
 import { formatDate, downloadText, slugify } from '../../lib/utils';
 import { StepShell } from '../../components/wizard';
@@ -52,6 +54,11 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
   const [reason, setReason] = useState('');
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const auditVerification = useMemo(
+    () => verifyValidationAuditTrail(bundle.validation.id),
+    [bundle.validation.id, audit],
+  );
 
   useEffect(() => {
     setReason('');
@@ -291,9 +298,27 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
       <Card>
         <CardHeader
           title={`Trilha de auditoria (${audit.length})`}
-          description="Eventos mais recentes primeiro. Clique em uma linha para ver o antes/depois."
+          description="Eventos ordenados cronologicamente. Cada registro é encadeado por SHA-256 (21 CFR Part 11)."
           icon={<ScrollText className="h-4 w-4" />}
+          action={
+            auditVerification.isValid ? (
+              <Badge tone="success" className="gap-1 font-mono text-[11px]">
+                <ShieldCheck className="h-3 w-3" /> 21 CFR Part 11 · Íntegra ({auditVerification.totalLogs} blocos)
+              </Badge>
+            ) : (
+              <Badge tone="danger" className="gap-1 font-mono text-[11px]">
+                <AlertTriangle className="h-3 w-3" /> Falha de integridade
+              </Badge>
+            )
+          }
         />
+        {!auditVerification.isValid ? (
+          <div className="p-4 border-b border-rose-200 bg-rose-50/50 dark:border-rose-900/50 dark:bg-rose-950/20">
+            <Alert tone="danger" title="Violação de Integridade Criptográfica (21 CFR Part 11)">
+              {auditVerification.tamperedReason}
+            </Alert>
+          </div>
+        ) : null}
         {audit.length === 0 ? (
           <CardBody>
             <EmptyState title="Nenhum evento" description="As escritas relevantes aparecerão aqui." />
@@ -307,16 +332,23 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
                   <th>Entidade</th>
                   <th>Ação</th>
                   <th>Ator</th>
+                  <th>Hash SHA-256</th>
                   <th>Justificativa</th>
                 </tr>
               </thead>
               <tbody>
                 {audit.map((entry) => (
-                  <tr key={entry.id} className="cursor-pointer" onClick={() => setSelectedLog(entry)}>
+                  <tr key={entry.id} className="cursor-pointer hover:bg-ink-50/60 dark:hover:bg-ink-800/40" onClick={() => setSelectedLog(entry)}>
                     <td className="whitespace-nowrap text-xs text-ink-500">{formatDate(entry.timestamp)}</td>
                     <td className="text-xs font-medium">{entry.entity}</td>
                     <td className="text-xs">{entry.action}</td>
                     <td className="text-xs">{entry.actor}</td>
+                    <td
+                      className="whitespace-nowrap font-mono text-[11px] text-ink-600 dark:text-ink-400"
+                      title={`Hash atual: ${entry.currentHash || '—'}\nHash anterior: ${entry.previousHash || '—'}`}
+                    >
+                      {entry.currentHash ? `${entry.currentHash.slice(0, 10)}…` : '—'}
+                    </td>
                     <td className="max-w-[320px] truncate text-xs text-ink-500" title={entry.reason}>{entry.reason || '—'}</td>
                   </tr>
                 ))}
@@ -465,6 +497,21 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
         {selectedLog ? (
           <div className="space-y-3">
             {selectedLog.reason ? <Alert tone="info">{selectedLog.reason}</Alert> : null}
+
+            <div className="grid gap-2 rounded-lg border border-ink-100 bg-ink-50 p-2.5 text-xs dark:border-ink-800 dark:bg-ink-950 sm:grid-cols-2">
+              <div>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-500">Hash Anterior (Previous Hash)</span>
+                <p className="mt-0.5 break-all font-mono text-[11px] text-ink-700 dark:text-ink-300">
+                  {selectedLog.previousHash || '0000000000000000000000000000000000000000000000000000000000000000 (GENESIS)'}
+                </p>
+              </div>
+              <div>
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-ink-500">Hash do Bloco (Current Hash SHA-256)</span>
+                <p className="mt-0.5 break-all font-mono text-[11px] text-emerald-600 dark:text-emerald-400">
+                  {selectedLog.currentHash || '—'}
+                </p>
+              </div>
+            </div>
             <div>
               <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-ink-500">Antes</p>
               <pre className="max-h-[240px] overflow-auto rounded-xl bg-ink-950 p-3 text-[11px] text-ink-100">
