@@ -30,7 +30,7 @@ import {
   evaluateParameter,
   toleranceMetrics,
 } from '../../lib/criteria';
-import { mean } from '../descriptive';
+import { mean, sd } from '../descriptive';
 import { fmt } from '../distributions';
 import {
   gageRRAnalysis,
@@ -55,6 +55,8 @@ import {
   type ConformityResult,
 } from '../conformity';
 import { computeUncertainty, type UncertaintyResult } from '../uncertainty';
+import { computeEmp, type EmpResult } from '../emp';
+import { computeCapabilityCg, type CapabilityCgResult } from '../capabilityCg';
 
 const GAGE_REFERENCE = 'AIAG MSA (2010), 4. ed.; ISO 22514-7:2021; Montgomery (2020)';
 const STABILITY_REFERENCE = 'AIAG MSA (2010); ISO 7870-2; Montgomery (2020)';
@@ -79,6 +81,47 @@ function toleranceOf(options: AnalysisOptions): number | null {
   return usl - lsl;
 }
 
+function inferredProcessVariation(context: AnalysisContext): number | null {
+  const provided = context.options.processVariation ?? null;
+  if (provided !== null && Number.isFinite(provided) && provided > 0) {
+    return provided;
+  }
+  const sampleValues = context.used
+    .filter(
+      (measurement) =>
+        !hasReference(measurement) &&
+        measurement.value !== null &&
+        Number.isFinite(measurement.value),
+    )
+    .map((measurement) => measurement.value!);
+  if (sampleValues.length < 2) return null;
+  const sampleSd = sd(sampleValues);
+  return Number.isFinite(sampleSd) && sampleSd > 0 ? 6 * sampleSd : null;
+}
+
+function unilateralSpanOf(context: AnalysisContext): number | null {
+  if (toleranceOf(context.options) !== null) return null;
+  const lsl = context.options.lsl ?? null;
+  const usl = context.options.usl ?? null;
+  if (lsl === null && usl === null) return null;
+  const providedPv = context.options.processVariation ?? null;
+  if (providedPv !== null && Number.isFinite(providedPv) && providedPv > 0) {
+    return providedPv;
+  }
+  const meanVal = context.observedMean;
+  if (lsl !== null && meanVal !== null && Number.isFinite(meanVal) && meanVal > lsl) {
+    return 2 * (meanVal - lsl);
+  }
+  if (usl !== null && meanVal !== null && Number.isFinite(meanVal) && usl > meanVal) {
+    return 2 * (usl - meanVal);
+  }
+  const inferred = inferredProcessVariation(context);
+  if (inferred !== null) return inferred;
+  if (lsl !== null && Math.abs(lsl) > 0) return Math.abs(lsl);
+  if (usl !== null && Math.abs(usl) > 0) return Math.abs(usl);
+  return null;
+}
+
 function criterionLimit(
   criteria: AcceptanceCriterion[],
   metric: string,
@@ -92,7 +135,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function componentOf(result: GageRRResult, key: 'repeatability' | 'operator') {
+function componentOf(result: GageRRResult, key: 'repeatability' | 'operator' | 'part') {
   return result.components.find((component) => component.key === key) ?? null;
 }
 
@@ -211,6 +254,44 @@ export const dimensionalRepeatabilityAnalysis: AnalysisModule = ({
   }
   const { result } = study;
   const repetition = componentOf(result, 'repeatability');
+  const part = componentOf(result, 'part');
+  const operator = componentOf(result, 'operator');
+  const emp: EmpResult | null =
+    repetition &&
+    part &&
+    (part.standardDeviation > 0 ||
+      repetition.standardDeviation > 0 ||
+      (operator?.standardDeviation ?? 0) > 0)
+      ? computeEmp({
+          sigmaPart: part.standardDeviation,
+          sigmaRepeatability: repetition.standardDeviation,
+          sigmaReproducibility: operator?.standardDeviation ?? 0,
+          resolution: context.options.resolution ?? null,
+        })
+      : null;
+  const baseExtras = gageRRTables(result);
+  const empTables = emp
+    ? [
+        {
+          title: 'EMP — Wheeler (Evaluating the Measurement Process)',
+          columns: ['Métrica EMP', 'Valor', 'Classificação / Interpretação'],
+          rows: [
+            ['ICC (Coef. Correlação Intraclasse)', fmt(emp.icc), emp.monitorClass],
+            ['Atenuação do sinal (%)', `${fmt(emp.signalAttenuationPct)}%`, emp.monitorDescription],
+            ['Erro provável (PE = 0,6745·σ_rep)', fmt(emp.probableError), unitOf(context.options)],
+            [
+              'Resolução efetiva recomendada',
+              `${fmt(emp.effectiveResolutionMin)} a ${fmt(emp.effectiveResolutionMax)}`,
+              `Status: ${emp.resolutionStatus}`,
+            ],
+          ],
+          note: emp.reference,
+        },
+      ]
+    : [];
+  const empNotes = emp
+    ? [`EMP (Wheeler): ${emp.monitorClass} (ICC = ${fmt(emp.icc)}; atenuação de sinal = ${fmt(emp.signalAttenuationPct)}%).`]
+    : [];
   const raw = {
     ev_pct: repetition?.studyVariationPct ?? null,
     sigma_rep: repetition?.standardDeviation ?? null,
@@ -263,9 +344,11 @@ export const dimensionalRepeatabilityAnalysis: AnalysisModule = ({
       ),
     ],
     rawMetrics: raw,
-    ...gageRRTables(result),
+    ...baseExtras,
+    tables: [...baseExtras.tables, ...empTables],
+    notes: [...baseExtras.notes, ...empNotes],
     reference: GAGE_REFERENCE,
-    results: { gageRR: result, study: 'gage_rr' },
+    results: { gageRR: result, emp, study: 'gage_rr' },
   };
 };
 
@@ -407,7 +490,7 @@ function biasStudy(
       {
         levels,
         tolerance: toleranceOf(context.options),
-        processVariation: context.options.processVariation ?? null,
+        processVariation: inferredProcessVariation(context),
         rangeMin: context.options.rangeMin ?? null,
         rangeMax: context.options.rangeMax ?? null,
       },
@@ -447,13 +530,64 @@ export const dimensionalBiasAnalysis: AnalysisModule = ({
     study.levels.length > 0
       ? Math.max(...study.levels.map((level) => Math.abs(level.bias)))
       : null;
+  const refPcts = study.levels
+    .map((level) => (level.biasPctRef !== null ? Math.abs(level.biasPctRef) : null))
+    .filter((value): value is number => value !== null && Number.isFinite(value));
+  const maxBiasPctRef = refPcts.length > 0 ? Math.max(...refPcts) : null;
+  const unilateralBiasFallback = study.maxBiasPctT === null && maxBiasPctRef !== null;
+  const tolForCg = toleranceOf(context.options) ?? unilateralSpanOf(context);
+  const rawLevels = biasLevels(context);
+  const bestCgLevel = [...rawLevels]
+    .filter((lvl) => lvl.values.length >= 2)
+    .sort((a, b) => b.values.length - a.values.length)[0];
+  let capabilityCg: CapabilityCgResult | null = null;
+  if (bestCgLevel && tolForCg && tolForCg > 0) {
+    try {
+      capabilityCg = computeCapabilityCg({
+        values: bestCgLevel.values.filter(
+          (v): v is number => v !== null && v !== undefined && Number.isFinite(v),
+        ),
+        reference: bestCgLevel.reference,
+        tolerance: tolForCg,
+      });
+    } catch {
+      capabilityCg = null;
+    }
+  }
+  const cgTables = capabilityCg
+    ? [
+        {
+          title: 'Capabilidade Tipo 1 (Cg / Cgk — AIAG / VDA 5)',
+          columns: ['Padrão', 'n', 'Cg', 'Cgk', 'Tendência', 'Critério', 'Veredito'],
+          rows: [
+            [
+              bestCgLevel.reference,
+              capabilityCg.n,
+              capabilityCg.cg === null ? '—' : fmt(capabilityCg.cg),
+              capabilityCg.cgk === null ? '—' : fmt(capabilityCg.cgk),
+              fmt(capabilityCg.bias),
+              `Cg/Cgk ≥ ${fmt(capabilityCg.minCg)}`,
+              capabilityCg.verdict === 'pass' ? 'Conforme' : capabilityCg.verdict === 'fail' ? 'Não conforme' : '—',
+            ],
+          ],
+          note: capabilityCg.reference,
+        },
+      ]
+    : [];
+  const cgNotes = capabilityCg ? [capabilityCg.summary] : [];
   const raw = {
-    max_bias_pct_t: study.maxBiasPctT ?? null,
+    max_bias_pct_t: study.maxBiasPctT ?? maxBiasPctRef,
     max_bias: maxBias,
     design_levels: study.levelCount,
     design_replicates: study.replicatesMin,
   };
   const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+  const biasExtras = biasTables(study);
+  const unilateralBiasNotes = unilateralBiasFallback
+    ? [
+        'Especificação unilateral (sem tolerância bilateral T): maior |tendência| foi avaliada em percentual relativo ao valor de referência (%Ref).',
+      ]
+    : [];
   return {
     key: parameter.key,
     label: parameter.label,
@@ -462,7 +596,7 @@ export const dimensionalBiasAnalysis: AnalysisModule = ({
     summary: parameterSummary(
       parameter.label,
       verdict,
-      `maior |tendência| = ${maxBias === null ? '—' : fmt(maxBias)} ${unitOf(context.options)}; maior |tendência|/T = ${raw.max_bias_pct_t === null ? '—' : fmt(raw.max_bias_pct_t)}%; níveis = ${study.levelCount}. ${study.summary}`,
+      `maior |tendência| = ${maxBias === null ? '—' : fmt(maxBias)} ${unitOf(context.options)}; maior |tendência|/${unilateralBiasFallback ? 'Ref' : 'T'} = ${raw.max_bias_pct_t === null ? '—' : fmt(raw.max_bias_pct_t)}%; níveis = ${study.levelCount}. ${study.summary}`,
     ),
     metrics: [
       buildMetric(
@@ -470,7 +604,9 @@ export const dimensionalBiasAnalysis: AnalysisModule = ({
         'max_bias_pct_t',
         raw.max_bias_pct_t,
         criteria,
-        'max |bias_i|/T × 100, com bias_i = x̄_i − ref_i',
+        unilateralBiasFallback
+          ? 'max |bias_i|/ref_i × 100 (referência unilateral), com bias_i = x̄_i − ref_i'
+          : 'max |bias_i|/T × 100, com bias_i = x̄_i − ref_i',
         GAGE_REFERENCE,
       ),
       buildMetric(
@@ -499,9 +635,11 @@ export const dimensionalBiasAnalysis: AnalysisModule = ({
       ),
     ],
     rawMetrics: raw,
-    ...biasTables(study),
+    ...biasExtras,
+    tables: [...biasExtras.tables, ...cgTables],
+    notes: [...biasExtras.notes, ...unilateralBiasNotes, ...cgNotes],
     reference: GAGE_REFERENCE,
-    results: { biasLinearity: study },
+    results: { biasLinearity: study, capabilityCg },
   };
 };
 
@@ -516,8 +654,10 @@ export const dimensionalLinearityAnalysis: AnalysisModule = ({
       'A linearidade verifica se a tendência muda de forma proporcional ao longo da faixa de uso.',
     ]);
   }
+  const unilateralLinearityFallback =
+    study.linearityPctT === null && study.linearityPct !== null;
   const raw = {
-    linearity_pct_t: study.linearityPctT ?? null,
+    linearity_pct_t: study.linearityPctT ?? study.linearityPct ?? null,
     linearity_pct: study.linearityPct ?? null,
     linearity: study.linearity ?? null,
     slope_p: Number.isFinite(study.regression.slopeP) ? study.regression.slopeP : null,
@@ -525,6 +665,12 @@ export const dimensionalLinearityAnalysis: AnalysisModule = ({
     design_levels: study.levelCount,
   };
   const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+  const linearityExtras = biasTables(study);
+  const unilateralLinearityNotes = unilateralLinearityFallback
+    ? [
+        'Especificação unilateral (sem tolerância bilateral T): a linearidade percentual foi avaliada sobre a variação do processo (%PV = 100·|b|).',
+      ]
+    : [];
   return {
     key: parameter.key,
     label: parameter.label,
@@ -533,7 +679,7 @@ export const dimensionalLinearityAnalysis: AnalysisModule = ({
     summary: parameterSummary(
       parameter.label,
       verdict,
-      `linearidade/T = ${raw.linearity_pct_t === null ? '—' : fmt(raw.linearity_pct_t)}%; declive = ${Number.isFinite(study.regression.slope) ? fmt(study.regression.slope) : '—'}; p = ${raw.slope_p === null ? '—' : fmt(raw.slope_p)}; níveis = ${study.levelCount}. ${study.summary}`,
+      `linearidade/${unilateralLinearityFallback ? 'PV' : 'T'} = ${raw.linearity_pct_t === null ? '—' : fmt(raw.linearity_pct_t)}%; declive = ${Number.isFinite(study.regression.slope) ? fmt(study.regression.slope) : '—'}; p = ${raw.slope_p === null ? '—' : fmt(raw.slope_p)}; níveis = ${study.levelCount}. ${study.summary}`,
     ),
     metrics: [
       buildMetric(
@@ -541,7 +687,9 @@ export const dimensionalLinearityAnalysis: AnalysisModule = ({
         'linearity_pct_t',
         raw.linearity_pct_t,
         criteria,
-        'linearidade/T × 100, com linearidade = |b|·variação do processo',
+        unilateralLinearityFallback
+          ? 'linearidade/VP × 100 = 100·|b| (especificação unilateral)'
+          : 'linearidade/T × 100, com linearidade = |b|·variação do processo',
         GAGE_REFERENCE,
       ),
       buildMetric(
@@ -586,7 +734,8 @@ export const dimensionalLinearityAnalysis: AnalysisModule = ({
       ),
     ],
     rawMetrics: raw,
-    ...biasTables(study),
+    ...linearityExtras,
+    notes: [...linearityExtras.notes, ...unilateralLinearityNotes],
     reference: GAGE_REFERENCE,
     results: { biasLinearity: study },
   };
@@ -744,6 +893,8 @@ export const dimensionalResolutionAnalysis: AnalysisModule = ({
   const series = stabilitySeries(context);
   const providedResolution = context.options.resolution ?? null;
   const tolerance = toleranceOf(context.options);
+  const unilateralSpan = tolerance === null ? unilateralSpanOf(context) : null;
+  const effectiveTolerance = tolerance ?? unilateralSpan;
   let study: StabilityResult | null = null;
   if (series.values.length >= 2) {
     try {
@@ -751,7 +902,7 @@ export const dimensionalResolutionAnalysis: AnalysisModule = ({
         { values: series.values },
         {
           criteria: stabilityCriteria(criteria),
-          tolerance,
+          tolerance: effectiveTolerance,
           resolution: providedResolution,
           unit: unitOf(context.options),
           labels: series.labels,
@@ -763,8 +914,8 @@ export const dimensionalResolutionAnalysis: AnalysisModule = ({
   }
   const resolution = providedResolution ?? study?.resolution.resolution ?? null;
   const ratioPct =
-    resolution !== null && tolerance !== null
-      ? (100 * resolution) / tolerance
+    resolution !== null && effectiveTolerance !== null && effectiveTolerance > 0
+      ? (100 * resolution) / effectiveTolerance
       : study?.resolution.ratioPct ?? null;
   if (resolution === null && ratioPct === null) {
     return emptyParameter(
@@ -772,7 +923,7 @@ export const dimensionalResolutionAnalysis: AnalysisModule = ({
       context.used.length,
       'Informe a resolução do sistema de medição (ou colete pelo menos 2 medições do mesmo padrão para inferi-la).',
       [
-        'A resolução deve ser ≤ 10% da tolerância T = USL − LSL.',
+        'A resolução deve ser ≤ 10% da tolerância T = USL − LSL (ou faixa unilateral equivalente).',
       ],
     );
   }
@@ -782,9 +933,13 @@ export const dimensionalResolutionAnalysis: AnalysisModule = ({
     categories: study?.distinctValues ?? null,
   };
   const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+  const unilateralNote =
+    tolerance === null && unilateralSpan !== null
+      ? `Especificação unilateral (sem tolerância bilateral T): resolução avaliada frente à faixa unilateral equivalente (${fmt(unilateralSpan)} ${unitOf(context.options)}).`
+      : null;
   const fallbackNote =
     study === null
-      ? 'Resolução informada diretamente: não havia medições repetidas suficientes para inferi-la; o critério 100·resolução/T foi aplicado.'
+      ? 'Resolução informada diretamente: não havia medições repetidas suficientes para inferi-la; o critério 100·resolução/faixa foi aplicado.'
       : null;
   return {
     key: parameter.key,
@@ -794,7 +949,7 @@ export const dimensionalResolutionAnalysis: AnalysisModule = ({
     summary: parameterSummary(
       parameter.label,
       verdict,
-      `resolução = ${fmt(resolution)} ${unitOf(context.options)}; T = ${tolerance === null ? '—' : `${fmt(tolerance)} ${unitOf(context.options)}`}; resolução/T = ${ratioPct === null ? '—' : `${fmt(ratioPct)}%`}.${fallbackNote ? ` ${fallbackNote}` : ''}`,
+      `resolução = ${fmt(resolution)} ${unitOf(context.options)}; ${tolerance === null && unilateralSpan !== null ? 'faixa unilateral' : 'T'} = ${effectiveTolerance === null ? '—' : `${fmt(effectiveTolerance)} ${unitOf(context.options)}`}; resolução/faixa = ${ratioPct === null ? '—' : `${fmt(ratioPct)}%`}.${fallbackNote ? ` ${fallbackNote}` : ''}`,
     ),
     metrics: [
       buildMetric(
@@ -802,7 +957,9 @@ export const dimensionalResolutionAnalysis: AnalysisModule = ({
         'resolution_pct',
         ratioPct,
         criteria,
-        'resolução/T × 100',
+        tolerance === null && unilateralSpan !== null
+          ? 'resolução / faixa unilateral × 100'
+          : 'resolução/T × 100',
         STABILITY_REFERENCE,
       ),
       buildMetric(
@@ -828,6 +985,7 @@ export const dimensionalResolutionAnalysis: AnalysisModule = ({
     warnings: study?.warnings ?? [],
     notes: [
       ...(study?.notes ?? []),
+      ...(unilateralNote ? [unilateralNote] : []),
       ...(fallbackNote ? [fallbackNote] : []),
     ],
     reference: STABILITY_REFERENCE,
@@ -887,7 +1045,18 @@ export const dimensionalUncertaintyAnalysis: AnalysisModule = ({
     u_over_t: toleranceValues.uOverT,
     tur: toleranceValues.tur,
   };
-  const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+  const baseVerdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+  let verdict = baseVerdict;
+  let unilateralUncertaintyNote: string | null = null;
+  if (baseVerdict === 'not_evaluated' && tolerance === null && relative !== null) {
+    const relLimit = criterionLimit(
+      criteria,
+      'relative_expanded',
+      criterionLimit(criteria, 'pct_pt', 10),
+    );
+    verdict = relative <= relLimit ? 'pass' : 'fail';
+    unilateralUncertaintyNote = `Especificação unilateral (sem tolerância bilateral T): incerteza expandida relativa (U/|x̄| = ${fmt(relative)}%) avaliada frente ao limite ≤ ${fmt(relLimit, 1)}%.`;
+  }
   return {
     key: parameter.key,
     label: parameter.label,
@@ -896,7 +1065,7 @@ export const dimensionalUncertaintyAnalysis: AnalysisModule = ({
     summary: parameterSummary(
       parameter.label,
       verdict,
-      `u_c = ${fmt(result.combined)} ${unitOf(context.options)}; U = ${fmt(result.expanded)} ${unitOf(context.options)} (k = ${fmt(result.coverageFactor)}); T = ${tolerance === null ? '—' : fmt(tolerance)}; %P/T = ${raw.pct_pt === null ? '—' : `${fmt(raw.pct_pt)}%`}; TUR/TAR = ${raw.tur === null ? '—' : fmt(raw.tur)}.`,
+      `u_c = ${fmt(result.combined)} ${unitOf(context.options)}; U = ${fmt(result.expanded)} ${unitOf(context.options)} (k = ${fmt(result.coverageFactor)}); T = ${tolerance === null ? '— (unilateral)' : fmt(tolerance)}; U_rel = ${relative === null ? '—' : `${fmt(relative)}%`}; %P/T = ${raw.pct_pt === null ? '—' : `${fmt(raw.pct_pt)}%`}; TUR/TAR = ${raw.tur === null ? '—' : fmt(raw.tur)}.`,
     ),
     metrics: [
       buildMetric(
@@ -964,6 +1133,17 @@ export const dimensionalUncertaintyAnalysis: AnalysisModule = ({
           ['%P/T', '100·U/T', toleranceValues.pctPT ?? '—', 'editável no critério', ''],
           ['U/T', 'U/T', toleranceValues.uOverT ?? '—', 'editável no critério', ''],
           ['TUR/TAR', 'T/(2U)', toleranceValues.tur ?? '—', 'editável no critério', ''],
+          [
+            'Q_MP (VDA 5)',
+            '2·U/T × 100 (%)',
+            tolerance && tolerance > 0 ? Number(((200 * result.expanded) / tolerance).toFixed(4)) : '—',
+            '≤ 30% (VDA 5)',
+            tolerance && tolerance > 0
+              ? (200 * result.expanded) / tolerance <= 30
+                ? 'Conforme'
+                : 'Não conforme'
+              : '—',
+          ],
         ],
       },
     ],
@@ -984,6 +1164,7 @@ export const dimensionalUncertaintyAnalysis: AnalysisModule = ({
       ...(tolerance === null
         ? ['Sem tolerância bilateral, %P/T, U/T e TUR/TAR ficam não avaliados.']
         : []),
+      ...(unilateralUncertaintyNote ? [unilateralUncertaintyNote] : []),
     ],
     reference: result.reference,
     results: { uncertainty: result, tolerance: toleranceValues },
@@ -1027,9 +1208,21 @@ export const dimensionalConformityAnalysis: AnalysisModule = ({
   const partValues = context.used
     .filter((measurement) => (measurement.partId ?? '').trim() !== '' && measurement.value !== null)
     .map((measurement) => measurement.value!);
+  const specimenValues = context.used
+    .filter(
+      (measurement) =>
+        !hasReference(measurement) &&
+        measurement.value !== null &&
+        Number.isFinite(measurement.value),
+    )
+    .map((measurement) => measurement.value!);
   const value =
     conformityOptions?.value ??
-    (partValues.length ? mean(partValues) : context.observedMean);
+    (partValues.length
+      ? mean(partValues)
+      : specimenValues.length
+        ? mean(specimenValues)
+        : context.observedMean);
   if (value === null || !Number.isFinite(value)) {
     return emptyParameter(
       parameter,
@@ -1079,12 +1272,35 @@ export const dimensionalConformityAnalysis: AnalysisModule = ({
     { tur: result.tur, pct_pt: result.pctPT, u_over_t: result.uOverT },
     criteria,
   ).verdict;
-  const verdict =
+  const individualLsl = conformityOptions?.individualLsl ?? null;
+  const hasIndividualCheck =
+    individualLsl !== null && Number.isFinite(individualLsl) && specimenValues.length > 0;
+  const minPartValue = hasIndividualCheck ? Math.min(...specimenValues) : null;
+  const belowIndividualCount = hasIndividualCheck
+    ? specimenValues.filter((val) => val < individualLsl).length
+    : 0;
+  const individualPass = !hasIndividualCheck || belowIndividualCount === 0;
+
+  let verdict =
     result.verdict === 'pass' && riskVerdict === 'fail' ? 'warning' : result.verdict;
+  if (hasIndividualCheck && !individualPass) {
+    verdict = 'fail';
+  }
   const riskAlert =
     result.verdict === 'pass' && riskVerdict === 'fail'
       ? 'A decisão é conforme, mas TUR/TAR, %P/T ou U/T falharam no critério de alerta; o resultado foi elevado a atenção.'
       : null;
+  const individualSummary =
+    hasIndividualCheck && minPartValue !== null
+      ? ` LSL individual (mín. por amostra) = ${fmt(individualLsl)} ${unitOf(options)}; mínimo individual observado = ${fmt(minPartValue)} ${unitOf(options)} (${individualPass ? `todos os ${specimenValues.length} corpos de prova ≥ LSL individual` : `${belowIndividualCount} abaixo do LSL individual`}).`
+      : '';
+  const individualWarning =
+    hasIndividualCheck && !individualPass && minPartValue !== null
+      ? `Conformidade individual reprovada: ${belowIndividualCount} de ${specimenValues.length} corpo(s) de prova abaixo do LSL individual (${fmt(individualLsl)} ${unitOf(options)}); mínimo observado = ${fmt(minPartValue)} ${unitOf(options)}.`
+      : null;
+  const individualNote = hasIndividualCheck
+    ? 'Verificação dupla compendial (ex.: ABNT NBR 13904 / USP <881>): além da decisão da média do lote com banda de guarda contra LSL/USL, todos os corpos de prova individuais devem atender ao LSL individual.'
+    : null;
 
   return {
     key: parameter.key,
@@ -1094,7 +1310,7 @@ export const dimensionalConformityAnalysis: AnalysisModule = ({
     summary: parameterSummary(
       parameter.label,
       verdict,
-      `${result.summary}${riskAlert ? ` ${riskAlert}` : ''}`,
+      `${result.summary}${riskAlert ? ` ${riskAlert}` : ''}${individualSummary}`,
     ),
     metrics: [
       {
@@ -1107,6 +1323,20 @@ export const dimensionalConformityAnalysis: AnalysisModule = ({
         formula: 'x confrontado com a regra de decisão e os limites efetivos',
         reference: result.reference,
       },
+      ...(hasIndividualCheck && minPartValue !== null
+        ? [
+            {
+              key: 'individual_min',
+              label: 'Mínimo individual observado (compendial)',
+              value: minPartValue,
+              unit: unitOf(options),
+              verdict: individualPass ? ('pass' as const) : ('fail' as const),
+              criterionText: `≥ ${fmt(individualLsl)} ${unitOf(options)} (LSL individual)`,
+              formula: 'min(x_i) ≥ LSL_individual (todos os corpos de prova)',
+              reference: result.reference,
+            },
+          ]
+        : []),
       buildMetric(
         parameter,
         'expanded_uncertainty',
@@ -1158,11 +1388,37 @@ export const dimensionalConformityAnalysis: AnalysisModule = ({
       probability_conformity: result.probabilityConform,
       false_accept_risk: result.falseAcceptRisk,
       false_reject_risk: result.falseRejectRisk,
+      individual_lsl: individualLsl,
+      individual_min: minPartValue,
+      individual_below_count: hasIndividualCheck ? belowIndividualCount : null,
     },
-    tables: result.tables,
+    tables: [
+      ...result.tables,
+      ...(hasIndividualCheck && minPartValue !== null
+        ? [
+            {
+              title: 'Verificação compendial individual (corpos de prova)',
+              columns: ['Métrica', 'Valor', 'Critério'],
+              rows: [
+                ['LSL individual (mín. por amostra)', `${fmt(individualLsl, 4)} ${unitOf(options)}`.trim(), 'Especificação compendial individual'],
+                ['Mínimo individual observado', `${fmt(minPartValue, 4)} ${unitOf(options)}`.trim(), individualPass ? 'Conforme (todos ≥ LSL individual)' : `Não conforme (${belowIndividualCount} abaixo)`],
+                ['Amostras avaliadas individualmente', specimenValues.length, `${belowIndividualCount} ocorrência(s) abaixo do mínimo`],
+              ],
+              note: 'Verificação individual aplicada a todas as medições de amostras/corpos de prova (excluindo padrões de referência metrológica).',
+            },
+          ]
+        : []),
+    ],
     charts: [],
-    warnings: [...result.warnings, ...(riskAlert ? [riskAlert] : [])],
-    notes: result.notes,
+    warnings: [
+      ...result.warnings,
+      ...(riskAlert ? [riskAlert] : []),
+      ...(individualWarning ? [individualWarning] : []),
+    ],
+    notes: [
+      ...result.notes,
+      ...(individualNote ? [individualNote] : []),
+    ],
     reference: result.reference,
     results: { conformity: result },
   };

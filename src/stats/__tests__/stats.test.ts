@@ -216,4 +216,109 @@ describe('análise integrada', () => {
     const accuracy = result.parameters.find((p) => p.key === 'accuracy');
     expect(accuracy?.rawMetrics.recovery).toBeCloseTo(100, 0);
   });
+
+  it('mantém rótulos alinhados na precisão quando há nível com n = 1', () => {
+    const base = {
+      validationId: 'v-prec',
+      analyst: 'Ana',
+      day: 'D1',
+      equipment: 'HPLC',
+      lot: 'L1',
+      sample: 'S1',
+      textValue: '',
+      notes: '',
+    };
+    const measurements: Measurement[] = [
+      { ...base, id: 'm1', runOrder: 1, level: 'único', replicate: 1, value: 99 },
+      { ...base, id: 'm2', runOrder: 2, level: 'baixo', replicate: 1, value: 10.1 },
+      { ...base, id: 'm3', runOrder: 3, level: 'baixo', replicate: 2, value: 9.9 },
+      { ...base, id: 'm4', runOrder: 4, level: 'alto', replicate: 1, value: 50.2 },
+      { ...base, id: 'm5', runOrder: 5, level: 'alto', replicate: 2, value: 49.8 },
+    ];
+    const parameters: ValidationParameter[] = [
+      { validationId: 'v-prec', key: 'repeatability', selected: true, justification: '', criteria: [] },
+    ];
+    const result = analyzeValidation(parameters, measurements, []);
+    const rep = result.parameters[0];
+    expect(rep.tables[0]?.rows.map((r) => r[0])).toEqual(['baixo', 'alto']);
+  });
+
+  it('usa refValue e refUncertainty na exatidão analítica', () => {
+    const base = {
+      validationId: 'v-acc',
+      level: 'MRC',
+      analyst: 'Ana',
+      day: 'D1',
+      equipment: 'HPLC',
+      lot: 'L1',
+      sample: 'S1',
+      textValue: '',
+      notes: '',
+    };
+    const withoutUncertainty: Measurement[] = [10.08, 10.09, 10.07, 10.1].map((value, i) => ({
+      ...base,
+      id: `a${i}`,
+      runOrder: i + 1,
+      replicate: i + 1,
+      value,
+      refValue: 10.0,
+    }));
+    const withUncertainty = withoutUncertainty.map((m) => ({
+      ...m,
+      refUncertainty: 0.4, // u_ref = 0.2
+    }));
+    const params: ValidationParameter[] = [
+      {
+        validationId: 'v-acc',
+        key: 'accuracy',
+        selected: true,
+        justification: '',
+        criteria: [
+          { id: 'c1', parameter: 'accuracy', metric: 'biasP', operator: '>=', limit: 0.05 },
+        ],
+      },
+    ];
+    const resNoU = analyzeValidation(params, withoutUncertainty, []);
+    const resWithU = analyzeValidation(params, withUncertainty, []);
+    expect(resNoU.parameters[0].verdict).toBe('fail');
+    expect(resWithU.parameters[0].verdict).toBe('pass');
+    expect(resWithU.parameters[0].rawMetrics.biasP).toBeGreaterThan(0.05);
+  });
+
+  it('avalia seletividade quando há medições com interferentes, brancos e resolução', () => {
+    const base = {
+      validationId: 'v-sel',
+      analyst: 'Ana',
+      day: 'D1',
+      equipment: 'HPLC',
+      lot: 'L1',
+      textValue: '',
+      notes: '',
+    };
+    const measurements: Measurement[] = [
+      { ...base, id: 's1', runOrder: 1, level: '10', sample: 'Branco matriz', replicate: 1, value: 0.01 },
+      { ...base, id: 's2', runOrder: 2, level: '10', sample: 'Amostra interferente 1', replicate: 1, value: 9.8, referenceValue: 10 },
+      { ...base, id: 's3', runOrder: 3, level: '10', sample: 'Amostra interferente 2', replicate: 2, value: 10.1, referenceValue: 10 },
+      { ...base, id: 's4', runOrder: 4, level: '10', sample: 'Padrão controle 1', replicate: 1, value: 10.0, referenceValue: 10 },
+      { ...base, id: 's5', runOrder: 5, level: '10', sample: 'Padrão controle 2', replicate: 2, value: 10.05, referenceValue: 10 },
+      { ...base, id: 's6', runOrder: 6, level: 'resolução Rs', sample: 'Resolução crítica', replicate: 1, value: 2.1 },
+    ];
+    const params: ValidationParameter[] = [
+      {
+        validationId: 'v-sel',
+        key: 'selectivity',
+        selected: true,
+        justification: '',
+        criteria: [
+          { id: 'sel-1', parameter: 'selectivity', metric: 'interferenceRecovery', operator: 'between', limit: 90, limit2: 110 },
+          { id: 'sel-2', parameter: 'selectivity', metric: 'resolution', operator: '>=', limit: 1.5 },
+        ],
+      },
+    ];
+    const result = analyzeValidation(params, measurements, []);
+    const sel = result.parameters[0];
+    expect(sel.verdict).toBe('pass');
+    expect(sel.rawMetrics.interferenceRecovery).toBeCloseTo(99.5, 1);
+    expect(sel.rawMetrics.resolution).toBeCloseTo(2.1, 4);
+  });
 });

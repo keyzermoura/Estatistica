@@ -348,7 +348,7 @@ export function zScore(
   };
 }
 
-/** En-score: (x − x_ref)/√(u_lab² + u_ref²). */
+/** En-score: (x − x_ref)/√(U_lab² + U_ref²). */
 export function enScore(
   measured: number,
   assigned: number,
@@ -361,13 +361,65 @@ export function enScore(
     score: en,
     satisfactory: Number.isFinite(en) && Math.abs(en) <= 1,
     questionable: false,
-    method: 'En = (x − x_ref) / √(u_lab² + u_ref²)',
-    reference: 'ISO 13528:2022, cláusula 9; ISO 17043',
+    method: 'En = (x − x_ref) / √(U_lab² + U_ref²)',
+    reference: 'ISO 13528:2022, cláusula 9; ISO 17043; EURACHEM PT (2021)',
     interpretation: Number.isFinite(en)
       ? Math.abs(en) <= 1
         ? `|En| = ${Math.abs(en).toFixed(2)} ≤ 1: resultado compatível dentro das incertezas.`
         : `|En| = ${Math.abs(en).toFixed(2)} > 1: resultado incompatível dentro das incertezas.`
       : 'Incertezas inválidas.',
+  };
+}
+
+/** Zeta-score (ζ): (x − x_ref) / √(u_lab² + u_ref²) usando incertezas-padrão. */
+export function zetaScore(
+  measured: number,
+  assigned: number,
+  uLab: number,
+  uRef: number,
+): ProficiencyResult {
+  const denom = Math.sqrt(uLab * uLab + uRef * uRef);
+  const zeta = denom > 0 ? (measured - assigned) / denom : NaN;
+  const absZeta = Math.abs(zeta);
+  return {
+    score: zeta,
+    satisfactory: Number.isFinite(zeta) && absZeta <= 2,
+    questionable: Number.isFinite(zeta) && absZeta > 2 && absZeta <= 3,
+    method: 'ζ = (x − x_ref) / √(u_lab² + u_ref²)',
+    reference: 'ISO 13528:2022, cláusula 9.5; EURACHEM PT Guide (3ª ed., 2021)',
+    interpretation: Number.isFinite(zeta)
+      ? absZeta <= 2
+        ? `|ζ| = ${absZeta.toFixed(2)} ≤ 2: compatível dentro das incertezas-padrão.`
+        : absZeta <= 3
+          ? `2 < |ζ| = ${absZeta.toFixed(2)} ≤ 3: sinal de alerta (questionável).`
+          : `|ζ| = ${absZeta.toFixed(2)} > 3: incompatibilidade estatística significativa.`
+      : 'Incertezas-padrão inválidas.',
+  };
+}
+
+/** z'-score de proficiência: (x − x_pt) / √(σ_pt² + u_pt²). */
+export function zPrimeScore(
+  measured: number,
+  assigned: number,
+  sigmaPt: number,
+  uRef: number,
+): ProficiencyResult {
+  const denom = sigmaPt > 0 ? Math.sqrt(sigmaPt * sigmaPt + uRef * uRef) : NaN;
+  const zp = denom > 0 ? (measured - assigned) / denom : NaN;
+  const absZp = Math.abs(zp);
+  return {
+    score: zp,
+    satisfactory: Number.isFinite(zp) && absZp <= 2,
+    questionable: Number.isFinite(zp) && absZp > 2 && absZp <= 3,
+    method: "z' = (x − x_pt) / √(σ_pt² + u_pt²)",
+    reference: 'ISO 13528:2022, cláusula 9.4; EURACHEM PT Guide (3ª ed., 2021)',
+    interpretation: Number.isFinite(zp)
+      ? absZp <= 2
+        ? `|z'| = ${absZp.toFixed(2)} ≤ 2: desempenho satisfatório considerando u_pt.`
+        : absZp <= 3
+          ? `2 < |z'| = ${absZp.toFixed(2)} ≤ 3: desempenho questionável.`
+          : `|z'| = ${absZp.toFixed(2)} > 3: desempenho insatisfatório.`
+      : 'σ_pt inválido.',
   };
 }
 

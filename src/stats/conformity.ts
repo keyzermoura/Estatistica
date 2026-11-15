@@ -52,7 +52,7 @@
 
 import type { Verdict } from '../lib/types';
 import type { AnalysisMetric, AnalysisTable } from './analysis-types';
-import { fmt, normalCdf } from './distributions';
+import { fmt, normalCdf, normalPdf } from './distributions';
 import {
   DEFAULT_TOLERANCE_CRITERIA,
   toleranceMetrics,
@@ -98,6 +98,47 @@ export interface ConformityInput {
   guardBandFactor?: number;
   /** Atalho para o limiar de probabilidade; sobrepõe `criteria.probabilityThreshold`. */
   probabilityThreshold?: number;
+  /** Média a priori do processo/lote μ₀ para risco global bayesiano (JCGM 106 §7 e §9.5). */
+  priorMean?: number | null;
+  /** Desvio-padrão a priori σ₀ > 0 para risco global bayesiano (JCGM 106 §7 e §9.5). */
+  priorStd?: number | null;
+}
+
+export interface BayesianConformityInput {
+  /** Limite inferior de tolerância (nulo se unilateral superior). */
+  lsl?: number | null;
+  /** Limite superior de tolerância (nulo se unilateral inferior). */
+  usl?: number | null;
+  /** Incerteza-padrão da medição u_m ≥ 0. */
+  standardUncertainty: number;
+  /** Média a priori do processo/lote μ₀. */
+  priorMean: number;
+  /** Desvio-padrão a priori do processo/lote σ₀ > 0. */
+  priorStd: number;
+  /** Banda de guarda w ≥ 0 aplicada ao intervalo de aceitação (padrão 0). */
+  guardBand?: number;
+  /** Valor medido observado x para atualização conjugada Normal–Normal (opcional). */
+  measuredValue?: number | null;
+}
+
+export interface BayesianConformityResult {
+  priorMean: number;
+  priorStd: number;
+  priorConformProbability: number;
+  acceptanceProbability: number;
+  globalConsumerRisk: number;
+  globalProducerRisk: number;
+  /** Risco condicional do consumidor dado aceite: P(Y ∉ T | X ∈ A) = R_C / P(X ∈ A). */
+  conditionalConsumerRisk: number | null;
+  /** Risco condicional do produtor dada rejeição: P(Y ∈ T | X ∉ A) = R_P / P(X ∉ A). */
+  conditionalProducerRisk: number | null;
+  posteriorMean: number | null;
+  posteriorStd: number | null;
+  posteriorConformProbability: number | null;
+  posteriorFalseAcceptRisk: number | null;
+  posteriorFalseRejectRisk: number | null;
+  method: string;
+  reference: string;
 }
 
 /** Limites editáveis da regra e dos alertas. */
@@ -199,6 +240,7 @@ export interface ConformityResult {
   method: string;
   reference: string;
   report: ConformityReportView;
+  bayesianRisks?: BayesianConformityResult;
 }
 
 function decisionVerdict(decision: ConformityDecision): Verdict {
@@ -312,6 +354,175 @@ export function probabilityOfConformity(
   const lowerProbability =
     lower === null ? 0 : normalCdf((lower - value) / standardUncertainty);
   return Math.min(1, Math.max(0, upperProbability - lowerProbability));
+}
+
+function simpsonIntegrate(fn: (x: number) => number, a: number, b: number, nSub = 400): number {
+  if (!(b > a)) return 0;
+  const n = nSub % 2 === 0 ? nSub : nSub + 1;
+  const h = (b - a) / n;
+  let sum = fn(a) + fn(b);
+  for (let i = 1; i < n; i++) {
+    const x = a + i * h;
+    sum += (i % 2 === 1 ? 4 : 2) * fn(x);
+  }
+  return ((b - a) / (3 * n)) * sum;
+}
+
+/**
+ * Avaliação bayesiana conjugada Normal–Normal e riscos globais de consumidor
+ * (R_C) e produtor (R_P) conforme JCGM 106:2012 (Seções 7.2 e 9.5, Eq. 19–20).
+ *
+ * Prior: Y ~ N(μ₀, σ₀²); Verossimilhança: X | Y = y ~ N(y, u_m²).
+ * Posterior: Y | X = x ~ N(μ_post, u_post²).
+ * R_C = ∫_{y ∉ T} f₀(y)·P(X ∈ A | Y = y) dy;
+ * R_P = ∫_{y ∈ T} f₀(y)·[1 − P(X ∈ A | Y = y)] dy.
+ */
+export function computeBayesianConformityRisks(
+  input: BayesianConformityInput,
+): BayesianConformityResult {
+  const lower = normalizeLimit(input.lsl, 'LSL');
+  const upper = normalizeLimit(input.usl, 'USL');
+  if (lower === null && upper === null) {
+    throw new Error('Informe pelo menos um limite de tolerância (LSL ou USL).');
+  }
+  if (lower !== null && upper !== null && !(lower < upper)) {
+    throw new Error('A tolerância bilateral exige LSL < USL.');
+  }
+  if (!Number.isFinite(input.standardUncertainty) || input.standardUncertainty < 0) {
+    throw new Error('A incerteza-padrão u_m deve ser um número não negativo.');
+  }
+  if (!Number.isFinite(input.priorMean)) {
+    throw new Error('A média a priori μ₀ deve ser um número finito.');
+  }
+  if (!Number.isFinite(input.priorStd) || !(input.priorStd > 0)) {
+    throw new Error('O desvio-padrão a priori σ₀ deve ser positivo.');
+  }
+  const guardBand = input.guardBand ?? 0;
+  if (!Number.isFinite(guardBand) || guardBand < 0) {
+    throw new Error('A banda de guarda w deve ser um número não negativo.');
+  }
+  const measured = input.measuredValue;
+  if (measured !== null && measured !== undefined && !Number.isFinite(measured)) {
+    throw new Error('O valor medido x deve ser um número finito.');
+  }
+
+  const uM = input.standardUncertainty;
+  const mu0 = input.priorMean;
+  const s0 = input.priorStd;
+  const acceptLower = lower !== null ? lower + guardBand : null;
+  const acceptUpper = upper !== null ? upper - guardBand : null;
+  const emptyAcceptance =
+    acceptLower !== null && acceptUpper !== null && !(acceptLower < acceptUpper);
+
+  const acceptGivenY = (y: number): number => {
+    if (emptyAcceptance) {
+      if (acceptLower !== null && acceptUpper !== null && acceptLower === acceptUpper && uM === 0) {
+        return y === acceptLower ? 1 : 0;
+      }
+      return 0;
+    }
+    return probabilityOfConformity(y, uM, acceptLower, acceptUpper);
+  };
+
+  const priorConformProbability = probabilityOfConformity(mu0, s0, lower, upper);
+  const acceptanceProbability = emptyAcceptance
+    ? 0
+    : probabilityOfConformity(mu0, Math.hypot(s0, uM), acceptLower, acceptUpper);
+
+  const tailLo = mu0 - 8 * s0;
+  const tailHi = mu0 + 8 * s0;
+
+  let globalConsumerRisk = 0;
+  if (lower !== null && lower > tailLo) {
+    globalConsumerRisk += simpsonIntegrate(
+      (y) => normalPdf(y, mu0, s0) * acceptGivenY(y),
+      tailLo,
+      lower,
+      400,
+    );
+  }
+  if (upper !== null && upper < tailHi) {
+    globalConsumerRisk += simpsonIntegrate(
+      (y) => normalPdf(y, mu0, s0) * acceptGivenY(y),
+      upper,
+      tailHi,
+      400,
+    );
+  }
+  globalConsumerRisk = Math.min(1, Math.max(0, globalConsumerRisk));
+
+  const confLo = lower !== null ? Math.max(lower, tailLo) : tailLo;
+  const confHi = upper !== null ? Math.min(upper, tailHi) : tailHi;
+  const globalProducerRisk =
+    confHi > confLo
+      ? Math.min(
+          1,
+          Math.max(
+            0,
+            simpsonIntegrate(
+              (y) => normalPdf(y, mu0, s0) * (1 - acceptGivenY(y)),
+              confLo,
+              confHi,
+              400,
+            ),
+          ),
+        )
+      : 0;
+
+  const conditionalConsumerRisk =
+    acceptanceProbability > 0
+      ? Math.min(1, globalConsumerRisk / acceptanceProbability)
+      : null;
+  const rejectionProbability = 1 - acceptanceProbability;
+  const conditionalProducerRisk =
+    rejectionProbability > 0
+      ? Math.min(1, globalProducerRisk / rejectionProbability)
+      : null;
+
+  let posteriorMean: number | null = null;
+  let posteriorStd: number | null = null;
+  let posteriorConformProbability: number | null = null;
+  let posteriorFalseAcceptRisk: number | null = null;
+  let posteriorFalseRejectRisk: number | null = null;
+
+  if (measured !== null && measured !== undefined) {
+    if (uM === 0) {
+      posteriorMean = measured;
+      posteriorStd = 0;
+    } else {
+      const var0 = s0 * s0;
+      const varM = uM * uM;
+      posteriorMean = (varM * mu0 + var0 * measured) / (var0 + varM);
+      posteriorStd = (s0 * uM) / Math.sqrt(var0 + varM);
+    }
+    posteriorConformProbability = probabilityOfConformity(
+      posteriorMean,
+      posteriorStd,
+      lower,
+      upper,
+    );
+    posteriorFalseAcceptRisk = Math.min(1, Math.max(0, 1 - posteriorConformProbability));
+    posteriorFalseRejectRisk = posteriorConformProbability;
+  }
+
+  return {
+    priorMean: mu0,
+    priorStd: s0,
+    priorConformProbability,
+    acceptanceProbability,
+    globalConsumerRisk,
+    globalProducerRisk,
+    conditionalConsumerRisk,
+    conditionalProducerRisk,
+    posteriorMean,
+    posteriorStd,
+    posteriorConformProbability,
+    posteriorFalseAcceptRisk,
+    posteriorFalseRejectRisk,
+    method:
+      'Atualização bayesiana conjugada Normal–Normal e riscos globais R_C/R_P por quadratura de Simpson em [μ₀ − 8σ₀, μ₀ + 8σ₀]',
+    reference: 'JCGM 106:2012, Seções 7.2 e 9.5 (Eq. 19–22)',
+  };
 }
 
 function probabilityFormula(lsl: number | null, usl: number | null): string {
@@ -799,6 +1010,24 @@ export function conformityDecision(
       'Riscos específicos condicionais ao valor medido. TUR/TAR = T/(2U); %P/T = 100·U/T; U/T = U/T.',
   };
 
+  let bayesianRisks: BayesianConformityResult | undefined;
+  const hasPriorMean = input.priorMean !== null && input.priorMean !== undefined;
+  const hasPriorStd = input.priorStd !== null && input.priorStd !== undefined;
+  if (hasPriorMean !== hasPriorStd) {
+    throw new Error('Informe ambos priorMean (μ₀) e priorStd (σ₀ > 0) para análise bayesiana JCGM 106.');
+  }
+  if (hasPriorMean && hasPriorStd) {
+    bayesianRisks = computeBayesianConformityRisks({
+      lsl,
+      usl,
+      standardUncertainty,
+      priorMean: input.priorMean!,
+      priorStd: input.priorStd!,
+      guardBand: rule === 'probability' ? 0 : guardBand,
+      measuredValue: value,
+    });
+  }
+
   const rawMetrics: Record<string, number | null> = {
     value,
     standard_uncertainty: standardUncertainty,
@@ -821,7 +1050,46 @@ export function conformityDecision(
     tur: tolerance.tur,
     u_over_t: tolerance.uOverT,
     pct_pt: tolerance.pctPT,
+    ...(bayesianRisks
+      ? {
+          bayesian_global_consumer_risk: bayesianRisks.globalConsumerRisk,
+          bayesian_global_producer_risk: bayesianRisks.globalProducerRisk,
+          bayesian_posterior_mean: bayesianRisks.posteriorMean,
+          bayesian_posterior_std: bayesianRisks.posteriorStd,
+          bayesian_posterior_conformity: bayesianRisks.posteriorConformProbability,
+        }
+      : {}),
   };
+
+  const finalTables: AnalysisTable[] = bayesianRisks
+    ? [
+        decisionTable,
+        riskTable,
+        {
+          title: 'Riscos globais e posterior bayesiano (JCGM 106 §7 e §9.5)',
+          columns: ['Grandeza', 'Valor', 'Interpretação'],
+          rows: [
+            ['Prior N(μ₀, σ₀²)', `μ₀ = ${fmt(bayesianRisks.priorMean)}, σ₀ = ${fmt(bayesianRisks.priorStd)}`, 'Distribuição prévia do processo/lote.'],
+            ['Posterior μ_post', fmt(bayesianRisks.posteriorMean), 'Média conjugada dada a medição x.'],
+            ['Posterior u_post', fmt(bayesianRisks.posteriorStd), 'Incerteza-padrão a posteriori.'],
+            ['Conformidade posterior', fmt(bayesianRisks.posteriorConformProbability), 'P(Y ∈ T | X = x) conjugada Normal–Normal.'],
+            ['Risco global do consumidor (R_C)', fmt(bayesianRisks.globalConsumerRisk), 'P(Y ∉ T e X ∈ A) (JCGM 106 Eq. 19).'],
+            ['Risco global do produtor (R_P)', fmt(bayesianRisks.globalProducerRisk), 'P(Y ∈ T e X ∉ A) (JCGM 106 Eq. 20).'],
+          ],
+          note:
+            rule === 'probability'
+              ? 'Na regra de probabilidade, R_C e R_P usam intervalo de aceitação nominal [LSL, USL] (w = 0).'
+              : `Calculado com banda de guarda w = ${fmt(guardBand)}.`,
+        },
+      ]
+    : [decisionTable, riskTable];
+
+  const finalNotes = bayesianRisks
+    ? [
+        ...notes,
+        `Análise bayesiana JCGM 106: R_C global = ${fmt(bayesianRisks.globalConsumerRisk)}; R_P global = ${fmt(bayesianRisks.globalProducerRisk)}; P_post = ${fmt(bayesianRisks.posteriorConformProbability)}.`,
+      ]
+    : notes;
 
   const report: ConformityReportView = {
     rule,
@@ -883,14 +1151,178 @@ export function conformityDecision(
     criteriaText,
     alerts: [...warnings],
     warnings: [...warnings],
-    notes,
+    notes: finalNotes,
     metrics,
     rawMetrics,
-    tables: [decisionTable, riskTable],
+    tables: finalTables,
     summary,
     method:
       'Regra de decisão de conformidade (aceitação simples, banda de guarda ou probabilidade normal)',
     reference: REFERENCE,
     report,
+    ...(bayesianRisks ? { bayesianRisks } : {}),
   };
+}
+
+export interface TargetUncertaintyInput {
+  lsl?: number | null;
+  usl?: number | null;
+  /** Fração mássica C (adimensional, ex.: 1e-6 para 1 ppm) para Horwitz–Thompson. */
+  massFraction?: number | null;
+  /** Fator de abrangência k (padrão = 2). */
+  coverageFactor?: number;
+  /** Incerteza expandida atual obtida (opcional). */
+  currentExpandedUncertainty?: number | null;
+}
+
+export interface TargetUncertaintyResult {
+  tolerance: number | null;
+  coverageFactor: number;
+  uTargetSpecModerate: number | null;
+  expandedTargetSpecModerate: number | null;
+  uTargetSpecStrict: number | null;
+  expandedTargetSpecStrict: number | null;
+  horwitzRsdPct: number | null;
+  horwitzSigma: number | null;
+  recommendedExpandedTarget: number | null;
+  meetsModerateSpec: boolean | null;
+  meetsStrictSpec: boolean | null;
+  method: string;
+  reference: string;
+}
+
+/**
+ * Calculadora de Incerteza-Alvo (U^tg) baseada em limites de especificação
+ * (U^tg ≤ T/4 moderada; U^tg ≤ T/8 rigorosa com TUR ≥ 4) e na função empírica
+ * de Horwitz–Thompson para fração mássica.
+ *
+ * Referência: EURACHEM / CITAC Guide — Setting Target Measurement Uncertainty (2015).
+ */
+export function computeTargetUncertainty(
+  input: TargetUncertaintyInput,
+): TargetUncertaintyResult {
+  const k =
+    input.coverageFactor !== undefined &&
+    Number.isFinite(input.coverageFactor) &&
+    input.coverageFactor > 0
+      ? input.coverageFactor
+      : 2;
+  const lsl =
+    input.lsl !== null && input.lsl !== undefined && Number.isFinite(input.lsl)
+      ? input.lsl
+      : null;
+  const usl =
+    input.usl !== null && input.usl !== undefined && Number.isFinite(input.usl)
+      ? input.usl
+      : null;
+  const tolerance = lsl !== null && usl !== null && usl > lsl ? usl - lsl : null;
+
+  const uTargetSpecModerate = tolerance !== null ? tolerance / 8 : null;
+  const expandedTargetSpecModerate =
+    uTargetSpecModerate !== null ? k * uTargetSpecModerate : null;
+  const uTargetSpecStrict = tolerance !== null ? tolerance / 16 : null;
+  const expandedTargetSpecStrict =
+    uTargetSpecStrict !== null ? k * uTargetSpecStrict : null;
+
+  let horwitzSigma: number | null = null;
+  let horwitzRsdPct: number | null = null;
+  const c = input.massFraction;
+  if (c !== null && c !== undefined && Number.isFinite(c) && c > 0) {
+    if (c < 1.2e-7) {
+      horwitzSigma = 0.22 * c;
+    } else if (c <= 0.138) {
+      horwitzSigma = 0.02 * Math.pow(c, 0.8495);
+    } else {
+      horwitzSigma = 0.01 * Math.pow(c, 0.5);
+    }
+    horwitzRsdPct = (100 * horwitzSigma) / c;
+  }
+
+  const currentU =
+    input.currentExpandedUncertainty !== null &&
+    input.currentExpandedUncertainty !== undefined &&
+    Number.isFinite(input.currentExpandedUncertainty) &&
+    input.currentExpandedUncertainty >= 0
+      ? input.currentExpandedUncertainty
+      : null;
+
+  const meetsModerateSpec =
+    currentU !== null && expandedTargetSpecModerate !== null
+      ? currentU <= expandedTargetSpecModerate
+      : null;
+  const meetsStrictSpec =
+    currentU !== null && expandedTargetSpecStrict !== null
+      ? currentU <= expandedTargetSpecStrict
+      : null;
+
+  const recommendedExpandedTarget =
+    expandedTargetSpecStrict ??
+    (horwitzSigma !== null ? k * horwitzSigma : null);
+
+  return {
+    tolerance,
+    coverageFactor: k,
+    uTargetSpecModerate,
+    expandedTargetSpecModerate,
+    uTargetSpecStrict,
+    expandedTargetSpecStrict,
+    horwitzRsdPct,
+    horwitzSigma,
+    recommendedExpandedTarget,
+    meetsModerateSpec,
+    meetsStrictSpec,
+    method:
+      'Incerteza-alvo por tolerância (T/4 e T/8, k = 2) e/ou Horwitz–Thompson (Eurachem 2015)',
+    reference:
+      'EURACHEM / CITAC Guide — Setting Target Measurement Uncertainty (2015); Thompson (2000)',
+  };
+}
+
+/**
+ * Gera pontos de densidade da curva normal da medição e do posterior bayesiano (quando presente)
+ * sobrepostos à tolerância (LSL/USL) e à banda de guarda (w).
+ */
+export function buildConformityDensityData(
+  result: ConformityResult,
+  pointsCount = 80,
+): Array<{ x: number; density: number; postDensity?: number }> {
+  const x = result.value;
+  const u = result.standardUncertainty;
+  if (!Number.isFinite(x) || !(u > 0)) return [];
+
+  let minRange = x - 3.5 * u;
+  let maxRange = x + 3.5 * u;
+  if (result.lsl !== null && Number.isFinite(result.lsl)) {
+    minRange = Math.min(minRange, result.lsl - 0.5 * u);
+  }
+  if (result.usl !== null && Number.isFinite(result.usl)) {
+    maxRange = Math.max(maxRange, result.usl + 0.5 * u);
+  }
+  if (result.bayesianRisks?.posteriorMean && result.bayesianRisks?.posteriorStd) {
+    minRange = Math.min(minRange, result.bayesianRisks.posteriorMean - 3.5 * result.bayesianRisks.posteriorStd);
+    maxRange = Math.max(maxRange, result.bayesianRisks.posteriorMean + 3.5 * result.bayesianRisks.posteriorStd);
+  }
+
+  const step = (maxRange - minRange) / Math.max(20, pointsCount);
+  const data: Array<{ x: number; density: number; postDensity?: number }> = [];
+
+  for (let i = 0; i <= pointsCount; i++) {
+    const t = minRange + i * step;
+    const density = normalPdf(t, x, u);
+    let postDensity: number | undefined;
+    if (
+      result.bayesianRisks?.posteriorMean &&
+      result.bayesianRisks?.posteriorStd &&
+      result.bayesianRisks.posteriorStd > 0
+    ) {
+      postDensity = normalPdf(t, result.bayesianRisks.posteriorMean, result.bayesianRisks.posteriorStd);
+    }
+    data.push({
+      x: Number(t.toFixed(4)),
+      density: Number(density.toFixed(5)),
+      ...(postDensity !== undefined ? { postDensity: Number(postDensity.toFixed(5)) } : {}),
+    });
+  }
+
+  return data;
 }

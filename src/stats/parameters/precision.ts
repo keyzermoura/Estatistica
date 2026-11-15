@@ -32,7 +32,8 @@ function precisionAnalysis(
     list.push(m.value);
     byLevel.set(k, list);
   }
-  const groups = [...byLevel.values()].filter((g) => g.length >= 2);
+  const levelEntries = [...byLevel.entries()].filter(([, g]) => g.length >= 2);
+  const groups = levelEntries.map(([, g]) => g);
   if (!groups.length) {
     return emptyParameter(
       parameter,
@@ -67,10 +68,17 @@ function precisionAnalysis(
     }
     intermediateSd = Math.sqrt(within.variance + between);
   }
+  const sr = Math.sqrt(within.variance);
+  const rsdR = overallMean !== 0 ? (100 * sr) / Math.abs(overallMean) : null;
+  const sL = Math.sqrt(between);
+  const rsdL = overallMean !== 0 ? (100 * sL) / Math.abs(overallMean) : null;
+  const totalVar = within.variance + between;
+  const intraPct = totalVar > 0 ? (100 * within.variance) / totalVar : 100;
+  const interPct = totalVar > 0 ? (100 * between) / totalVar : 0;
   const cv = overallMean !== 0 ? (100 * intermediateSd) / Math.abs(overallMean) : null;
   const rawMetrics: Record<string, number | null> =
     kind === 'repeatability'
-      ? { cv, sr: Math.sqrt(within.variance) }
+      ? { cv, sr }
       : { cv, sd: intermediateSd };
   const verdict = evaluateParameter(parameter.key, rawMetrics, criteria).verdict;
   const metrics = [
@@ -85,7 +93,7 @@ function precisionAnalysis(
     buildMetric(
       parameter,
       kind === 'repeatability' ? 'sr' : 'sd',
-      kind === 'repeatability' ? Math.sqrt(within.variance) : intermediateSd,
+      kind === 'repeatability' ? sr : intermediateSd,
       criteria,
       kind === 'repeatability'
         ? 's_r = √(Σ(n_i−1)s_i² / Σ(n_i−1))'
@@ -93,10 +101,10 @@ function precisionAnalysis(
       'ISO 5725-2/3',
     ),
   ];
-  const tableRows = groups.map((g, i) => {
+  const tableRows = levelEntries.map(([levelKey, g], i) => {
     const s = describe(g);
     return [
-      [...byLevel.keys()][i] ?? `Grupo ${i + 1}`,
+      levelKey || `Grupo ${i + 1}`,
       s.n,
       s.mean ?? '',
       s.sd ?? '',
@@ -120,6 +128,44 @@ function precisionAnalysis(
         title: 'Precisão por nível',
         columns: ['Nível', 'n', 'Média', 's', 'CV (%)'],
         rows: tableRows,
+      },
+      {
+        title: 'Limites críticos (r / R_IP — ISO 5725-2/3) e decomposição',
+        columns: [
+          'Componente',
+          'DP (s)',
+          'CV (%)',
+          'Limite 2,8·s (95%)',
+          'Variância (%)',
+        ],
+        rows: [
+          [
+            'Repetibilidade (intra-série, s_r)',
+            sr,
+            rsdR ?? '',
+            2.8 * sr,
+            `${intraPct.toFixed(1)}%`,
+          ],
+          ...(kind === 'intermediate_precision'
+            ? [
+                [
+                  'Entre séries (analista/dia/equip., s_L)',
+                  sL,
+                  rsdL ?? '',
+                  '',
+                  `${interPct.toFixed(1)}%`,
+                ],
+                [
+                  'Precisão intermediária (s_IP)',
+                  intermediateSd,
+                  cv ?? '',
+                  2.8 * intermediateSd,
+                  '100.0%',
+                ],
+              ]
+            : []),
+        ],
+        note: 'O limite 2,8·s estima a máxima diferença esperada (95%) entre duas determinações independentes sob as respectivas condições.',
       },
     ],
     charts: [],

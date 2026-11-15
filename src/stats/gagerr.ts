@@ -72,6 +72,8 @@ export const DEFAULT_GAGERR_INTERACTION_THRESHOLD = 0.25;
 export type GageRRModel = 'with_interaction' | 'without_interaction';
 export type GageRRModelOption = 'auto' | GageRRModel;
 
+export type GageRRUnbalancedMethod = 'sequential_ls' | 'type3_henderson' | 'reml';
+
 export interface GageRROptions {
   /** Nível de confiança dos ICs; padrão 0,95. */
   confidence?: number;
@@ -83,6 +85,8 @@ export interface GageRROptions {
   model?: GageRRModelOption;
   /** Unidade das medições, apenas para exibição. */
   unit?: string;
+  /** Método para desenhos desbalanceados ou comparação: `sequential_ls` (padrão), `type3_henderson` ou `reml`. */
+  unbalancedMethod?: GageRRUnbalancedMethod;
 }
 
 export interface GageRRAnovaRow {
@@ -191,6 +195,13 @@ export interface GageRRResult {
   verdict: Verdict;
   criteria: GageRRCriteria;
   method: string;
+  reference: string;
+}
+
+export interface GageRRUnbalancedComparison {
+  sequentialLs: GageRRResult;
+  type3Henderson: GageRRResult;
+  reml: GageRRResult;
   reference: string;
 }
 
@@ -708,6 +719,762 @@ function unbalancedAnova(data: GageRRData): AnovaCore {
     pP: pFromF(fP, dfP, dfPO),
     pO: pFromF(fO, dfO, dfPO),
     pPO: pFromF(fPO, dfPO, dfE),
+  };
+}
+
+interface ActiveCell {
+  part: number;
+  operator: number;
+  n: number;
+  mean: number;
+  withinSs: number;
+}
+
+interface Type3EmsCoefficients {
+  cPO: number;
+  cP: number;
+  kPPO: number;
+  cO: number;
+  kOPO: number;
+}
+
+function invertMatrix(matrix: number[][]): number[][] {
+  const n = matrix.length;
+  const aug = matrix.map((row, i) => {
+    const out = new Array<number>(2 * n).fill(0);
+    for (let j = 0; j < n; j++) out[j] = row[j];
+    out[n + i] = 1;
+    return out;
+  });
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let row = col + 1; row < n; row++) {
+      if (Math.abs(aug[row][col]) > Math.abs(aug[pivot][col])) pivot = row;
+    }
+    if (Math.abs(aug[pivot][col]) < 1e-12) {
+      throw new Error(
+        'Dados faltantes desconectam peças e operadores; complete a matriz para estimar o modelo cruzado por Tipo III/Henderson.',
+      );
+    }
+    if (pivot !== col) {
+      [aug[col], aug[pivot]] = [aug[pivot], aug[col]];
+    }
+    const diag = aug[col][col];
+    for (let j = col; j < 2 * n; j++) aug[col][j] /= diag;
+    for (let row = 0; row < n; row++) {
+      if (row === col) continue;
+      const factor = aug[row][col];
+      if (factor === 0) continue;
+      for (let j = col; j < 2 * n; j++) {
+        aug[row][j] -= factor * aug[col][j];
+      }
+    }
+  }
+  return aug.map((row) => row.slice(n));
+}
+
+function weightedProjection(x: number[][], weights: number[]): number[][] {
+  const k = x.length;
+  const m = x[0].length;
+  const xtx = Array.from({ length: m }, () => new Array<number>(m).fill(0));
+  for (let r = 0; r < k; r++) {
+    const w = weights[r];
+    const row = x[r];
+    for (let a = 0; a < m; a++) {
+      if (row[a] === 0) continue;
+      for (let b = a; b < m; b++) {
+        if (row[b] === 0) continue;
+        xtx[a][b] += w * row[a] * row[b];
+      }
+    }
+  }
+  for (let a = 0; a < m; a++) {
+    for (let b = 0; b < a; b++) xtx[a][b] = xtx[b][a];
+  }
+  const inv = invertMatrix(xtx);
+  const p = Array.from({ length: k }, () => new Array<number>(k).fill(0));
+  for (let r = 0; r < k; r++) {
+    const xr = x[r];
+    const tmp = new Array<number>(m).fill(0);
+    for (let a = 0; a < m; a++) {
+      let s = 0;
+      for (let b = 0; b < m; b++) s += xr[b] * inv[b][a];
+      tmp[a] = s;
+    }
+    for (let c = 0; c < k; c++) {
+      const xc = x[c];
+      let s = 0;
+      for (let a = 0; a < m; a++) s += tmp[a] * xc[a];
+      p[r][c] = s * weights[c];
+    }
+  }
+  return p;
+}
+
+function buildActiveCells(data: GageRRData): {
+  cells: ActiveCell[];
+  ssE: number;
+  ssCells: number;
+  ssTotal: number;
+} {
+  const cells: ActiveCell[] = [];
+  let ssE = 0;
+  let ssCells = 0;
+  for (let i = 0; i < data.parts; i++) {
+    for (let j = 0; j < data.operators; j++) {
+      const cell = data.cells[i][j];
+      if (!cell.n || cell.mean === null) continue;
+      cells.push({
+        part: i,
+        operator: j,
+        n: cell.n,
+        mean: cell.mean,
+        withinSs: cell.withinSs,
+      });
+      ssE += cell.withinSs;
+      ssCells += cell.n * (cell.mean - data.grandMean) ** 2;
+    }
+  }
+  return { cells, ssE, ssCells, ssTotal: ssCells + ssE };
+}
+
+/**
+ * Soma de quadrados parcial (Tipo III / Ajuste de constantes) e coeficientes
+ * exatos da esperança matemática dos quadrados médios (Henderson Método 3).
+ *
+ * Referência: Searle, Casella & McCulloch (1992), cap. 5; Burdick et al. (2003).
+ */
+function type3HendersonAnova(data: GageRRData): {
+  anova: AnovaCore;
+  ems: Type3EmsCoefficients;
+  activeCells: ActiveCell[];
+  ssE: number;
+} {
+  const { parts, operators, kCells, n } = data;
+  if (kCells < parts + operators - 1) {
+    throw new Error(
+      'Dados insuficientes para separar peça, operador e interação; complete o delineamento.',
+    );
+  }
+  const { cells, ssE, ssTotal } = buildActiveCells(data);
+  const k = cells.length;
+  const weights = cells.map((c) => c.n);
+  const yMeans = cells.map((c) => c.mean);
+
+  const xPart = cells.map((c) => {
+    const row = new Array<number>(parts).fill(0);
+    row[0] = 1;
+    if (c.part > 0) row[c.part] = 1;
+    return row;
+  });
+  const xOp = cells.map((c) => {
+    const row = new Array<number>(operators).fill(0);
+    row[0] = 1;
+    if (c.operator > 0) row[c.operator] = 1;
+    return row;
+  });
+  const xAdd = cells.map((c) => {
+    const row = new Array<number>(parts + operators - 1).fill(0);
+    row[0] = 1;
+    if (c.part > 0) row[c.part] = 1;
+    if (c.operator > 0) row[parts + c.operator - 1] = 1;
+    return row;
+  });
+
+  const pAdd = weightedProjection(xAdd, weights);
+  const pPart = weightedProjection(xPart, weights);
+  const pOp = weightedProjection(xOp, weights);
+
+  const makeM = (pHigh: number[][] | null, pLow: number[][]): number[][] =>
+    Array.from({ length: k }, (_, a) =>
+      Array.from({ length: k }, (__, b) => {
+        const hi = pHigh === null ? (a === b ? 1 : 0) : pHigh[a][b];
+        return weights[a] * (hi - pLow[a][b]);
+      }),
+    );
+
+  const quad = (m: number[][]): number => {
+    let total = 0;
+    for (let a = 0; a < k; a++) {
+      const ma = m[a];
+      const ya = yMeans[a];
+      for (let b = 0; b < k; b++) total += ya * ma[b] * yMeans[b];
+    }
+    return Math.max(0, total);
+  };
+
+  const traceDiag = (m: number[][]): number => {
+    let s = 0;
+    for (let a = 0; a < k; a++) s += m[a][a];
+    return s;
+  };
+  const traceGroup = (m: number[][], sameGroup: (a: number, b: number) => boolean): number => {
+    let s = 0;
+    for (let a = 0; a < k; a++) {
+      for (let b = 0; b < k; b++) {
+        if (sameGroup(a, b)) s += m[a][b];
+      }
+    }
+    return s;
+  };
+
+  const mPO = makeM(null, pAdd);
+  const mP = makeM(pAdd, pOp);
+  const mO = makeM(pAdd, pPart);
+
+  const ssPO = quad(mPO);
+  const ssP = quad(mP);
+  const ssO = quad(mO);
+
+  const dfP = parts - 1;
+  const dfO = operators - 1;
+  const dfPO = kCells - parts - operators + 1;
+  const dfE = n - kCells;
+  if (dfPO <= 0 || dfE <= 0) {
+    throw new Error(
+      'Dados insuficientes para estimar os graus de liberdade da interação ou do erro; complete o delineamento.',
+    );
+  }
+  const msP = ssP / dfP;
+  const msO = ssO / dfO;
+  const msPO = ssPO / dfPO;
+  const msE = ssE / dfE;
+  const fP = ratio(msP, msPO);
+  const fO = ratio(msO, msPO);
+  const fPO = ratio(msPO, msE);
+
+  return {
+    anova: {
+      parts,
+      operators,
+      n,
+      kCells,
+      rEff: data.rEff,
+      balanced: data.balanced,
+      ssP,
+      ssO,
+      ssPO,
+      ssE,
+      ssTotal,
+      dfP,
+      dfO,
+      dfPO,
+      dfE,
+      dfTotal: n - 1,
+      msP,
+      msO,
+      msPO,
+      msE,
+      fP,
+      fO,
+      fPO,
+      pP: pFromF(fP, dfP, dfPO),
+      pO: pFromF(fO, dfO, dfPO),
+      pPO: pFromF(fPO, dfPO, dfE),
+    },
+    ems: {
+      cPO: traceDiag(mPO),
+      cP: traceGroup(mP, (a, b) => cells[a].part === cells[b].part),
+      kPPO: traceDiag(mP),
+      cO: traceGroup(mO, (a, b) => cells[a].operator === cells[b].operator),
+      kOPO: traceDiag(mO),
+    },
+    activeCells: cells,
+    ssE,
+  };
+}
+
+function buildType3Components(
+  anova: AnovaCore,
+  reduced: ReducedAnova,
+  ems: Type3EmsCoefficients,
+  useReduced: boolean,
+  confidence: number,
+): ComponentModel {
+  let repVariance: number;
+  let repDf: number | null;
+  let intRaw: number | null = null;
+  let intVariance = 0;
+  let intDf: number | null = null;
+  let opRaw: number;
+  let partRaw: number;
+  let opDf: number | null;
+  let partDf: number | null;
+  let grrDf: number | null;
+
+  if (useReduced) {
+    repVariance = reduced.msError;
+    repDf = reduced.dfError;
+    const aO = anova.dfO / ems.cO;
+    const aP = anova.dfP / ems.cP;
+    opRaw = aO * (anova.msO - reduced.msError);
+    partRaw = aP * (anova.msP - reduced.msError);
+    opDf = satterthwaite([
+      { ms: anova.msO, coefficient: aO, df: anova.dfO },
+      { ms: reduced.msError, coefficient: -aO, df: reduced.dfError },
+    ]);
+    partDf = satterthwaite([
+      { ms: anova.msP, coefficient: aP, df: anova.dfP },
+      { ms: reduced.msError, coefficient: -aP, df: reduced.dfError },
+    ]);
+    grrDf = satterthwaite([
+      { ms: reduced.msError, coefficient: 1 - aO, df: reduced.dfError },
+      { ms: anova.msO, coefficient: aO, df: anova.dfO },
+    ]);
+  } else {
+    repVariance = anova.msE;
+    repDf = anova.dfE;
+    const cIntPO = anova.dfPO / ems.cPO;
+    intRaw = cIntPO * (anova.msPO - anova.msE);
+    intVariance = Math.max(0, intRaw);
+    intDf = satterthwaite([
+      { ms: anova.msPO, coefficient: cIntPO, df: anova.dfPO },
+      { ms: anova.msE, coefficient: -cIntPO, df: anova.dfE },
+    ]);
+    const aO = anova.dfO / ems.cO;
+    const aPO = -(ems.kOPO * anova.dfPO) / (ems.cO * ems.cPO);
+    const aE = -aO - aPO;
+    opRaw = aO * anova.msO + aPO * anova.msPO + aE * anova.msE;
+
+    const bP = anova.dfP / ems.cP;
+    const bPO = -(ems.kPPO * anova.dfPO) / (ems.cP * ems.cPO);
+    const bE = -bP - bPO;
+    partRaw = bP * anova.msP + bPO * anova.msPO + bE * anova.msE;
+
+    opDf = satterthwaite([
+      { ms: anova.msO, coefficient: aO, df: anova.dfO },
+      { ms: anova.msPO, coefficient: aPO, df: anova.dfPO },
+      { ms: anova.msE, coefficient: aE, df: anova.dfE },
+    ]);
+    partDf = satterthwaite([
+      { ms: anova.msP, coefficient: bP, df: anova.dfP },
+      { ms: anova.msPO, coefficient: bPO, df: anova.dfPO },
+      { ms: anova.msE, coefficient: bE, df: anova.dfE },
+    ]);
+    grrDf = satterthwaite([
+      { ms: anova.msE, coefficient: 1 - cIntPO + aE, df: anova.dfE },
+      { ms: anova.msPO, coefficient: cIntPO + aPO, df: anova.dfPO },
+      { ms: anova.msO, coefficient: aO, df: anova.dfO },
+    ]);
+  }
+
+  const opVariance = Math.max(0, opRaw);
+  const partVariance = Math.max(0, partRaw);
+  const grrVariance = repVariance + opVariance + intVariance;
+  const totalVariance = grrVariance + partVariance;
+
+  const drafts: ComponentDraft[] = [
+    {
+      key: 'repeatability',
+      label: 'Repetibilidade (σ²_rep)',
+      variance: repVariance,
+      rawVariance: repVariance,
+      truncated: false,
+      pooled: false,
+      formula: useReduced ? 'σ²_rep = MS_E,red (Tipo III)' : 'σ²_rep = MS_E',
+      df: repDf,
+    },
+    {
+      key: 'interaction',
+      label: 'Interação peça × operador (σ²_inter)',
+      variance: intVariance,
+      rawVariance: intRaw,
+      truncated: intRaw !== null && intRaw < 0,
+      pooled: useReduced,
+      formula: useReduced
+        ? 'σ²_inter = 0 (SS_PO agregado ao erro)'
+        : 'σ²_inter = max(0, (SS_PO − gl_PO·MS_E)/c_PO)',
+      df: intDf,
+    },
+    {
+      key: 'operator',
+      label: 'Reprodutibilidade (σ²_oper)',
+      variance: opVariance,
+      rawVariance: opRaw,
+      truncated: opRaw < 0,
+      pooled: false,
+      formula: useReduced
+        ? 'σ²_oper = max(0, (SS_O − gl_O·MS_E,red)/c_O)'
+        : 'σ²_oper = max(0, (SS_O − gl_O·MS_E − k_O,PO·σ²_inter,bruto)/c_O)',
+      df: opDf,
+    },
+    {
+      key: 'part',
+      label: 'Peça (σ²_peça)',
+      variance: partVariance,
+      rawVariance: partRaw,
+      truncated: partRaw < 0,
+      pooled: false,
+      formula: useReduced
+        ? 'σ²_peça = max(0, (SS_P − gl_P·MS_E,red)/c_P)'
+        : 'σ²_peça = max(0, (SS_P − gl_P·MS_E − k_P,PO·σ²_inter,bruto)/c_P)',
+      df: partDf,
+    },
+    {
+      key: 'grr',
+      label: 'Gage R&R (σ²_GRR)',
+      variance: grrVariance,
+      rawVariance: grrVariance,
+      truncated: false,
+      pooled: false,
+      formula: 'σ²_GRR = σ²_rep + σ²_oper + σ²_inter',
+      df: grrDf,
+    },
+    {
+      key: 'total',
+      label: 'Total (σ²_total)',
+      variance: totalVariance,
+      rawVariance: totalVariance,
+      truncated: false,
+      pooled: false,
+      formula: 'σ²_total = σ²_GRR + σ²_peça',
+      df: null,
+    },
+  ];
+
+  const totalSd = safeSqrt(totalVariance);
+  const components: GageRRComponent[] = drafts.map((draft) => {
+    const standardDeviation = safeSqrt(draft.variance);
+    return {
+      key: draft.key,
+      label: draft.label,
+      variance: draft.variance,
+      standardDeviation,
+      contributionPct: totalVariance > 0 ? (100 * draft.variance) / totalVariance : null,
+      studyVariationPct: totalSd > 0 ? (100 * standardDeviation) / totalSd : null,
+      rawVariance: draft.rawVariance,
+      truncated: draft.truncated,
+      pooled: draft.pooled,
+      formula: draft.formula,
+      criterionText: 'Sem critério cadastrado; componente descritivo.',
+      verdict: 'not_evaluated',
+      interval: chiSquareSdInterval(draft.variance, draft.df, confidence),
+    };
+  });
+
+  return {
+    components,
+    grrVariance,
+    partVariance,
+    totalVariance,
+    grrDf,
+    partDf,
+  };
+}
+
+/**
+ * Estimação por Máxima Verossimilhança Restrita (REML) para modelo aleatório
+ * cruzado de dois fatores em forma reduzida por estatísticas suficientes de célula.
+ *
+ * Minimiza −2ℓ_R(γ) com γ = (σ²_peça/σ²_e, σ²_oper/σ²_e, σ²_inter/σ²_e) ≥ 0.
+ * Referência: Patterson & Thompson (1971); Searle, Casella & McCulloch (1992), cap. 6.
+ */
+function solveCrossedReml(
+  nObs: number,
+  cells: ActiveCell[],
+  ssE: number,
+  init: { rep: number; part: number; op: number; inter: number },
+  useReduced: boolean,
+): { repVariance: number; partVariance: number; opVariance: number; intVariance: number } {
+  const k = cells.length;
+  const sqrtN = cells.map((c) => Math.sqrt(c.n));
+  const w1 = [...sqrtN];
+  const yTilde = cells.map((c, idx) => sqrtN[idx] * c.mean);
+  const samePart = Array.from({ length: k }, (_, a) =>
+    Array.from({ length: k }, (__, b) => cells[a].part === cells[b].part),
+  );
+  const sameOp = Array.from({ length: k }, (_, a) =>
+    Array.from({ length: k }, (__, b) => cells[a].operator === cells[b].operator),
+  );
+
+  const lMat = Array.from({ length: k }, () => new Array<number>(k).fill(0));
+  const uVec = new Array<number>(k).fill(0);
+  const vVec = new Array<number>(k).fill(0);
+
+  const evaluate = (g: number[]): { deviance: number; sigmaE2: number } => {
+    const gP = Math.max(0, g[0]);
+    const gO = Math.max(0, g[1]);
+    const gPO = useReduced ? 0 : Math.max(0, g[2] ?? 0);
+
+    for (let i = 0; i < k; i++) {
+      for (let j = 0; j <= i; j++) {
+        let sum = sqrtN[i] * sqrtN[j] * ((samePart[i][j] ? gP : 0) + (sameOp[i][j] ? gO : 0));
+        if (i === j) sum += 1 + gPO * cells[i].n;
+        for (let m = 0; m < j; m++) sum -= lMat[i][m] * lMat[j][m];
+        lMat[i][j] = i === j ? Math.sqrt(Math.max(1e-18, sum)) : sum / lMat[j][j];
+      }
+    }
+
+    let logDet = 0;
+    let u2 = 0;
+    let uv = 0;
+    let v2 = 0;
+    for (let i = 0; i < k; i++) {
+      logDet += 2 * Math.log(lMat[i][i]);
+      let su = w1[i];
+      let sv = yTilde[i];
+      for (let m = 0; m < i; m++) {
+        su -= lMat[i][m] * uVec[m];
+        sv -= lMat[i][m] * vVec[m];
+      }
+      uVec[i] = su / lMat[i][i];
+      vVec[i] = sv / lMat[i][i];
+      u2 += uVec[i] * uVec[i];
+      uv += uVec[i] * vVec[i];
+      v2 += vVec[i] * vVec[i];
+    }
+
+    const rss = ssE + Math.max(0, v2 - (uv * uv) / Math.max(1e-18, u2));
+    const sigmaE2 = Math.max(1e-18, rss / Math.max(1, nObs - 1));
+    const deviance = (nObs - 1) * Math.log(sigmaE2) + logDet + Math.log(Math.max(1e-18, u2));
+    return { deviance, sigmaE2 };
+  };
+
+  const dim = useReduced ? 2 : 3;
+  const rep0 = Math.max(1e-12, init.rep);
+  let x = useReduced
+    ? [Math.max(0, init.part / rep0), Math.max(0, init.op / rep0)]
+    : [Math.max(0, init.part / rep0), Math.max(0, init.op / rep0), Math.max(0, init.inter / rep0)];
+  let bestEval = evaluate(x);
+
+  const upperBound = (val: number): number => Math.max(250, 25 * Math.max(1, val));
+
+  const golden1D = (base: number[], axis: number, hi: number): number[] => {
+    const phi = (Math.sqrt(5) - 1) / 2;
+    let a = 0;
+    let b = hi;
+    const probe = (t: number): number => {
+      const cand = [...base];
+      cand[axis] = t;
+      return evaluate(cand).deviance;
+    };
+    let c = b - phi * (b - a);
+    let d = a + phi * (b - a);
+    let fc = probe(c);
+    let fd = probe(d);
+    for (let it = 0; it < 42; it++) {
+      if (fc < fd) {
+        b = d;
+        d = c;
+        fd = fc;
+        c = b - phi * (b - a);
+        fc = probe(c);
+      } else {
+        a = c;
+        c = d;
+        fc = fd;
+        d = a + phi * (b - a);
+        fd = probe(d);
+      }
+    }
+    const mid = (a + b) / 2;
+    const zeroCand = [...base];
+    zeroCand[axis] = 0;
+    const midCand = [...base];
+    midCand[axis] = mid;
+    return evaluate(zeroCand).deviance <= evaluate(midCand).deviance ? zeroCand : midCand;
+  };
+
+  for (let sweep = 0; sweep < 5; sweep++) {
+    const prev = [...x];
+    for (let axis = 0; axis < dim; axis++) {
+      const grid = sweep === 0 ? [0, 1e-4, 1e-2, 0.1, 0.5, 2, 10, 50, 250] : [0, x[axis]];
+      let bestSeed = [...x];
+      let bestSeedVal = bestEval.deviance;
+      for (const g of grid) {
+        const cand = [...x];
+        cand[axis] = g;
+        const ev = evaluate(cand);
+        if (ev.deviance < bestSeedVal) {
+          bestSeedVal = ev.deviance;
+          bestSeed = cand;
+        }
+      }
+      const hi = sweep === 0 ? Math.max(upperBound(x[axis]), bestSeed[axis] * 4 + 10) : Math.max(10, x[axis] * 4 + 2);
+      const local = golden1D(bestSeed, axis, hi);
+      const localEv = evaluate(local);
+      if (localEv.deviance < bestEval.deviance) {
+        x = local;
+        bestEval = localEv;
+      }
+    }
+    const dir = x.map((v, idx) => Math.max(0, v + (v - prev[idx])));
+    const dirEv = evaluate(dir);
+    if (dirEv.deviance < bestEval.deviance) {
+      x = dir;
+      bestEval = dirEv;
+    }
+  }
+
+  const clampVec = (v: number[]): number[] => v.map((val) => Math.max(0, val));
+  const simplex: Array<{ pt: number[]; val: number }> = [
+    { pt: [...x], val: bestEval.deviance },
+  ];
+  for (let i = 0; i < dim; i++) {
+    const vertex = [...x];
+    const step = 0.05 * Math.max(0.05, vertex[i]);
+    vertex[i] = vertex[i] + step;
+    simplex.push({ pt: vertex, val: evaluate(vertex).deviance });
+  }
+  for (let iter = 0; iter < 180; iter++) {
+    simplex.sort((a, b) => a.val - b.val);
+    const spread = Math.max(
+      ...simplex.slice(1).map((s) => Math.max(...s.pt.map((v, idx) => Math.abs(v - simplex[0].pt[idx])))),
+    );
+    if (spread < 1e-10) break;
+    const centroid = new Array<number>(dim).fill(0);
+    for (let j = 0; j < dim; j++) {
+      for (let idx = 0; idx < dim; idx++) centroid[idx] += simplex[j].pt[idx] / dim;
+    }
+    const worst = simplex[dim];
+    const refl = clampVec(centroid.map((c, idx) => c + (c - worst.pt[idx])));
+    const fRefl = evaluate(refl).deviance;
+    if (fRefl >= simplex[0].val && fRefl < simplex[dim - 1].val) {
+      simplex[dim] = { pt: refl, val: fRefl };
+      continue;
+    }
+    if (fRefl < simplex[0].val) {
+      const exp = clampVec(centroid.map((c, idx) => c + 2 * (refl[idx] - c)));
+      const fExp = evaluate(exp).deviance;
+      simplex[dim] = fExp < fRefl ? { pt: exp, val: fExp } : { pt: refl, val: fRefl };
+      continue;
+    }
+    const contr = clampVec(centroid.map((c, idx) => c + 0.5 * (worst.pt[idx] - c)));
+    const fContr = evaluate(contr).deviance;
+    if (fContr < worst.val) {
+      simplex[dim] = { pt: contr, val: fContr };
+      continue;
+    }
+    for (let j = 1; j <= dim; j++) {
+      simplex[j].pt = clampVec(simplex[j].pt.map((v, idx) => 0.5 * (v + simplex[0].pt[idx])));
+      simplex[j].val = evaluate(simplex[j].pt).deviance;
+    }
+  }
+  simplex.sort((a, b) => a.val - b.val);
+  x = simplex[0].pt.map((v) => (v < 1e-8 ? 0 : v));
+  bestEval = evaluate(x);
+
+  return {
+    repVariance: bestEval.sigmaE2,
+    partVariance: x[0] * bestEval.sigmaE2,
+    opVariance: x[1] * bestEval.sigmaE2,
+    intVariance: useReduced ? 0 : (x[2] ?? 0) * bestEval.sigmaE2,
+  };
+}
+
+function buildRemlComponents(
+  reml: { repVariance: number; partVariance: number; opVariance: number; intVariance: number },
+  referenceType3: ComponentModel,
+  useReduced: boolean,
+  confidence: number,
+): ComponentModel {
+  const repVariance = reml.repVariance;
+  const intVariance = useReduced ? 0 : reml.intVariance;
+  const opVariance = reml.opVariance;
+  const partVariance = reml.partVariance;
+  const grrVariance = repVariance + opVariance + intVariance;
+  const totalVariance = grrVariance + partVariance;
+
+  const dfByKey = new Map<GageRRComponent['key'], number | null>();
+  dfByKey.set('repeatability', referenceType3.components.find((c) => c.key === 'repeatability')?.interval?.df ?? null);
+  dfByKey.set('interaction', referenceType3.components.find((c) => c.key === 'interaction')?.interval?.df ?? null);
+  dfByKey.set('operator', referenceType3.components.find((c) => c.key === 'operator')?.interval?.df ?? null);
+  dfByKey.set('part', referenceType3.partDf);
+  dfByKey.set('grr', referenceType3.grrDf);
+  dfByKey.set('total', null);
+
+  const drafts: ComponentDraft[] = [
+    {
+      key: 'repeatability',
+      label: 'Repetibilidade (σ²_rep)',
+      variance: repVariance,
+      rawVariance: repVariance,
+      truncated: false,
+      pooled: false,
+      formula: 'σ²_rep estimado por REML (máxima verossimilhança restrita)',
+      df: dfByKey.get('repeatability') ?? null,
+    },
+    {
+      key: 'interaction',
+      label: 'Interação peça × operador (σ²_inter)',
+      variance: intVariance,
+      rawVariance: useReduced ? null : intVariance,
+      truncated: false,
+      pooled: useReduced,
+      formula: useReduced
+        ? 'σ²_inter = 0 (modelo REML sem interação)'
+        : 'σ²_inter estimado por REML ≥ 0',
+      df: dfByKey.get('interaction') ?? null,
+    },
+    {
+      key: 'operator',
+      label: 'Reprodutibilidade (σ²_oper)',
+      variance: opVariance,
+      rawVariance: opVariance,
+      truncated: false,
+      pooled: false,
+      formula: 'σ²_oper estimado por REML ≥ 0',
+      df: dfByKey.get('operator') ?? null,
+    },
+    {
+      key: 'part',
+      label: 'Peça (σ²_peça)',
+      variance: partVariance,
+      rawVariance: partVariance,
+      truncated: false,
+      pooled: false,
+      formula: 'σ²_peça estimado por REML ≥ 0',
+      df: dfByKey.get('part') ?? null,
+    },
+    {
+      key: 'grr',
+      label: 'Gage R&R (σ²_GRR)',
+      variance: grrVariance,
+      rawVariance: grrVariance,
+      truncated: false,
+      pooled: false,
+      formula: 'σ²_GRR = σ²_rep + σ²_oper + σ²_inter (REML)',
+      df: referenceType3.grrDf,
+    },
+    {
+      key: 'total',
+      label: 'Total (σ²_total)',
+      variance: totalVariance,
+      rawVariance: totalVariance,
+      truncated: false,
+      pooled: false,
+      formula: 'σ²_total = σ²_GRR + σ²_peça',
+      df: null,
+    },
+  ];
+
+  const totalSd = safeSqrt(totalVariance);
+  const components: GageRRComponent[] = drafts.map((draft) => {
+    const standardDeviation = safeSqrt(draft.variance);
+    return {
+      key: draft.key,
+      label: draft.label,
+      variance: draft.variance,
+      standardDeviation,
+      contributionPct: totalVariance > 0 ? (100 * draft.variance) / totalVariance : null,
+      studyVariationPct: totalSd > 0 ? (100 * standardDeviation) / totalSd : null,
+      rawVariance: draft.rawVariance,
+      truncated: false,
+      pooled: draft.pooled,
+      formula: draft.formula,
+      criterionText: 'Sem critério cadastrado; componente descritivo.',
+      verdict: 'not_evaluated',
+      interval: chiSquareSdInterval(draft.variance, draft.df, confidence),
+    };
+  });
+
+  return {
+    components,
+    grrVariance,
+    partVariance,
+    totalVariance,
+    grrDf: referenceType3.grrDf,
+    partDf: referenceType3.partDf,
   };
 }
 
@@ -1313,9 +2080,23 @@ export function gageRRAnalysis(
   ) {
     throw new Error('Modelo inválido: use "auto", "with_interaction" ou "without_interaction".');
   }
+  const unbalancedMethod: GageRRUnbalancedMethod = options.unbalancedMethod ?? 'sequential_ls';
+  if (
+    unbalancedMethod !== 'sequential_ls' &&
+    unbalancedMethod !== 'type3_henderson' &&
+    unbalancedMethod !== 'reml'
+  ) {
+    throw new Error('Método desbalanceado inválido: use "sequential_ls", "type3_henderson" ou "reml".');
+  }
 
   const data = extractData(input);
-  const anova = data.balanced ? balancedAnova(data) : unbalancedAnova(data);
+  const type3 =
+    unbalancedMethod === 'sequential_ls' ? null : type3HendersonAnova(data);
+  const anova = type3
+    ? type3.anova
+    : data.balanced
+      ? balancedAnova(data)
+      : unbalancedAnova(data);
   const reduced = buildReducedAnova(anova);
 
   const significant =
@@ -1356,7 +2137,33 @@ export function gageRRAnalysis(
     decision,
   };
 
-  const componentModel = buildComponents(anova, reduced, useReduced, confidence);
+  const componentModel = (() => {
+    if (unbalancedMethod === 'sequential_ls' || !type3) {
+      return buildComponents(anova, reduced, useReduced, confidence);
+    }
+    const type3Model = buildType3Components(anova, reduced, type3.ems, useReduced, confidence);
+    if (unbalancedMethod === 'type3_henderson') {
+      return type3Model;
+    }
+    const initRep = useReduced ? reduced.msError : anova.msE;
+    const initInter =
+      type3Model.components.find((c) => c.key === 'interaction')?.variance ?? 0;
+    const initOp =
+      type3Model.components.find((c) => c.key === 'operator')?.variance ?? 0;
+    const remlEst = solveCrossedReml(
+      data.n,
+      type3.activeCells,
+      type3.ssE,
+      {
+        rep: initRep,
+        part: type3Model.partVariance,
+        op: initOp,
+        inter: initInter,
+      },
+      useReduced,
+    );
+    return buildRemlComponents(remlEst, type3Model, useReduced, confidence);
+  })();
   const components = componentModel.components;
   const sigmaGrr = safeSqrt(componentModel.grrVariance);
   const totalSd = safeSqrt(componentModel.totalVariance);
@@ -1463,8 +2270,19 @@ export function gageRRAnalysis(
     warnings.push(
       `Dados faltantes ou desbalanceados: ${data.missing} observação(ões) ausente(s). Análise por lista com n efetivo = ${data.n} e r_eff = ${fmt(data.rEff)}.`,
     );
+    if (unbalancedMethod === 'sequential_ls') {
+      notes.push(
+        'Desenho desbalanceado: somas de quadrados sequenciais (peça → operador → interação) e componentes de variância aproximados por r_eff = n/células.',
+      );
+    }
+  }
+  if (unbalancedMethod === 'type3_henderson') {
     notes.push(
-      'Desenho desbalanceado: somas de quadrados sequenciais (peça → operador → interação) e componentes de variância aproximados por r_eff = n/células.',
+      'Método Tipo III (Henderson Método 3): somas de quadrados parciais ortogonais e esperanças matemáticas exatas E[MS].',
+    );
+  } else if (unbalancedMethod === 'reml') {
+    notes.push(
+      'Método REML: componentes de variância estimados por máxima verossimilhança restrita sobre estatísticas suficientes de célula; ICs aproximados por Satterthwaite Tipo III.',
     );
   }
   if (data.rEff < 2) {
@@ -1511,9 +2329,11 @@ export function gageRRAnalysis(
     anovaTable(
       'ANOVA completa (modelo com interação)',
       fullRows,
-      data.balanced
-        ? 'Modelo balanceado de dois fatores cruzados com interação.'
-        : 'Desenho desbalanceado: SS sequenciais (peça → operador → interação) e análise por lista.',
+      unbalancedMethod === 'type3_henderson' || unbalancedMethod === 'reml'
+        ? 'Somas de quadrados parciais Tipo III (Henderson Método 3).'
+        : data.balanced
+          ? 'Modelo balanceado de dois fatores cruzados com interação.'
+          : 'Desenho desbalanceado: SS sequenciais (peça → operador → interação) e análise por lista.',
     ),
     anovaTable(
       'ANOVA do modelo reduzido (SS_PO agregada ao erro)',
@@ -1581,9 +2401,40 @@ export function gageRRAnalysis(
     summary: buildSummary(metrics, tolerance, verdict),
     verdict,
     criteria,
-    method: useReduced
-      ? 'ANOVA de dois fatores cruzados sem interação (SS_PO agregada ao erro)'
-      : 'ANOVA de dois fatores cruzados com interação',
-    reference: REFERENCE,
+    method:
+      unbalancedMethod === 'reml'
+        ? useReduced
+          ? 'Gage R&R cruzado por REML (sem interação)'
+          : 'Gage R&R cruzado por REML (com interação)'
+        : unbalancedMethod === 'type3_henderson'
+          ? useReduced
+            ? 'ANOVA de dois fatores cruzados (Henderson Tipo III) sem interação (SS_PO agregada ao erro)'
+            : 'ANOVA de dois fatores cruzados (Henderson Tipo III) com interação'
+          : useReduced
+            ? 'ANOVA de dois fatores cruzados sem interação (SS_PO agregada ao erro)'
+            : 'ANOVA de dois fatores cruzados com interação',
+    reference:
+      unbalancedMethod === 'sequential_ls'
+        ? REFERENCE
+        : `${REFERENCE} Henderson (1953); Searle, Casella & McCulloch (1992); Patterson & Thompson (1971).`,
+  };
+}
+
+/**
+ * Compara os três métodos de estimação para Gage R&R cruzado desbalanceado
+ * (ou balanceado): mínimos quadrados sequenciais, Tipo III (Henderson Método 3) e REML.
+ *
+ * Referência: Searle, Casella & McCulloch (1992), caps. 5–6; Burdick et al. (2003).
+ */
+export function gageRRUnbalancedMethods(
+  input: GageRRInput,
+  options: Omit<GageRROptions, 'unbalancedMethod'> = {},
+): GageRRUnbalancedComparison {
+  return {
+    sequentialLs: gageRRAnalysis(input, { ...options, unbalancedMethod: 'sequential_ls' }),
+    type3Henderson: gageRRAnalysis(input, { ...options, unbalancedMethod: 'type3_henderson' }),
+    reml: gageRRAnalysis(input, { ...options, unbalancedMethod: 'reml' }),
+    reference:
+      'Searle, Casella & McCulloch (1992), caps. 5–6; Henderson (1953); Patterson & Thompson (1971).',
   };
 }

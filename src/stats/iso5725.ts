@@ -11,7 +11,151 @@
  * Referências: ISO 5725-1:2023; ISO 5725-2:2019, cláusulas 5–7.
  */
 
+import { fInv, tInv } from './distributions';
 import { mean, sd } from './descriptive';
+import type { AnalysisChart } from './analysis-types';
+
+/**
+ * Valor crítico exato de Mandel h (ISO 5725-2:2019, Anexo B / Tabela B.1).
+ * Relação exata com t de Student:
+ *   h_crit(p, α) = (p − 1) · t_{1 − α/2, p − 2} / sqrt(p · (t² + p − 2)).
+ *
+ * Referência: ISO 5725-2:2019, Seção 7.3 e Anexo B; Wilrich (2013).
+ */
+export function mandelHCritical(p: number, alpha = 0.05): number {
+  if (!Number.isInteger(p) || p < 3) {
+    throw new Error('Mandel h crítico (ISO 5725-2) requer p ≥ 3 laboratórios inteiros.');
+  }
+  if (!(alpha > 0 && alpha < 1)) {
+    throw new Error('Nível de significância α deve estar estritamente em (0, 1).');
+  }
+  const t = tInv(1 - alpha / 2, p - 2);
+  return ((p - 1) * t) / Math.sqrt(p * (t * t + p - 2));
+}
+
+/**
+ * Valor crítico exato de Mandel k (ISO 5725-2:2019, Anexo B / Tabela B.2).
+ * Relação exata com F de Snedecor:
+ *   k_crit(p, n, α) = sqrt( p · F_{1 − α; n − 1, (p − 1)(n − 1)} / (p − 1 + F) ).
+ *
+ * Referência: ISO 5725-2:2019, Seção 7.3 e Anexo B; Mandel (1991).
+ */
+export function mandelKCritical(p: number, n: number, alpha = 0.05): number {
+  if (!Number.isInteger(p) || p < 2) {
+    throw new Error('Mandel k crítico (ISO 5725-2) requer p ≥ 2 laboratórios inteiros.');
+  }
+  if (!Number.isInteger(n) || n < 2) {
+    throw new Error('Mandel k crítico (ISO 5725-2) requer n ≥ 2 réplicas inteiras.');
+  }
+  if (!(alpha > 0 && alpha < 1)) {
+    throw new Error('Nível de significância α deve estar estritamente em (0, 1).');
+  }
+  const f = fInv(1 - alpha, n - 1, (p - 1) * (n - 1));
+  return Math.sqrt((p * f) / (p - 1 + f));
+}
+
+export type MandelSeverity = 'ok' | 'straggler' | 'outlier';
+
+export interface MandelLabConsistency {
+  level: string;
+  lab: string;
+  mean: number;
+  sd: number;
+  h: number;
+  k: number;
+  hStatus: MandelSeverity;
+  kStatus: MandelSeverity;
+}
+
+export interface MandelLevelConsistency {
+  level: string;
+  p: number;
+  n: number;
+  hCrit05: number | null;
+  hCrit01: number | null;
+  kCrit05: number | null;
+  kCrit01: number | null;
+  labs: MandelLabConsistency[];
+}
+
+export interface MandelConsistencyResult {
+  levels: MandelLevelConsistency[];
+  stragglersH: MandelLabConsistency[];
+  outliersH: MandelLabConsistency[];
+  stragglersK: MandelLabConsistency[];
+  outliersK: MandelLabConsistency[];
+  reference: string;
+}
+
+/**
+ * Classifica cada laboratório segundo os valores críticos exatos de Mandel h e k
+ * em 5% (straggler / suspeito) e 1% (outlier / aberrante), conforme ISO 5725-2.
+ */
+export function evaluateMandelConsistency(result: Iso5725Result): MandelConsistencyResult {
+  const stragglersH: MandelLabConsistency[] = [];
+  const outliersH: MandelLabConsistency[] = [];
+  const stragglersK: MandelLabConsistency[] = [];
+  const outliersK: MandelLabConsistency[] = [];
+
+  const levels: MandelLevelConsistency[] = result.levels.map((lvl) => {
+    const hCrit05 = lvl.p >= 3 ? mandelHCritical(lvl.p, 0.05) : null;
+    const hCrit01 = lvl.p >= 3 ? mandelHCritical(lvl.p, 0.01) : null;
+    const kCrit05 = lvl.p >= 2 && lvl.n >= 2 ? mandelKCritical(lvl.p, lvl.n, 0.05) : null;
+    const kCrit01 = lvl.p >= 2 && lvl.n >= 2 ? mandelKCritical(lvl.p, lvl.n, 0.01) : null;
+
+    const labs: MandelLabConsistency[] = lvl.labMeans.map((lm) => {
+      const absH = Math.abs(lm.h);
+      const hStatus: MandelSeverity =
+        hCrit01 !== null && absH > hCrit01
+          ? 'outlier'
+          : hCrit05 !== null && absH > hCrit05
+            ? 'straggler'
+            : 'ok';
+      const kStatus: MandelSeverity =
+        kCrit01 !== null && lm.k > kCrit01
+          ? 'outlier'
+          : kCrit05 !== null && lm.k > kCrit05
+            ? 'straggler'
+            : 'ok';
+
+      const entry: MandelLabConsistency = {
+        level: lvl.level,
+        lab: lm.lab,
+        mean: lm.mean,
+        sd: lm.sd,
+        h: lm.h,
+        k: lm.k,
+        hStatus,
+        kStatus,
+      };
+      if (hStatus === 'straggler') stragglersH.push(entry);
+      if (hStatus === 'outlier') outliersH.push(entry);
+      if (kStatus === 'straggler') stragglersK.push(entry);
+      if (kStatus === 'outlier') outliersK.push(entry);
+      return entry;
+    });
+
+    return {
+      level: lvl.level,
+      p: lvl.p,
+      n: lvl.n,
+      hCrit05,
+      hCrit01,
+      kCrit05,
+      kCrit01,
+      labs,
+    };
+  });
+
+  return {
+    levels,
+    stragglersH,
+    outliersH,
+    stragglersK,
+    outliersK,
+    reference: 'ISO 5725-2:2019, Seção 7.3 e Anexo B (Tabelas B.1 e B.2)',
+  };
+}
 
 export interface Iso5725Row {
   lab: string;
@@ -118,6 +262,8 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
     const kDenom = Math.sqrt(
       labStats.reduce((acc, l) => acc + l.sd * l.sd, 0) / Math.max(1, pEff),
     );
+    const hCrit01 = pEff >= 3 ? mandelHCritical(pEff, 0.01) : 2;
+    const kCrit01 = pEff >= 2 && n >= 2 ? mandelKCritical(pEff, n, 0.01) : 2;
     const labMeans = labStats.map((l) => {
       const h = hDenom > 0 ? (l.mean - grandMean) / hDenom : 0;
       const k = kDenom > 0 ? l.sd / kDenom : 0;
@@ -127,8 +273,8 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
         sd: l.sd,
         h,
         k,
-        hFlag: Math.abs(h) > 2,
-        kFlag: k > 2,
+        hFlag: Math.abs(h) > hCrit01,
+        kFlag: k > kCrit01,
       };
     });
     levels.push({
@@ -183,10 +329,10 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
         : pooledSr2Den,
   };
   if (levels.some((l) => l.labMeans.some((lm) => lm.hFlag))) {
-    warnings.push('Mandel h sinaliza laboratório(s) com média discrepante (|h| > 2).');
+    warnings.push('Mandel h sinaliza laboratório(s) com média discrepante além do limite crítico de 1% (ISO 5725-2).');
   }
   if (levels.some((l) => l.labMeans.some((lm) => lm.kFlag))) {
-    warnings.push('Mandel k sinaliza laboratório(s) com variabilidade discrepante (k > 2).');
+    warnings.push('Mandel k sinaliza laboratório(s) com variabilidade discrepante além do limite crítico de 1% (ISO 5725-2).');
   }
   return {
     levels,
@@ -217,4 +363,74 @@ export function iso5725Compare(
         ? `|x₁ − x₂| = ${difference.toPrecision(4)} ≤ ${limit.toPrecision(4)}: resultados compatíveis.`
         : `|x₁ − x₂| = ${difference.toPrecision(4)} > ${limit.toPrecision(4)}: diferença além do limite esperado.`,
   };
+}
+
+/**
+ * Constrói gráficos diagnósticos de Mandel h (entre laboratórios) e k (dentro de laboratórios)
+ * com as linhas de corte exatas de 5% (suspeito / straggler) e 1% (aberrante / outlier).
+ */
+export function buildMandelCharts(result: Iso5725Result): {
+  hChart: AnalysisChart | null;
+  kChart: AnalysisChart | null;
+} {
+  const consistency = evaluateMandelConsistency(result);
+  if (!consistency.levels.length) return { hChart: null, kChart: null };
+
+  const hData: Array<Record<string, string | number | null>> = [];
+  const kData: Array<Record<string, string | number | null>> = [];
+  let maxHCrit05 = 0;
+  let maxHCrit01 = 0;
+  let maxKCrit05 = 0;
+  let maxKCrit01 = 0;
+
+  for (const lvl of consistency.levels) {
+    if (lvl.hCrit05) maxHCrit05 = Math.max(maxHCrit05, lvl.hCrit05);
+    if (lvl.hCrit01) maxHCrit01 = Math.max(maxHCrit01, lvl.hCrit01);
+    if (lvl.kCrit05) maxKCrit05 = Math.max(maxKCrit05, lvl.kCrit05);
+    if (lvl.kCrit01) maxKCrit01 = Math.max(maxKCrit01, lvl.kCrit01);
+
+    for (const lab of lvl.labs) {
+      const label = consistency.levels.length > 1 ? `${lvl.level} - ${lab.lab}` : lab.lab;
+      hData.push({
+        lab: label,
+        h: Number(lab.h.toFixed(3)),
+        status: lab.hStatus,
+      });
+      kData.push({
+        lab: label,
+        k: Number(lab.k.toFixed(3)),
+        status: lab.kStatus,
+      });
+    }
+  }
+
+  const hChart: AnalysisChart = {
+    kind: 'mandel',
+    title: 'Consistência entre laboratórios — Mandel h',
+    xLabel: 'Laboratório / Analista',
+    yLabel: 'Estatística h',
+    data: hData,
+    meta: {
+      statKey: 'h',
+      crit05: maxHCrit05 || 2,
+      crit01: maxHCrit01 || 2.5,
+      bilateral: true,
+    },
+  };
+
+  const kChart: AnalysisChart = {
+    kind: 'mandel',
+    title: 'Consistência intra-laboratório — Mandel k',
+    xLabel: 'Laboratório / Analista',
+    yLabel: 'Estatística k',
+    data: kData,
+    meta: {
+      statKey: 'k',
+      crit05: maxKCrit05 || 1.8,
+      crit01: maxKCrit01 || 2.1,
+      bilateral: false,
+    },
+  };
+
+  return { hChart, kChart };
 }

@@ -131,6 +131,13 @@ export function referenceOf(m: Measurement): number | null {
   ) {
     return m.referenceValue;
   }
+  if (
+    m.refValue !== null &&
+    m.refValue !== undefined &&
+    Number.isFinite(m.refValue)
+  ) {
+    return m.refValue;
+  }
   return numericLevel(m.level);
 }
 

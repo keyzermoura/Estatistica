@@ -1075,6 +1075,94 @@ function slugKey(prefix: string, index: number): string {
   return `${prefix}_${index + 1}`;
 }
 
+export interface QualitativeDiagnosticMetrics {
+  tp: number;
+  fp: number;
+  fn: number;
+  tn: number;
+  sensitivity: number | null;
+  sensitivityCi: [number, number] | null;
+  specificity: number | null;
+  specificityCi: [number, number] | null;
+  lrPositive: number | null;
+  lrNegative: number | null;
+  ppv: number | null;
+  npv: number | null;
+  youdenJ: number | null;
+  prevalence: number;
+  confidence: number;
+  reference: string;
+}
+
+/**
+ * Métricas diagnósticas qualitativas com intervalos de Wilson e razões de
+ * verossimilhança bayesianas (LR+, LR−) segundo o guia Eurachem Qualitative
+ * Chemical Analysis (2021).
+ */
+export function computeQualitativeDiagnosticMetrics(
+  tp: number,
+  fp: number,
+  fn: number,
+  tn: number,
+  prevalence = 0.5,
+  confidence = 0.95,
+): QualitativeDiagnosticMetrics {
+  const posTotal = tp + fn;
+  const negTotal = tn + fp;
+  const sensitivity = posTotal > 0 ? tp / posTotal : null;
+  const sensitivityCi =
+    posTotal > 0 ? asCi(ciProportion(tp, posTotal, confidence)) : null;
+  const specificity = negTotal > 0 ? tn / negTotal : null;
+  const specificityCi =
+    negTotal > 0 ? asCi(ciProportion(tn, negTotal, confidence)) : null;
+
+  let lrPositive: number | null = null;
+  let lrNegative: number | null = null;
+  if (posTotal > 0 && negTotal > 0 && sensitivity !== null && specificity !== null) {
+    const seH = (tp + 0.5) / (posTotal + 1);
+    const spH = (tn + 0.5) / (negTotal + 1);
+    lrPositive =
+      1 - specificity > 0 ? sensitivity / (1 - specificity) : seH / (1 - spH);
+    lrNegative =
+      specificity > 0 ? (1 - sensitivity) / specificity : (1 - seH) / spH;
+  }
+
+  let ppv: number | null = null;
+  let npv: number | null = null;
+  const p = Math.min(1, Math.max(0, prevalence));
+  if (sensitivity !== null && specificity !== null) {
+    const pPos = sensitivity * p + (1 - specificity) * (1 - p);
+    const pNeg = specificity * (1 - p) + (1 - sensitivity) * p;
+    ppv = pPos > 0 ? (sensitivity * p) / pPos : null;
+    npv = pNeg > 0 ? (specificity * (1 - p)) / pNeg : null;
+  }
+
+  const youdenJ =
+    sensitivity !== null && specificity !== null
+      ? sensitivity + specificity - 1
+      : null;
+
+  return {
+    tp,
+    fp,
+    fn,
+    tn,
+    sensitivity,
+    sensitivityCi,
+    specificity,
+    specificityCi,
+    lrPositive,
+    lrNegative,
+    ppv,
+    npv,
+    youdenJ,
+    prevalence: p,
+    confidence,
+    reference:
+      'EURACHEM / CITAC Guide — Assessment of Performance and Uncertainty in Qualitative Chemical Analysis (2021)',
+  };
+}
+
 function firstTrialMap(
   observations: NormalizedObservation[],
   trial: number,
@@ -1809,6 +1897,69 @@ export function attributeAgreementStudy(
       'Contagem de todas as réplicas. Linhas = categoria atribuída pelo avaliador; colunas = categoria de referência.',
   }));
 
+  const diagnosticRows: Array<Array<string | number>> = [];
+  for (const result of vsReference) {
+    if (
+      result.referenceAccepts !== null &&
+      result.referenceRejects !== null &&
+      result.falseRejects !== null &&
+      result.falseAccepts !== null &&
+      result.trials > 0
+    ) {
+      const tp = result.referenceAccepts - result.falseRejects;
+      const fn = result.falseRejects;
+      const fp = result.falseAccepts;
+      const tn = result.referenceRejects - result.falseAccepts;
+      const prevalence = result.referenceAccepts / result.trials;
+      const diag = computeQualitativeDiagnosticMetrics(
+        tp,
+        fp,
+        fn,
+        tn,
+        prevalence,
+        confidence,
+      );
+      const pctCi = (val: number | null, ci: [number, number] | null) =>
+        val === null
+          ? '—'
+          : ci
+            ? `${(val * 100).toFixed(1)}% [${(ci[0] * 100).toFixed(1)}–${(ci[1] * 100).toFixed(1)}%]`
+            : `${(val * 100).toFixed(1)}%`;
+      diagnosticRows.push([
+        result.rater,
+        pctCi(diag.sensitivity, diag.sensitivityCi),
+        pctCi(diag.specificity, diag.specificityCi),
+        diag.lrPositive !== null ? fmt(diag.lrPositive) : '—',
+        diag.lrNegative !== null ? fmt(diag.lrNegative) : '—',
+        diag.ppv !== null ? `${(diag.ppv * 100).toFixed(1)}%` : '—',
+        diag.npv !== null ? `${(diag.npv * 100).toFixed(1)}%` : '—',
+        diag.youdenJ !== null ? fmt(diag.youdenJ) : '—',
+      ]);
+    }
+  }
+  const diagnosticTables: AnalysisTable[] =
+    diagnosticRows.length > 0
+      ? [
+          {
+            title:
+              'Desempenho Diagnóstico Qualitativo (Eurachem Qualitative Analysis 2021)',
+            columns: [
+              'Avaliador',
+              'Sensibilidade (IC 95%)',
+              'Especificidade (IC 95%)',
+              'LR+',
+              'LR−',
+              'VPP',
+              'VPN',
+              'Índice de Youden (J)',
+            ],
+            rows: diagnosticRows,
+            note:
+              'Intervalos de confiança de Wilson Score (95%). LR+ = Se/(1−Sp); LR− = (1−Se)/Sp (com correção de Haldane 0,5 em contagens zero); VPP/VPN calculados na prevalência observada.',
+          },
+        ]
+      : [];
+
   const kappaChartData: Array<Record<string, string | number | null>> = [];
   if (interRater.kappa !== null && Number.isFinite(interRater.kappa)) {
     kappaChartData.push({
@@ -1948,6 +2099,7 @@ export function attributeAgreementStudy(
       intraTable,
       referenceTable,
       ...confusionTables,
+      ...diagnosticTables,
     ],
     charts,
     warnings: [...warnings],

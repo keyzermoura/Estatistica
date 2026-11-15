@@ -19,5 +19,6 @@ export * from './conformity';
 export * from './iso5725';
 export * from './regression';
 export * from './bias';
+export * from './accuracyProfile';
 export * from './uncertainty';
 export * from './analysis';

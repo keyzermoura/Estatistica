@@ -71,6 +71,7 @@ const METRICS: Record<AnalyticalParamKey, MetricDefinition[]> = {
     { key: 'recovery', label: 'Recuperação média', unit: '%', suggested: { operator: 'between', limit: 98, limit2: 102 } },
     { key: 'bias', label: 'Tendência (diferença média)', unit: '', suggested: { operator: 'between', limit: -1, limit2: 1 } },
     { key: 'biasP', label: 'p do teste de tendência', unit: '', suggested: { operator: '>=', limit: 0.05 } },
+    { key: 'en', label: 'Erro normalizado |En| (MRC / Proficiência)', unit: '', suggested: { operator: '<=', limit: 1 } },
   ],
   robustness: [
     { key: 'maxEffect', label: 'Maior efeito padronizado', unit: '', suggested: { operator: '<=', limit: 2 } },

@@ -11,7 +11,8 @@
  */
 
 import { mean, sd } from './descriptive';
-import { chi2Cdf, normalCdf, normalInv } from './distributions';
+import { chi2Cdf, normalCdf, normalInv, normalPdf } from './distributions';
+import type { AnalysisChart } from './analysis-types';
 
 export interface NormalityResult {
   n: number;
@@ -298,5 +299,447 @@ export function normalitySuite(
     anderson,
     jarqueBera: jarque,
     conclusion,
+  };
+}
+
+export interface NonParametricToleranceInterval {
+  /** Limite inferior do intervalo de tolerância não paramétrico (mínimo amostral). */
+  lower: number;
+  /** Limite superior do intervalo de tolerância não paramétrico (máximo amostral). */
+  upper: number;
+  /** Cobertura populacional alvo q (ex.: 0,95). */
+  targetCoverage: number;
+  /** Confiança atingida γ = 1 − n·q^(n−1) + (n−1)·q^n (Wilks, 1941; ISO 16269-6). */
+  achievedConfidence: number;
+  /** n mínimo necessário pelos extremos para atingir 95% de confiança e cobertura q. */
+  recommendedMinN: number;
+  method: string;
+  reference: string;
+}
+
+export interface LogTransformDiagnostic {
+  /** Indica se todos os dados são estritamente positivos e elegíveis para ln(x). */
+  eligible: boolean;
+  /** Indica se a transformação foi explicitamente aplicada por decisão do usuário. */
+  applied: boolean;
+  /** Teste Shapiro-Wilk sobre ln(x), quando elegível. */
+  shapiroOnLog: NormalityResult | null;
+  /** Valores transformados (apenas quando `applied === true`). */
+  transformedValues: number[] | null;
+  /** Média geométrica exp(mean(ln(x))). */
+  geometricMean: number | null;
+  /** Desvio-padrão geométrico exp(sd(ln(x))). */
+  geometricSd: number | null;
+  note: string;
+}
+
+export interface NonNormalityOptionsResult {
+  n: number;
+  shapiro: NormalityResult;
+  anderson: NormalityResult;
+  /** Verdadeiro somente quando Shapiro-Wilk e Anderson-Darling têm p válido e ambos rejeitam. */
+  bothRejected: boolean;
+  /** Verdadeiro se ao menos um dos dois testes rejeita a normalidade. */
+  anyRejected: boolean;
+  logTransform: LogTransformDiagnostic;
+  nonParametricTolerance: NonParametricToleranceInterval | null;
+  warnings: string[];
+  reference: string;
+}
+
+/** Calcula o n mínimo de Wilks tal que 1 − n·q^(n−1) + (n−1)·q^n >= targetConfidence. */
+function wilksMinimumN(coverage: number, confidence: number): number {
+  for (let n = 2; n <= 2000; n++) {
+    const gamma = 1 - n * Math.pow(coverage, n - 1) + (n - 1) * Math.pow(coverage, n);
+    if (gamma >= confidence) return n;
+  }
+  return 2000;
+}
+
+/**
+ * Avalia a não normalidade conjunta (Shapiro-Wilk + Anderson-Darling) e
+ * prepara as alternativas explícitas sem aplicar transformação automaticamente:
+ *  1) Diagnóstico de transformação logarítmica natural ln(x) (aplicada somente se `applyLogTransform === true`).
+ *  2) Intervalo de tolerância bilateral livre de distribuição pelos extremos amostrais (Wilks, 1941; ISO 16269-6:2014).
+ *
+ * Referências:
+ *  - Shapiro & Wilk (1965); Stephens (1986) — testes de normalidade.
+ *  - Wilks, S. S. (1941). Determination of sample sizes for setting tolerance limits. Ann. Math. Statist., 12(1), 91–96.
+ *  - ISO 16269-6:2014 — Statistical interpretation of data — Part 6: Determination of statistical tolerance intervals.
+ */
+export function evaluateNonNormalityAndOptions(
+  values: number[],
+  options: {
+    alpha?: number;
+    applyLogTransform?: boolean;
+    targetCoverage?: number;
+  } = {},
+): NonNormalityOptionsResult {
+  const clean = values.filter((v) => Number.isFinite(v));
+  const n = clean.length;
+  const alpha = options.alpha ?? 0.05;
+  const targetCoverage = options.targetCoverage ?? 0.95;
+  const applyLogTransform = Boolean(options.applyLogTransform);
+
+  const shapiro = shapiroWilk(clean, alpha);
+  const anderson = andersonDarling(clean, alpha);
+  const shapiroRejected = Number.isFinite(shapiro.pValue) && !shapiro.normal;
+  const andersonRejected = Number.isFinite(anderson.pValue) && !anderson.normal;
+  const bothRejected = shapiroRejected && andersonRejected;
+  const anyRejected = shapiroRejected || andersonRejected;
+
+  const eligibleLog = n >= 3 && clean.every((v) => v > 0);
+  let shapiroOnLog: NormalityResult | null = null;
+  let geometricMean: number | null = null;
+  let geometricSd: number | null = null;
+  let transformedValues: number[] | null = null;
+
+  if (eligibleLog) {
+    const lnVals = clean.map((v) => Math.log(v));
+    shapiroOnLog = shapiroWilk(lnVals, alpha);
+    const mLn = mean(lnVals);
+    const sLn = sd(lnVals);
+    geometricMean = Math.exp(mLn);
+    geometricSd = Number.isFinite(sLn) ? Math.exp(sLn) : null;
+    if (applyLogTransform) {
+      transformedValues = lnVals;
+    }
+  }
+
+  let nonParametricTolerance: NonParametricToleranceInterval | null = null;
+  if (n >= 2) {
+    const sortedVals = sorted(clean);
+    const q = Math.min(0.999, Math.max(0.5, targetCoverage));
+    const achievedConfidence = Math.max(
+      0,
+      Math.min(1, 1 - n * Math.pow(q, n - 1) + (n - 1) * Math.pow(q, n)),
+    );
+    nonParametricTolerance = {
+      lower: sortedVals[0],
+      upper: sortedVals[sortedVals.length - 1],
+      targetCoverage: q,
+      achievedConfidence,
+      recommendedMinN: wilksMinimumN(q, 1 - alpha),
+      method: 'Extremos amostrais livre de distribuição (Wilks / ISO 16269-6)',
+      reference: 'Wilks (1941), Ann. Math. Statist. 12:91–96; ISO 16269-6:2014',
+    };
+  }
+
+  const warnings: string[] = [];
+  if (bothRejected) {
+    warnings.push(
+      `Normalidade rejeitada simultaneamente por Shapiro-Wilk (p = ${shapiro.pValue.toFixed(4)}) e Anderson-Darling (p = ${anderson.pValue.toFixed(4)}). Nenhuma transformação foi aplicada automaticamente: avalie a transformação logarítmica registrada ou o intervalo de tolerância não paramétrico.`,
+    );
+  } else if (shapiroRejected) {
+    warnings.push(
+      `Shapiro-Wilk rejeitou a normalidade (p = ${shapiro.pValue.toFixed(4)}); confirme graficamente antes de aplicar transformação.`,
+    );
+  }
+  if (nonParametricTolerance && n < nonParametricTolerance.recommendedMinN && bothRejected) {
+    warnings.push(
+      `Intervalo de tolerância não paramétrico com n = ${n} atinge apenas ${(nonParametricTolerance.achievedConfidence * 100).toFixed(1)}% de confiança para cobertura ${(targetCoverage * 100).toFixed(0)}% (recomendado n ≥ ${nonParametricTolerance.recommendedMinN} para 95% de confiança).`,
+    );
+  }
+
+  const logNote = !eligibleLog
+    ? 'Transformação logarítmica indisponível: existem valores menores ou iguais a zero ou n < 3.'
+    : applyLogTransform
+      ? `Transformação ln(x) aplicada e registrada por decisão explícita (Shapiro-Wilk em ln(x): p = ${shapiroOnLog?.pValue.toFixed(4) ?? '—'}).`
+      : `Transformação ln(x) NÃO aplicada automaticamente (diagnóstico opcional em ln(x): Shapiro-Wilk p = ${shapiroOnLog?.pValue.toFixed(4) ?? '—'}).`;
+
+  return {
+    n,
+    shapiro,
+    anderson,
+    bothRejected,
+    anyRejected,
+    logTransform: {
+      eligible: eligibleLog,
+      applied: eligibleLog && applyLogTransform,
+      shapiroOnLog,
+      transformedValues,
+      geometricMean,
+      geometricSd,
+      note: logNote,
+    },
+    nonParametricTolerance,
+    warnings,
+    reference: 'Shapiro & Wilk (1965); Stephens (1986); Wilks (1941); ISO 16269-6:2014',
+  };
+}
+
+export interface HistogramBin {
+  binIndex: number;
+  binStart: number;
+  binEnd: number;
+  binMid: number;
+  label: string;
+  count: number;
+  frequency: number;
+  density: number;
+  expectedCount: number;
+  normalPdf: number;
+}
+
+export interface HistogramResult {
+  bins: HistogramBin[];
+  binWidth: number;
+  mean: number;
+  sd: number;
+  n: number;
+  min: number;
+  max: number;
+}
+
+/**
+ * Calcula classes de histograma e curva teórica normal sobreposta
+ * escalonada para a mesma unidade de contagem esperada:
+ *   expectedCount = n · h · normalPdf(binMid, x̄, s)
+ *
+ * Binning: Freedman–Diaconis (h = 2·IQR·n^(-1/3)), com fallback para Sturges.
+ * Referências: Freedman & Diaconis (1981); Scott (1979); Sturges (1926).
+ */
+export function computeHistogramWithNormalCurve(
+  values: number[],
+  numBinsTarget?: number,
+): HistogramResult {
+  const clean = values.filter((v) => Number.isFinite(v));
+  const n = clean.length;
+  if (n === 0) {
+    return {
+      bins: [],
+      binWidth: 0,
+      mean: 0,
+      sd: 0,
+      n: 0,
+      min: 0,
+      max: 0,
+    };
+  }
+  const sortedVals = sorted(clean);
+  const minVal = sortedVals[0];
+  const maxVal = sortedVals[sortedVals.length - 1];
+  const m = mean(clean);
+  const s = n > 1 ? sd(clean) : 0;
+
+  if (minVal === maxVal || s === 0) {
+    const singleBin: HistogramBin = {
+      binIndex: 0,
+      binStart: minVal - 0.5,
+      binEnd: maxVal + 0.5,
+      binMid: minVal,
+      label: minVal.toFixed(3),
+      count: n,
+      frequency: 1,
+      density: 1,
+      expectedCount: n,
+      normalPdf: 1,
+    };
+    return {
+      bins: [singleBin],
+      binWidth: 1,
+      mean: m,
+      sd: s,
+      n,
+      min: minVal,
+      max: maxVal,
+    };
+  }
+
+  // IQR via quantis empíricos
+  const q1 = sortedVals[Math.floor(0.25 * (n - 1))];
+  const q3 = sortedVals[Math.floor(0.75 * (n - 1))];
+  const iqr = q3 - q1;
+
+  let k: number;
+  if (numBinsTarget && numBinsTarget >= 3) {
+    k = numBinsTarget;
+  } else if (iqr > 0 && n >= 6) {
+    const fdH = 2 * iqr * Math.pow(n, -1 / 3);
+    k = Math.max(3, Math.min(25, Math.round((maxVal - minVal) / fdH)));
+  } else {
+    // Sturges
+    k = Math.max(3, Math.min(20, Math.ceil(1 + 3.322 * Math.log10(n))));
+  }
+
+  const range = maxVal - minVal;
+  const binWidth = range / k;
+  const bins: HistogramBin[] = [];
+
+  for (let i = 0; i < k; i++) {
+    const binStart = minVal + i * binWidth;
+    const binEnd = minVal + (i + 1) * binWidth;
+    const binMid = (binStart + binEnd) / 2;
+    const count = clean.filter((val) =>
+      i === k - 1 ? val >= binStart && val <= binEnd : val >= binStart && val < binEnd,
+    ).length;
+    const frequency = count / n;
+    const density = binWidth > 0 ? frequency / binWidth : 0;
+    const pdf = s > 0 ? normalPdf(binMid, m, s) : 0;
+    const expectedCount = s > 0 ? n * binWidth * pdf : 0;
+    bins.push({
+      binIndex: i,
+      binStart,
+      binEnd,
+      binMid,
+      label: `${binMid.toFixed(2)}`,
+      count,
+      frequency,
+      density,
+      expectedCount,
+      normalPdf: pdf,
+    });
+  }
+
+  return {
+    bins,
+    binWidth,
+    mean: m,
+    sd: s,
+    n,
+    min: minVal,
+    max: maxVal,
+  };
+}
+
+export interface NormalProbabilityPoint {
+  index: number;
+  observed: number;
+  percentile: number;
+  zTheoretical: number;
+  expected: number;
+  lowerBand: number;
+  upperBand: number;
+  se: number;
+}
+
+export interface NormalProbabilityPlotResult {
+  points: NormalProbabilityPoint[];
+  mean: number;
+  sd: number;
+  n: number;
+  slope: number;
+  intercept: number;
+}
+
+/**
+ * Gráfico de Probabilidade Normal (Normal Probability Plot / Q-Q Plot).
+ * Plota observações ordenadas contra os quantis teóricos normais:
+ *   p_i = (i − 0,375) / (n + 0,25)  (Blom, 1958)
+ *   z_i = Φ⁻¹(p_i)
+ *   esperado_i = x̄ + s · z_i
+ * Bandas de confiança pontuais a 95% calculadas por:
+ *   SE(x_(i)) ≈ (s / φ(z_i)) · √[ p_i·(1 − p_i) / n ]
+ *
+ * Referências: Blom (1958); Chambers et al. (1983); NIST/SEMATECH e-Handbook (1.3.3.21).
+ */
+export function computeNormalProbabilityPlot(
+  values: number[],
+  alpha = 0.05,
+): NormalProbabilityPlotResult {
+  const clean = values.filter((v) => Number.isFinite(v));
+  const n = clean.length;
+  if (n === 0) {
+    return {
+      points: [],
+      mean: 0,
+      sd: 0,
+      n: 0,
+      slope: 0,
+      intercept: 0,
+    };
+  }
+  const sortedVals = sorted(clean);
+  const m = mean(clean);
+  const s = n > 1 ? sd(clean) : 0;
+  const zCrit = normalInv(1 - alpha / 2);
+
+  const points: NormalProbabilityPoint[] = sortedVals.map((observed, idx) => {
+    const i = idx + 1;
+    const p_i = (i - 0.375) / (n + 0.25);
+    const z = normalInv(p_i);
+    const expected = m + s * z;
+    const phi = normalPdf(z, 0, 1);
+    const se = phi > 1e-12 && s > 0 ? (s / phi) * Math.sqrt((p_i * (1 - p_i)) / n) : 0;
+    const lowerBand = expected - zCrit * se;
+    const upperBand = expected + zCrit * se;
+    return {
+      index: i,
+      observed,
+      percentile: p_i * 100,
+      zTheoretical: z,
+      expected,
+      lowerBand,
+      upperBand,
+      se,
+    };
+  });
+
+  return {
+    points,
+    mean: m,
+    sd: s,
+    n,
+    slope: s,
+    intercept: m,
+  };
+}
+
+/** Gera a estrutura AnalysisChart para Histograma com Curva Normal Sobreposta. */
+export function buildHistogramChart(
+  values: number[],
+  title = 'Histograma com Curva Normal Sobreposta',
+  xLabel = 'Valor medido',
+): AnalysisChart {
+  const res = computeHistogramWithNormalCurve(values);
+  return {
+    kind: 'histogram',
+    title,
+    xLabel,
+    yLabel: 'Frequência (Contagem)',
+    data: res.bins.map((b) => ({
+      classe: b.label,
+      binMid: b.binMid,
+      contagem: b.count,
+      esperado: Number(b.expectedCount.toFixed(2)),
+      densidade: Number(b.density.toFixed(4)),
+    })),
+    meta: {
+      mean: res.mean,
+      sd: res.sd,
+      binWidth: res.binWidth,
+      n: res.n,
+    },
+  };
+}
+
+/** Gera a estrutura AnalysisChart para Gráfico de Probabilidade Normal (Q-Q). */
+export function buildNormalProbabilityChart(
+  values: number[],
+  title = 'Gráfico de Probabilidade Normal (Q–Q Plot)',
+  outlierIndices?: Set<number>,
+): AnalysisChart {
+  const res = computeNormalProbabilityPlot(values);
+  return {
+    kind: 'qq',
+    title,
+    xLabel: 'Quantil Teórico Normal (z)',
+    yLabel: 'Valor Observado',
+    data: res.points.map((p) => ({
+      z: Number(p.zTheoretical.toFixed(3)),
+      observado: Number(p.observed.toFixed(4)),
+      esperado: Number(p.expected.toFixed(4)),
+      lic: Number(p.lowerBand.toFixed(4)),
+      lsc: Number(p.upperBand.toFixed(4)),
+      outlier: outlierIndices ? outlierIndices.has(p.index - 1) : false,
+      percentil: Number(p.percentile.toFixed(1)),
+    })),
+    meta: {
+      mean: res.mean,
+      sd: res.sd,
+      n: res.n,
+      slope: res.slope,
+      intercept: res.intercept,
+    },
   };
 }
