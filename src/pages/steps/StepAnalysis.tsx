@@ -22,6 +22,7 @@ import {
   saveAnalysis,
   updateValidation,
 } from '../../lib/repository';
+import { validateConformityForm } from '../../lib/conformityValidation';
 import { getProfileForMethod } from '../../profiles/index';
 import { resolveCriteria } from '../../lib/criteria';
 import {
@@ -206,18 +207,24 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
 
   const saveConformityConfig = () => {
     if (locked) return;
+    const validation = validateConformityForm({
+      lslInput,
+      uslInput,
+      rule: conformityRule,
+      guardBandFactor,
+      probabilityThreshold,
+      massFractionInput,
+      processVariationInput,
+      individualLslInput,
+    });
+    if (!validation.isValid) {
+      toast.push(validation.firstError ?? 'Corrija os parâmetros de conformidade.', 'danger');
+      return;
+    }
     const pv =
       processVariationInput.trim() === '' ? null : Number(processVariationInput);
-    if (pv !== null && (!Number.isFinite(pv) || pv <= 0)) {
-      toast.push('A variação do processo 6σ_p deve ser um número positivo.', 'danger');
-      return;
-    }
     const indLsl =
       individualLslInput.trim() === '' ? null : Number(individualLslInput);
-    if (indLsl !== null && !Number.isFinite(indLsl)) {
-      toast.push('O LSL individual deve ser um número válido.', 'danger');
-      return;
-    }
     setSavingConformity(true);
     try {
       const actor = bundle.validation.responsible.trim() || 'sistema';

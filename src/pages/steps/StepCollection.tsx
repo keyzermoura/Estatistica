@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -9,6 +9,7 @@ import {
   FileSpreadsheet,
   Plus,
   Save,
+  Search,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -40,6 +41,7 @@ import {
   useToast,
 } from '../../components/ui';
 import type { StepProps } from './types';
+import { MeasurementRow, useVirtualTable } from './collection';
 
 const inputClass =
   'w-full rounded-lg border border-ink-200 bg-white px-2 py-1.5 text-xs text-ink-800 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 disabled:bg-ink-100 dark:border-ink-700 dark:bg-ink-900 dark:text-ink-100';
@@ -101,23 +103,29 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
     warnings: string[];
   } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+  const [filterSearch, setFilterSearch] = useState('');
+  const [filterAnalyst, setFilterAnalyst] = useState<string>('all');
+  const [filterLevel, setFilterLevel] = useState<string>('all');
+  const [filterMissingOnly, setFilterMissingOnly] = useState(false);
+  const [jumpToRow, setJumpToRow] = useState('');
 
   useEffect(() => {
     setMeasurements(bundle.measurements);
     setReferenceDrafts({});
   }, [bundle.measurements]);
 
-  const patch = (id: string, value: Partial<Measurement>) => {
+  const patch = useCallback((id: string, value: Partial<Measurement>) => {
     setMeasurements((prev) => prev.map((row) => (row.id === id ? { ...row, ...value } : row)));
-  };
+  }, []);
 
   const addRow = () => {
     setMeasurements((prev) => [...prev, blankMeasurement(bundle, prev.length)]);
   };
 
-  const removeRow = (id: string) => {
+  const removeRow = useCallback((id: string) => {
     setMeasurements((prev) => prev.filter((row) => row.id !== id));
-  };
+  }, []);
 
   const quality = useMemo(() => {
     const numeric = measurements.filter((row) => row.value !== null && Number.isFinite(row.value));
@@ -253,22 +261,120 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
   );
   const conflictReferenceItems = attributeItems.filter((item) => item.conflict);
 
-  const handleCellKeyDown = (
-    e: React.KeyboardEvent<HTMLInputElement>,
-    colKey: string,
-    rowIndex: number,
-  ) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const targetRow = e.shiftKey ? rowIndex - 1 : rowIndex + 1;
+  const filteredMeasurements = useMemo(() => {
+    return measurements.filter((row) => {
+      if (filterMissingOnly) {
+        if (attribute) {
+          const hasCat = (row.category ?? '').trim() !== '' || row.textValue.trim() !== '';
+          if (hasCat) return false;
+        } else {
+          const hasVal = (row.value !== null && Number.isFinite(row.value)) || row.textValue.trim() !== '';
+          if (hasVal) return false;
+        }
+      }
+      if (filterAnalyst !== 'all' && row.analyst.trim() !== filterAnalyst) {
+        return false;
+      }
+      if (filterLevel !== 'all' && row.level.trim() !== filterLevel) {
+        return false;
+      }
+      if (filterSearch.trim() !== '') {
+        const q = filterSearch.toLowerCase().trim();
+        const matchSample = row.sample.toLowerCase().includes(q);
+        const matchLot = row.lot.toLowerCase().includes(q);
+        const matchPart = (row.partId ?? '').toLowerCase().includes(q);
+        const matchSpecimen = (row.specimen ?? '').toLowerCase().includes(q);
+        const matchNotes = (row.notes ?? '').toLowerCase().includes(q);
+        const matchAnalyst = row.analyst.toLowerCase().includes(q);
+        if (!matchSample && !matchLot && !matchPart && !matchSpecimen && !matchNotes && !matchAnalyst) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [measurements, filterMissingOnly, filterAnalyst, filterLevel, filterSearch, attribute]);
+
+  const uniqueAnalysts = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of measurements) {
+      const a = m.analyst.trim();
+      if (a) set.add(a);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [measurements]);
+
+  const uniqueLevels = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of measurements) {
+      const l = m.level.trim();
+      if (l) set.add(l);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [measurements]);
+
+  const {
+    startIndex,
+    endIndex,
+    topSpacerHeight,
+    bottomSpacerHeight,
+    isVirtual,
+    scrollToIndex,
+  } = useVirtualTable({
+    totalItems: filteredMeasurements.length,
+    rowHeight: 44,
+    overscan: 10,
+    containerRef: tableContainerRef,
+  });
+
+  const visibleRows = useMemo(() => {
+    return filteredMeasurements.slice(startIndex, endIndex);
+  }, [filteredMeasurements, startIndex, endIndex]);
+
+  const handleCellKeyDown = useCallback(
+    (
+      e: React.KeyboardEvent<HTMLInputElement>,
+      colKey: string,
+      rowIndex: number,
+    ) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const targetRow = e.shiftKey ? rowIndex - 1 : rowIndex + 1;
+        if (targetRow < 0 || targetRow >= filteredMeasurements.length) return;
+
+        scrollToIndex(targetRow);
+
+        requestAnimationFrame(() => {
+          const targetInput = document.querySelector<HTMLInputElement>(
+            `input[data-col="${colKey}"][data-row="${targetRow}"]`,
+          );
+          if (targetInput) {
+            targetInput.focus();
+            targetInput.select();
+          }
+        });
+      }
+    },
+    [filteredMeasurements.length, scrollToIndex],
+  );
+
+  const handleJumpToRow = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const num = parseInt(jumpToRow, 10);
+    if (!Number.isFinite(num) || num < 1 || num > filteredMeasurements.length) {
+      toast.push(`Informe uma linha válida entre 1 e ${filteredMeasurements.length}.`, 'info');
+      return;
+    }
+    const targetIndex = num - 1;
+    scrollToIndex(targetIndex);
+    requestAnimationFrame(() => {
       const targetInput = document.querySelector<HTMLInputElement>(
-        `input[data-col="${colKey}"][data-row="${targetRow}"]`,
+        `input[data-row="${targetIndex}"]`,
       );
       if (targetInput) {
         targetInput.focus();
         targetInput.select();
       }
-    }
+    });
   };
 
   const applyAttributeReference = (items: string[], reference: string) => {
@@ -852,7 +958,86 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
             </div>
           }
         />
-        <div className="max-h-[620px] overflow-auto">
+        {/* Barra de busca, filtros rápidos e controle da tabela */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 bg-ink-50/50 px-3 py-2 text-xs dark:border-ink-800 dark:bg-ink-950/30">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 text-ink-400" />
+              <input
+                type="text"
+                placeholder="Buscar amostra, lote, analista..."
+                className="w-48 rounded-lg border border-ink-200 bg-white py-1 pl-7 pr-2 text-xs text-ink-800 outline-none focus:border-brand-500 dark:border-ink-700 dark:bg-ink-900 dark:text-ink-100 sm:w-60"
+                value={filterSearch}
+                onChange={(e) => setFilterSearch(e.target.value)}
+              />
+            </div>
+
+            {uniqueAnalysts.length > 1 ? (
+              <select
+                className="rounded-lg border border-ink-200 bg-white px-2 py-1 text-xs text-ink-700 outline-none dark:border-ink-700 dark:bg-ink-900 dark:text-ink-200"
+                value={filterAnalyst}
+                onChange={(e) => setFilterAnalyst(e.target.value)}
+                aria-label="Filtrar por analista"
+              >
+                <option value="all">Todos analistas ({uniqueAnalysts.length})</option>
+                {uniqueAnalysts.map((a) => (
+                  <option key={a} value={a}>Analista: {a}</option>
+                ))}
+              </select>
+            ) : null}
+
+            {uniqueLevels.length > 1 ? (
+              <select
+                className="rounded-lg border border-ink-200 bg-white px-2 py-1 text-xs text-ink-700 outline-none dark:border-ink-700 dark:bg-ink-900 dark:text-ink-200"
+                value={filterLevel}
+                onChange={(e) => setFilterLevel(e.target.value)}
+                aria-label="Filtrar por nível"
+              >
+                <option value="all">Todos níveis ({uniqueLevels.length})</option>
+                {uniqueLevels.map((l) => (
+                  <option key={l} value={l}>Nível: {l}</option>
+                ))}
+              </select>
+            ) : null}
+
+            <label className="flex items-center gap-1.5 cursor-pointer text-ink-600 dark:text-ink-400">
+              <input
+                type="checkbox"
+                checked={filterMissingOnly}
+                onChange={(e) => setFilterMissingOnly(e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-ink-300 text-brand-600"
+              />
+              <span>Apenas pendentes ({quality.missing})</span>
+            </label>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-[11px] text-ink-500">
+              {filteredMeasurements.length === measurements.length
+                ? `${measurements.length} linha(s)`
+                : `${filteredMeasurements.length} de ${measurements.length} linha(s)`}
+              {isVirtual ? ' · janela virtual ativa' : ''}
+            </span>
+
+            <form onSubmit={handleJumpToRow} className="flex items-center gap-1">
+              <span className="text-[11px] text-ink-400">Ir para:</span>
+              <input
+                type="number"
+                min={1}
+                max={filteredMeasurements.length || 1}
+                placeholder="#"
+                value={jumpToRow}
+                onChange={(e) => setJumpToRow(e.target.value)}
+                className="w-12 rounded border border-ink-200 px-1 py-0.5 text-center text-xs dark:border-ink-700 dark:bg-ink-900"
+              />
+              <Button variant="ghost" size="sm" type="submit" className="h-6 px-1.5 text-xs">
+                Ir
+              </Button>
+            </form>
+          </div>
+        </div>
+
+        <div ref={tableContainerRef} className="max-h-[620px] overflow-auto">
           <table className={`w-full ${physicalDestructive ? 'min-w-[1700px]' : dimensional || physicalNonDestructive ? 'min-w-[1560px]' : attribute ? 'min-w-[1220px]' : 'min-w-[1320px]'} border-collapse text-xs`}>
             <thead className="sticky top-0 z-10 bg-ink-50 dark:bg-ink-900">
               <tr className="text-left text-[10px] uppercase tracking-wide text-ink-500">
@@ -901,244 +1086,46 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
               </tr>
             </thead>
             <tbody>
-              {measurements.length === 0 ? (
+              {filteredMeasurements.length === 0 ? (
                 <tr>
                   <td colSpan={columnCount} className="px-3 py-10 text-center text-sm text-ink-500">
-                    Nenhum dado. Adicione uma linha, preencha pelo plano ou importe uma planilha.
+                    {measurements.length === 0
+                      ? 'Nenhum dado. Adicione uma linha, preencha pelo plano ou importe uma planilha.'
+                      : 'Nenhuma medição encontrada com os filtros selecionados.'}
                   </td>
                 </tr>
               ) : (
-                measurements.map((row, idx) => (
-                  <tr key={row.id} className="odd:bg-white even:bg-ink-50/40 dark:odd:bg-ink-900 dark:even:bg-ink-950/40">
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        type="number"
-                        data-col="runOrder"
-                        data-row={idx}
-                        onKeyDown={(e) => handleCellKeyDown(e, 'runOrder', idx)}
-                        className={`${inputClass} w-16`}
-                        value={row.runOrder}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { runOrder: Number(e.target.value) })}
+                <>
+                  {topSpacerHeight > 0 ? (
+                    <tr style={{ height: topSpacerHeight }} aria-hidden="true">
+                      <td colSpan={columnCount} />
+                    </tr>
+                  ) : null}
+                  {visibleRows.map((row, relIdx) => {
+                    const actualIdx = startIndex + relIdx;
+                    return (
+                      <MeasurementRow
+                        key={row.id}
+                        row={row}
+                        idx={actualIdx}
+                        locked={locked}
+                        attribute={attribute}
+                        showPartColumn={showPartColumn}
+                        showSpecimenColumn={showSpecimenColumn}
+                        showsReference={showsReference}
+                        onPatch={patch}
+                        onRemove={removeRow}
+                        onKeyDown={handleCellKeyDown}
+                        inputClass={inputClass}
                       />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        data-col="level"
-                        data-row={idx}
-                        onKeyDown={(e) => handleCellKeyDown(e, 'level', idx)}
-                        className={`${inputClass} w-24`}
-                        value={row.level}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { level: e.target.value })}
-                        placeholder={attribute ? 'conforme' : '5'}
-                      />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        data-col="analyst"
-                        data-row={idx}
-                        onKeyDown={(e) => handleCellKeyDown(e, 'analyst', idx)}
-                        className={`${inputClass} w-28`}
-                        value={row.analyst}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { analyst: e.target.value })}
-                        placeholder="Ana"
-                      />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        data-col="day"
-                        data-row={idx}
-                        onKeyDown={(e) => handleCellKeyDown(e, 'day', idx)}
-                        className={`${inputClass} w-16`}
-                        value={row.day}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { day: e.target.value })}
-                        placeholder="D1"
-                      />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        data-col="equipment"
-                        data-row={idx}
-                        onKeyDown={(e) => handleCellKeyDown(e, 'equipment', idx)}
-                        className={`${inputClass} w-20`}
-                        value={row.equipment}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { equipment: e.target.value })}
-                        placeholder="HPLC-1"
-                      />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        data-col="lot"
-                        data-row={idx}
-                        onKeyDown={(e) => handleCellKeyDown(e, 'lot', idx)}
-                        className={`${inputClass} w-24`}
-                        value={row.lot}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { lot: e.target.value })}
-                      />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        data-col="sample"
-                        data-row={idx}
-                        onKeyDown={(e) => handleCellKeyDown(e, 'sample', idx)}
-                        className={`${inputClass} w-28`}
-                        value={row.sample}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { sample: e.target.value })}
-                      />
-                    </td>
-                    {showPartColumn ? (
-                      <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                        <input
-                          data-col="partId"
-                          data-row={idx}
-                          onKeyDown={(e) => handleCellKeyDown(e, 'partId', idx)}
-                          className={`${inputClass} w-20 font-mono`}
-                          value={row.partId ?? ''}
-                          disabled={locked}
-                          onChange={(e) => patch(row.id, { partId: e.target.value })}
-                          placeholder="P-01"
-                        />
-                      </td>
-                    ) : null}
-                    {showSpecimenColumn ? (
-                      <>
-                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                          <input
-                            data-col="specimen"
-                            data-row={idx}
-                            onKeyDown={(e) => handleCellKeyDown(e, 'specimen', idx)}
-                            className={`${inputClass} w-24 font-mono ${
-                              (row.destructive ?? true) && !(row.specimen ?? '').trim()
-                                ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20'
-                                : ''
-                            }`}
-                            value={row.specimen ?? ''}
-                            disabled={locked}
-                            onChange={(e) => patch(row.id, { specimen: e.target.value })}
-                            placeholder="CP-001"
-                          />
-                        </td>
-                        <td className="border-b border-ink-100 px-1.5 py-1 text-center dark:border-ink-800">
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
-                            checked={row.destructive ?? true}
-                            disabled={locked}
-                            onChange={(e) => patch(row.id, { destructive: e.target.checked })}
-                            aria-label={`Linha ${row.runOrder} é destrutiva`}
-                          />
-                        </td>
-                      </>
-                    ) : null}
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input
-                        type="number"
-                        data-col="replicate"
-                        data-row={idx}
-                        onKeyDown={(e) => handleCellKeyDown(e, 'replicate', idx)}
-                        className={`${inputClass} w-14 text-center`}
-                        value={row.replicate}
-                        disabled={locked}
-                        onChange={(e) => patch(row.id, { replicate: Number(e.target.value) })}
-                      />
-                    </td>
-                    {attribute ? (
-                      <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                        <input
-                          data-col="category"
-                          data-row={idx}
-                          onKeyDown={(e) => handleCellKeyDown(e, 'category', idx)}
-                          className={`${inputClass} w-32 ${
-                            (row.category ?? '').trim() === '' &&
-                            row.textValue.trim() === '' &&
-                            row.value === null
-                              ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20'
-                              : ''
-                          }`}
-                          value={row.category ?? ''}
-                          disabled={locked}
-                          onChange={(e) => patch(row.id, { category: e.target.value })}
-                          placeholder="conforme"
-                        />
-                      </td>
-                    ) : (
-                      <>
-                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                          <input
-                            type="number"
-                            step="any"
-                            data-col="value"
-                            data-row={idx}
-                            onKeyDown={(e) => handleCellKeyDown(e, 'value', idx)}
-                            className={`${inputClass} w-24 ${row.value === null && row.textValue === '' ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20' : ''}`}
-                            value={row.value ?? ''}
-                            disabled={locked}
-                            onChange={(e) => patch(row.id, { value: parseNumber(e.target.value) })}
-                          />
-                        </td>
-                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                          <input
-                            type="number"
-                            step="any"
-                            data-col="referenceValue"
-                            data-row={idx}
-                            onKeyDown={(e) => handleCellKeyDown(e, 'referenceValue', idx)}
-                            className={`${inputClass} w-24`}
-                            value={row.referenceValue ?? ''}
-                            disabled={locked}
-                            onChange={(e) => patch(row.id, { referenceValue: parseNumber(e.target.value) })}
-                            placeholder="—"
-                          />
-                        </td>
-                      </>
-                    )}
-                    {showsReference ? (
-                      <>
-                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                          <input
-                            type="number"
-                            step="any"
-                            className={`${inputClass} w-24`}
-                            value={row.refValue ?? ''}
-                            disabled={locked}
-                            onChange={(e) => patch(row.id, { refValue: parseNumber(e.target.value) })}
-                            placeholder="—"
-                          />
-                        </td>
-                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                          <input
-                            type="number"
-                            step="any"
-                            className={`${inputClass} w-24`}
-                            value={row.refUncertainty ?? ''}
-                            disabled={locked}
-                            onChange={(e) =>
-                              patch(row.id, { refUncertainty: parseNumber(e.target.value) })
-                            }
-                            placeholder="U_ref"
-                          />
-                        </td>
-                      </>
-                    ) : null}
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-32`} value={row.textValue} disabled={locked} onChange={(e) => patch(row.id, { textValue: e.target.value })} placeholder="positivo/negativo" />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-40`} value={row.notes} disabled={locked} onChange={(e) => patch(row.id, { notes: e.target.value })} />
-                    </td>
-                    <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <Button variant="ghost" size="icon" disabled={locked} onClick={() => removeRow(row.id)} title="Remover linha">
-                        <Trash2 className="h-4 w-4 text-rose-500" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))
+                    );
+                  })}
+                  {bottomSpacerHeight > 0 ? (
+                    <tr style={{ height: bottomSpacerHeight }} aria-hidden="true">
+                      <td colSpan={columnCount} />
+                    </tr>
+                  ) : null}
+                </>
               )}
             </tbody>
           </table>

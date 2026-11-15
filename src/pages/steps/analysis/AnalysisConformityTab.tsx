@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { CheckCircle2, HelpCircle, Save } from 'lucide-react';
 import type { ConformityRule, TargetUncertaintyResult, ConformityResult } from '../../../stats/conformity';
+import { validateConformityForm } from '../../../lib/conformityValidation';
 import { fmt } from '../../../stats/distributions';
 import {
   Alert,
@@ -72,6 +73,28 @@ export function AnalysisConformityTab({
 }) {
   const [selectedDecision, setSelectedDecision] = useState<ExplainableDecisionData | null>(null);
 
+  const validation = useMemo(() => {
+    return validateConformityForm({
+      lslInput,
+      uslInput,
+      rule: conformityRule,
+      guardBandFactor,
+      probabilityThreshold,
+      massFractionInput,
+      processVariationInput,
+      individualLslInput,
+    });
+  }, [
+    lslInput,
+    uslInput,
+    conformityRule,
+    guardBandFactor,
+    probabilityThreshold,
+    massFractionInput,
+    processVariationInput,
+    individualLslInput,
+  ]);
+
   if (!supportsConformityCard) {
     return (
       <Alert tone="info" title="Não aplicável">
@@ -93,13 +116,24 @@ export function AnalysisConformityTab({
               size="sm"
               onClick={saveConformityConfig}
               loading={savingConformity}
-              disabled={locked}
+              disabled={locked || !validation.isValid}
+              title={validation.isValid ? 'Salvar parâmetros' : validation.firstError ?? 'Corrija os erros antes de salvar'}
             >
               <Save className="h-3.5 w-3.5" /> Salvar regra
             </Button>
           }
         />
         <CardBody className="space-y-4">
+          {!validation.isValid ? (
+            <Alert tone="danger" title="Inconsistência nos limites e parâmetros de conformidade">
+              <ul className="list-disc pl-4 space-y-0.5 text-xs">
+                {Object.values(validation.errors).map((err) => (
+                  <li key={err}>{err}</li>
+                ))}
+              </ul>
+            </Alert>
+          ) : null}
+
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <Field label="Regra de decisão" className="lg:col-span-2">
               <Select
@@ -109,7 +143,7 @@ export function AnalysisConformityTab({
               >
                 <option value="simple_acceptance">Aceitação simples (risco compartilhado)</option>
                 <option value="guard_band">Banda de guarda (w = g · U)</option>
-                <option value="probability_threshold">
+                <option value="probability">
                   Limiar de probabilidade P(conforme) ≥ p*
                 </option>
               </Select>
