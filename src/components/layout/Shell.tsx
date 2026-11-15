@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
@@ -15,6 +15,11 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useApp } from '../../lib/app-context';
+import {
+  getPersistenceStatus,
+  onPersistenceStatusChange,
+  type PersistenceStatus,
+} from '../../lib/db';
 import { getValidationSummaries } from '../../lib/repository';
 import { Badge, Button, Modal } from '../ui';
 import { Glossary } from '../Glossary';
@@ -140,6 +145,50 @@ export function Shell({ children }: { children?: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
   const title = useTitle();
+  const [persistenceStatus, setPersistenceStatus] = useState<PersistenceStatus>(() =>
+    getPersistenceStatus(),
+  );
+
+  useEffect(
+    () => onPersistenceStatusChange(setPersistenceStatus),
+    [],
+  );
+
+  const persistenceBadge =
+    persistenceStatus === 'error'
+      ? {
+          container:
+            'border-rose-200/80 bg-rose-50/80 text-rose-800 dark:border-rose-800/60 dark:bg-rose-950/40 dark:text-rose-300',
+          dot: 'bg-rose-500',
+          text: 'Falha ao salvar localmente',
+          title:
+            'A última gravação no IndexedDB falhou. Exporte o banco e verifique o armazenamento do navegador.',
+        }
+      : persistenceStatus === 'saving'
+        ? {
+            container:
+              'border-amber-200/80 bg-amber-50/80 text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300',
+            dot: 'bg-amber-500 motion-safe:animate-pulse',
+            text: 'Salvando no SQLite…',
+            title: 'Gravando o banco SQLite no IndexedDB deste navegador.',
+          }
+        : persistenceStatus === 'saved'
+          ? {
+              container:
+                'border-emerald-200/80 bg-emerald-50/80 text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300',
+              dot: 'bg-emerald-500',
+              text: 'Offline · SQLite sincronizado',
+              title:
+                'Banco SQLite (WebAssembly) persistido no IndexedDB deste navegador. Nenhum dado sai do dispositivo.',
+            }
+          : {
+              container:
+                'border-ink-200/80 bg-ink-50/80 text-ink-600 dark:border-ink-700 dark:bg-ink-900/60 dark:text-ink-300',
+              dot: 'bg-ink-400',
+              text: 'Offline · SQLite local',
+              title:
+                'Banco SQLite (WebAssembly) mantido localmente no IndexedDB deste navegador.',
+            };
 
   return (
     <div className="min-h-screen bg-ink-50 dark:bg-ink-950">
@@ -183,9 +232,14 @@ export function Shell({ children }: { children?: ReactNode }) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <div className="hidden items-center gap-1.5 rounded-full border border-emerald-200/80 bg-emerald-50/80 px-2.5 py-1 text-[11px] font-medium text-emerald-800 dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-300 md:flex" title="Banco de dados SQLite compilado para WebAssembly persistido localmente no IndexedDB">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              <span>Offline · SQLite sincronizado</span>
+            <div
+              role="status"
+              aria-live="polite"
+              className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium md:flex ${persistenceBadge.container}`}
+              title={persistenceBadge.title}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${persistenceBadge.dot}`} />
+              <span>{persistenceBadge.text}</span>
             </div>
             <Button variant="ghost" size="icon" onClick={() => setGlossaryOpen(true)} title="Glossário">
               <BookOpen className="h-4 w-4" />

@@ -20,6 +20,28 @@ let txDepth = 0;
 let lifecycleRegistered = false;
 const listeners = new Set<() => void>();
 
+/** Estado observável da gravação do banco local no IndexedDB. */
+export type PersistenceStatus = 'idle' | 'saving' | 'saved' | 'error';
+let persistenceStatus: PersistenceStatus = 'idle';
+const persistenceListeners = new Set<(status: PersistenceStatus) => void>();
+
+function setPersistenceStatus(next: PersistenceStatus): void {
+  if (persistenceStatus === next) return;
+  persistenceStatus = next;
+  for (const listener of persistenceListeners) listener(next);
+}
+
+export function getPersistenceStatus(): PersistenceStatus {
+  return persistenceStatus;
+}
+
+export function onPersistenceStatusChange(
+  listener: (status: PersistenceStatus) => void,
+): () => void {
+  persistenceListeners.add(listener);
+  return () => persistenceListeners.delete(listener);
+}
+
 function registerLifecycleFlush(): void {
   if (typeof window === 'undefined' || lifecycleRegistered) return;
   lifecycleRegistered = true;
@@ -41,6 +63,7 @@ export function setDatabaseForTests(next: Database | null): void {
   database = next;
   dirty = false;
   txDepth = 0;
+  setPersistenceStatus('idle');
 }
 
 export async function initDb(): Promise<Database> {
@@ -80,6 +103,7 @@ function db(): Database {
 
 export function markDirty() {
   dirty = true;
+  setPersistenceStatus('saving');
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     void persist();
@@ -88,11 +112,14 @@ export function markDirty() {
 
 export async function persist(): Promise<void> {
   if (!database || !dirty) return;
+  setPersistenceStatus('saving');
   try {
     const bytes = database.export();
     await set(STORAGE_KEY, bytes);
     dirty = false;
+    setPersistenceStatus('saved');
   } catch (error) {
+    setPersistenceStatus('error');
     console.error('Falha ao persistir o banco em IndexedDB.', error);
   }
 }
