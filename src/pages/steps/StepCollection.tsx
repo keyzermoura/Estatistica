@@ -253,6 +253,24 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
   );
   const conflictReferenceItems = attributeItems.filter((item) => item.conflict);
 
+  const handleCellKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    colKey: string,
+    rowIndex: number,
+  ) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const targetRow = e.shiftKey ? rowIndex - 1 : rowIndex + 1;
+      const targetInput = document.querySelector<HTMLInputElement>(
+        `input[data-col="${colKey}"][data-row="${targetRow}"]`,
+      );
+      if (targetInput) {
+        targetInput.focus();
+        targetInput.select();
+      }
+    }
+  };
+
   const applyAttributeReference = (items: string[], reference: string) => {
     if (!items.length) return;
     const target = new Set(items);
@@ -890,11 +908,14 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                   </td>
                 </tr>
               ) : (
-                measurements.map((row) => (
+                measurements.map((row, idx) => (
                   <tr key={row.id} className="odd:bg-white even:bg-ink-50/40 dark:odd:bg-ink-900 dark:even:bg-ink-950/40">
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input
                         type="number"
+                        data-col="runOrder"
+                        data-row={idx}
+                        onKeyDown={(e) => handleCellKeyDown(e, 'runOrder', idx)}
                         className={`${inputClass} w-16`}
                         value={row.runOrder}
                         disabled={locked}
@@ -902,32 +923,96 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                       />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-24`} value={row.level} disabled={locked} onChange={(e) => patch(row.id, { level: e.target.value })} placeholder={attribute ? 'conforme' : '5'} />
+                      <input
+                        data-col="level"
+                        data-row={idx}
+                        onKeyDown={(e) => handleCellKeyDown(e, 'level', idx)}
+                        className={`${inputClass} w-24`}
+                        value={row.level}
+                        disabled={locked}
+                        onChange={(e) => patch(row.id, { level: e.target.value })}
+                        placeholder={attribute ? 'conforme' : '5'}
+                      />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-28`} value={row.analyst} disabled={locked} onChange={(e) => patch(row.id, { analyst: e.target.value })} placeholder="Ana" />
+                      <input
+                        data-col="analyst"
+                        data-row={idx}
+                        onKeyDown={(e) => handleCellKeyDown(e, 'analyst', idx)}
+                        className={`${inputClass} w-28`}
+                        value={row.analyst}
+                        disabled={locked}
+                        onChange={(e) => patch(row.id, { analyst: e.target.value })}
+                        placeholder="Ana"
+                      />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-16`} value={row.day} disabled={locked} onChange={(e) => patch(row.id, { day: e.target.value })} placeholder="D1" />
+                      <input
+                        data-col="day"
+                        data-row={idx}
+                        onKeyDown={(e) => handleCellKeyDown(e, 'day', idx)}
+                        className={`${inputClass} w-16`}
+                        value={row.day}
+                        disabled={locked}
+                        onChange={(e) => patch(row.id, { day: e.target.value })}
+                        placeholder="D1"
+                      />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-20`} value={row.equipment} disabled={locked} onChange={(e) => patch(row.id, { equipment: e.target.value })} placeholder="HPLC-1" />
+                      <input
+                        data-col="equipment"
+                        data-row={idx}
+                        onKeyDown={(e) => handleCellKeyDown(e, 'equipment', idx)}
+                        className={`${inputClass} w-20`}
+                        value={row.equipment}
+                        disabled={locked}
+                        onChange={(e) => patch(row.id, { equipment: e.target.value })}
+                        placeholder="HPLC-1"
+                      />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-24`} value={row.lot} disabled={locked} onChange={(e) => patch(row.id, { lot: e.target.value })} />
+                      <input
+                        data-col="lot"
+                        data-row={idx}
+                        onKeyDown={(e) => handleCellKeyDown(e, 'lot', idx)}
+                        className={`${inputClass} w-24`}
+                        value={row.lot}
+                        disabled={locked}
+                        onChange={(e) => patch(row.id, { lot: e.target.value })}
+                      />
                     </td>
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                      <input className={`${inputClass} w-28`} value={row.sample} disabled={locked} onChange={(e) => patch(row.id, { sample: e.target.value })} />
+                      <input
+                        data-col="sample"
+                        data-row={idx}
+                        onKeyDown={(e) => handleCellKeyDown(e, 'sample', idx)}
+                        className={`${inputClass} w-28`}
+                        value={row.sample}
+                        disabled={locked}
+                        onChange={(e) => patch(row.id, { sample: e.target.value })}
+                      />
                     </td>
                     {showPartColumn ? (
                       <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
-                        <input className={`${inputClass} w-20 font-mono`} value={row.partId ?? ''} disabled={locked} onChange={(e) => patch(row.id, { partId: e.target.value })} placeholder="P-01" />
+                        <input
+                          data-col="partId"
+                          data-row={idx}
+                          onKeyDown={(e) => handleCellKeyDown(e, 'partId', idx)}
+                          className={`${inputClass} w-20 font-mono`}
+                          value={row.partId ?? ''}
+                          disabled={locked}
+                          onChange={(e) => patch(row.id, { partId: e.target.value })}
+                          placeholder="P-01"
+                        />
                       </td>
                     ) : null}
                     {showSpecimenColumn ? (
                       <>
                         <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                           <input
+                            data-col="specimen"
+                            data-row={idx}
+                            onKeyDown={(e) => handleCellKeyDown(e, 'specimen', idx)}
                             className={`${inputClass} w-24 font-mono ${
                               (row.destructive ?? true) && !(row.specimen ?? '').trim()
                                 ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20'
@@ -954,6 +1039,9 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input
                         type="number"
+                        data-col="replicate"
+                        data-row={idx}
+                        onKeyDown={(e) => handleCellKeyDown(e, 'replicate', idx)}
                         className={`${inputClass} w-14 text-center`}
                         value={row.replicate}
                         disabled={locked}
@@ -963,6 +1051,9 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                     {attribute ? (
                       <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                         <input
+                          data-col="category"
+                          data-row={idx}
+                          onKeyDown={(e) => handleCellKeyDown(e, 'category', idx)}
                           className={`${inputClass} w-32 ${
                             (row.category ?? '').trim() === '' &&
                             row.textValue.trim() === '' &&
@@ -982,6 +1073,9 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                           <input
                             type="number"
                             step="any"
+                            data-col="value"
+                            data-row={idx}
+                            onKeyDown={(e) => handleCellKeyDown(e, 'value', idx)}
                             className={`${inputClass} w-24 ${row.value === null && row.textValue === '' ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20' : ''}`}
                             value={row.value ?? ''}
                             disabled={locked}
@@ -992,6 +1086,9 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                           <input
                             type="number"
                             step="any"
+                            data-col="referenceValue"
+                            data-row={idx}
+                            onKeyDown={(e) => handleCellKeyDown(e, 'referenceValue', idx)}
                             className={`${inputClass} w-24`}
                             value={row.referenceValue ?? ''}
                             disabled={locked}
