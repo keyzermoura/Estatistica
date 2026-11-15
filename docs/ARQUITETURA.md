@@ -124,7 +124,7 @@ estat2/
 │     ├─ analysis-utils.ts    ← métricas e resumos compartilhados
 │     ├─ parameters/          ← módulos por família (analítico/dimensional/físico/atributo)
 │     ├─ index.ts
-│     └─ __tests__/           ← referência numérica + caracterização (13 arquivos)
+│     └─ __tests__/           ← referência numérica + caracterização (18 arquivos)
 ├─ scripts/
 │  └─ setup.mjs               ← instalação + verificação em 1 comando
 ├─ README.md
@@ -341,4 +341,4 @@ relatório; as listas originais permanecem intactas na trilha de auditoria.
   incluindo Gage R&R cruzado AIAG, ANOVA aninhada de Montgomery, homogeneidade
   com justificativa obrigatória, não normalidade sem transformação automática (Wilks),
   covariáveis ambientais e emissão de DOCX (`PK`) e PDF (`%PDF`) nas 5 famílias
-  (**18 arquivos de teste, 199 casos no total** — ver matriz em `docs/VALIDACAO_SOFTWARE.md`).
+  (**18 arquivos de teste, 207 casos no total** — ver matriz em `docs/VALIDACAO_SOFTWARE.md`).

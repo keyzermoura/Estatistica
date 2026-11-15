@@ -66,7 +66,7 @@ BPL**.
 Pré-requisitos: Node.js 18+ (recomendado 20 LTS) e `npm`.
 
 ```bash
-# Instalação completa + verificação de tipos + todos os 203 testes + build de produção
+# Instalação completa + verificação de tipos + todos os 207 testes + build de produção
 npm run setup
 
 # Ou executando cada etapa individualmente (no Windows PowerShell usar npm.cmd):
@@ -77,7 +77,7 @@ npm run build
 
 Critério de aceite da verificação do software:
 - `npm run typecheck` (`tsc -b`) termina com código `0` e zero erros de tipo;
-- `npm test` (`vitest run`) aprova todos os **18 arquivos de teste / 203 casos**, sem testes pulados ou modificados para relaxar asserções;
+- `npm test` (`vitest run`) aprova todos os **18 arquivos de teste / 207 casos**, sem testes pulados ou modificados para relaxar asserções;
 - `npm run build` gera o bundle estático em `dist/` com código `0`.
 
 ## 5. Limitações conhecidas e declarações de uso
