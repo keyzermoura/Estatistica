@@ -23,6 +23,7 @@ import type { PowerPoint } from '../../lib/types';
 import type { AnalysisChart } from '../../stats/analysis-types';
 import type { HistogramResult, NormalProbabilityPlotResult } from '../../stats/normality';
 import type { ConformityResult } from '../../stats/conformity';
+export * from './theme';
 
 const axis = {
   stroke: '#94a3b8',
