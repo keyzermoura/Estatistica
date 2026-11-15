@@ -88,7 +88,10 @@ export function ValidationWizard() {
   const analysis = useMemo(() => {
     if (!bundle) return null;
     const profile = getProfileForMethod(bundle.method);
-    const dimensional = profile.id === 'dimensional';
+    const toleranceProfile =
+      profile.id === 'dimensional' ||
+      profile.id === 'physical-destructive' ||
+      profile.id === 'physical-nondestructive';
     return analyzeValidation(
       bundle.parameters,
       bundle.measurements,
@@ -106,12 +109,15 @@ export function ValidationWizard() {
         usl: bundle.method.usl,
         resolution: bundle.method.resolution,
         unit: bundle.method.unit,
-        conformity: dimensional
+        processVariation: bundle.validation.reportConfig.processVariation ?? null,
+        includeMethodComparison: true,
+        conformity: toleranceProfile
           ? {
-              rule: 'guard_band',
+              rule: bundle.validation.reportConfig.conformityRule ?? 'guard_band',
               coverageFactor: 2,
-              guardBandFactor: 1,
-              probabilityThreshold: 0.95,
+              guardBandFactor: bundle.validation.reportConfig.guardBandFactor ?? 1,
+              probabilityThreshold: bundle.validation.reportConfig.probabilityThreshold ?? 0.95,
+              individualLsl: bundle.validation.reportConfig.individualLsl ?? null,
             }
           : undefined,
       },

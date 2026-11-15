@@ -8,7 +8,7 @@ import {
 } from '../validation';
 
 describe('validações do modelo de dados', () => {
-  it('exige part_id na família dimensional', () => {
+  it('exige part_id nas famílias dimensional e physical-nondestructive', () => {
     const issues = validateMeasurementIdentities(
       [
         { runOrder: 1, partId: 'P-1', specimen: '', destructive: false },
@@ -21,6 +21,9 @@ describe('validações do modelo de dados', () => {
     expect(issues[0]).toContain('Linha 2');
     expect(() =>
       assertMeasurementIdentities([{ runOrder: 1, partId: '' }], 'dimensional'),
+    ).toThrow(/part_id/);
+    expect(() =>
+      assertMeasurementIdentities([{ runOrder: 1, partId: '' }], 'physical-nondestructive'),
     ).toThrow(/part_id/);
     expect(() =>
       assertMeasurementIdentities([{ runOrder: 1, partId: '' }], 'analytical'),

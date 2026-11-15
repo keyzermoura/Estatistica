@@ -16,11 +16,13 @@ import type { Measurement } from '../../lib/types';
 import { replaceMeasurements, updateValidation } from '../../lib/repository';
 import { assertMeasurementIdentities } from '../../lib/validation';
 import {
+  computeBufferSha256,
   downloadDesignTemplate,
   downloadMeasurementsCsv,
   downloadMeasurementsXlsx,
   importedToMeasurements,
-  parseSpreadsheet,
+  parseSpreadsheetBuffer,
+  validateImportBalance,
 } from '../../lib/export';
 import { parseNumber, uid } from '../../lib/utils';
 import { fmt } from '../../stats/distributions';
@@ -44,6 +46,7 @@ const inputClass =
 
 function blankMeasurement(bundle: StepProps['bundle'], index: number): Measurement {
   const run = bundle.design?.plan.runs[index];
+  const destructiveFamily = bundle.method.family === 'physical-destructive';
   return {
     id: uid('m'),
     validationId: bundle.validation.id,
@@ -55,8 +58,8 @@ function blankMeasurement(bundle: StepProps['bundle'], index: number): Measureme
     lot: run?.lot ?? '',
     sample: run?.sample ?? '',
     partId: run?.partId ?? '',
-    specimen: '',
-    destructive: false,
+    specimen: run?.specimen ?? '',
+    destructive: run?.destructive ?? destructiveFamily,
     condition: null,
     refValue: null,
     refUncertainty: null,
@@ -73,7 +76,16 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
   const toast = useToast();
   const locked = bundle.validation.locked;
   const dimensional = bundle.method.family === 'dimensional';
+  const physicalDestructive = bundle.method.family === 'physical-destructive';
+  const physicalNonDestructive = bundle.method.family === 'physical-nondestructive';
+  const physical = physicalDestructive || physicalNonDestructive;
   const attribute = bundle.method.family === 'attribute';
+  /** Perfis que usam Peça como identificador do Gage R&R. */
+  const requiresPart = dimensional || physicalNonDestructive;
+  /** Perfis que registram valor de referência do padrão. */
+  const showsReference = dimensional || physical;
+  const showPartColumn = !attribute && !physicalDestructive;
+  const showSpecimenColumn = physicalDestructive;
   const [measurements, setMeasurements] = useState<Measurement[]>(bundle.measurements);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -83,6 +95,11 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
   const [bulkReference, setBulkReference] = useState(
     () => bundle.design?.input.levels?.[0] ?? '',
   );
+  const [importAudit, setImportAudit] = useState<{
+    fileName: string;
+    sha256: string;
+    warnings: string[];
+  } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -162,11 +179,31 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
     }
     const counts = [...byAnalyst.values()];
     const unbalanced = counts.length > 1 && Math.max(...counts) !== Math.min(...counts);
-    const missingParts = dimensional
+    const missingParts = requiresPart
       ? numeric.filter(
           (row) =>
             !(row.partId ?? '').trim() &&
             (row.refValue === null || row.refValue === undefined),
+        ).length
+      : 0;
+    const specimenCounts = new Map<string, number>();
+    for (const row of measurements) {
+      const specimen = (row.specimen ?? '').trim();
+      if (!specimen) continue;
+      specimenCounts.set(specimen, (specimenCounts.get(specimen) ?? 0) + 1);
+    }
+    const duplicateSpecimens = [...specimenCounts.values()].reduce(
+      (sum, count) => sum + Math.max(0, count - 1),
+      0,
+    );
+    const missingSpecimens = physicalDestructive
+      ? measurements.filter(
+          (row) => row.destructive !== false && !(row.specimen ?? '').trim(),
+        ).length
+      : 0;
+    const missingDestructiveSamples = physicalDestructive
+      ? measurements.filter(
+          (row) => row.destructive !== false && !row.sample.trim(),
         ).length
       : 0;
     return {
@@ -184,12 +221,16 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
       byAnalyst,
       unbalanced,
       missingParts,
+      duplicateSpecimens,
+      missingSpecimens,
+      missingDestructiveSamples,
     };
   }, [
     measurements,
     bundle.method.rangeMin,
     bundle.method.rangeMax,
-    dimensional,
+    requiresPart,
+    physicalDestructive,
     attribute,
   ]);
 
@@ -252,8 +293,8 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
       lot: run.lot,
       sample: run.sample,
       partId: run.partId ?? '',
-      specimen: '',
-      destructive: false,
+      specimen: run.specimen ?? '',
+      destructive: run.destructive ?? physicalDestructive,
       condition: null,
       refValue: null,
       refUncertainty: null,
@@ -274,15 +315,27 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
     if (!file) return;
     setImporting(true);
     try {
-      const rows = await parseSpreadsheet(file);
+      const buffer = await file.arrayBuffer();
+      const [fileSha256, rows] = await Promise.all([
+        computeBufferSha256(buffer),
+        Promise.resolve(parseSpreadsheetBuffer(buffer)),
+      ]);
       if (!rows.length) {
         toast.push('Nenhuma linha com valor ou texto foi encontrada na planilha.', 'danger');
         return;
       }
       assertMeasurementIdentities(rows, bundle.method.family);
+      const balanceWarnings = validateImportBalance(rows, bundle.method.family);
+      setImportAudit({
+        fileName: file.name,
+        sha256: fileSha256,
+        warnings: balanceWarnings,
+      });
       setMeasurements(importedToMeasurements(rows, bundle.validation.id));
       setReferenceDrafts({});
-      toast.push(`${rows.length} linha(s) importadas. Revise e clique em salvar.`);
+      toast.push(
+        `${rows.length} linha(s) importadas (SHA-256 ${fileSha256.slice(0, 12)}…). Revise e clique em salvar.`,
+      );
     } catch (error) {
       toast.push(error instanceof Error ? error.message : 'Falha ao importar planilha.', 'danger');
     } finally {
@@ -295,6 +348,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
     if (locked) return false;
     setSaving(true);
     try {
+      const actor = bundle.validation.responsible.trim() || 'sistema';
       const normalized = measurements.map((row, index) => ({
         ...row,
         runOrder: row.runOrder || index + 1,
@@ -302,11 +356,11 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
       replaceMeasurements(
         bundle.validation.id,
         normalized,
-        'sistema',
+        actor,
         'Coleta editada na interface',
       );
       if (bundle.validation.status === 'draft') {
-        updateValidation({ ...bundle.validation, status: 'in_progress' });
+        updateValidation({ ...bundle.validation, status: 'in_progress' }, actor);
       }
       toast.push('Dados de coleta salvos.');
       reload();
@@ -320,6 +374,14 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
   };
 
   const bundleForExport = { ...bundle, measurements };
+  const columnCount =
+    7 +
+    (showPartColumn ? 1 : 0) +
+    1 +
+    (attribute ? 1 : 2) +
+    (showsReference ? 2 : 0) +
+    (showSpecimenColumn ? 2 : 0) +
+    3;
 
   return (
     <StepShell
@@ -344,6 +406,23 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
               <strong>Valor de referência</strong> é o valor aceito do padrão (usado em
               tendência/linearidade e estabilidade). A coluna “Referência” continua disponível
               para o valor nominal de exatidão.
+            </p>
+          ) : null}
+          {physicalNonDestructive ? (
+            <p className="mt-1">
+              No perfil físico <strong>não destrutivo</strong>, a mesma peça é medida por todos
+              os operadores e réplicas, sem consumo. <strong>Peça</strong> identifica a peça
+              reutilizada no Gage R&amp;R e <strong>Valor ref. padrão</strong> é o valor aceito
+              do padrão para tendência/linearidade/estabilidade.
+            </p>
+          ) : null}
+          {physicalDestructive ? (
+            <p className="mt-1">
+              No perfil físico <strong>destrutivo</strong>, cada linha consome um{' '}
+              <strong>corpo de prova</strong> distinto. Informe a <strong>Amostra</strong>{' '}
+              (lote/grupo de origem), o <strong>Analista</strong> e um{' '}
+              <strong>Corpo de prova</strong> único; mantenha “Destrutivo” marcado. O mesmo
+              corpo de prova não pode ser medido duas vezes.
             </p>
           ) : null}
           {attribute ? (
@@ -379,8 +458,16 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
             <>
               {quality.missing ? <Badge tone="warning">{quality.missing} sem valor</Badge> : null}
               {quality.outside.length ? <Badge tone="danger">{quality.outside.length} fora da faixa</Badge> : null}
-              {dimensional && quality.missingParts ? (
+              {requiresPart && quality.missingParts ? (
                 <Badge tone="warning">{quality.missingParts} sem peça</Badge>
+              ) : null}
+              {showSpecimenColumn && quality.missingSpecimens ? (
+                <Badge tone="warning">{quality.missingSpecimens} sem corpo de prova</Badge>
+              ) : null}
+              {showSpecimenColumn && quality.duplicateSpecimens ? (
+                <Badge tone="danger">
+                  {quality.duplicateSpecimens} corpo(s) de prova duplicado(s)
+                </Badge>
               ) : null}
             </>
           )}
@@ -449,6 +536,23 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
         )}
       </div>
 
+      {importAudit ? (
+        <Alert
+          tone={importAudit.warnings.length ? 'warning' : 'success'}
+          title={`Arquivo importado: ${importAudit.fileName} · SHA-256 ${importAudit.sha256.slice(0, 16)}…`}
+        >
+          {importAudit.warnings.length ? (
+            <ul className="list-disc pl-4">
+              {importAudit.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          ) : (
+            'Integridade SHA-256 registrada e balanceamento das réplicas verificado.'
+          )}
+        </Alert>
+      ) : null}
+
       {quality.unbalanced ? (
         <Alert tone="warning" title="Desbalanceamento entre analistas/laboratórios">
           {[...quality.byAnalyst.entries()].map(([name, count]) => `${name}: ${count}`).join(' · ')}.{' '}
@@ -480,11 +584,35 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
         </Alert>
       ) : null}
 
-      {dimensional && quality.missingParts ? (
+      {requiresPart && quality.missingParts ? (
         <Alert tone="warning" title="Medições sem peça">
           {quality.missingParts} medição(ões) numérica(s) não têm identificação de peça e não
           entram no Gage R&amp;R. Preencha a coluna “Peça” ou use um valor de referência se a
           linha for de tendência/estabilidade.
+        </Alert>
+      ) : null}
+
+      {showSpecimenColumn && quality.missingSpecimens ? (
+        <Alert tone="warning" title="Corpos de prova não identificados">
+          {quality.missingSpecimens} linha(s) destrutiva(s) não têm corpo de prova. No ensaio
+          destrutivo, cada réplica consome um corpo de prova único; sem essa identificação a
+          repetibilidade e a reprodutibilidade ficam “não avaliadas”.
+        </Alert>
+      ) : null}
+
+      {showSpecimenColumn && quality.duplicateSpecimens ? (
+        <Alert tone="danger" title="Corpos de prova duplicados">
+          Há {quality.duplicateSpecimens} corpo(s) de prova repetido(s). Cada corpo de prova é
+          consumido uma única vez; corrija os identificadores antes de analisar. O estudo
+          aninhado não será avaliado enquanto houver duplicidade.
+        </Alert>
+      ) : null}
+
+      {showSpecimenColumn && quality.missingDestructiveSamples ? (
+        <Alert tone="warning" title="Amostras não identificadas">
+          {quality.missingDestructiveSamples} linha(s) destrutiva(s) não têm amostra. A amostra
+          identifica o lote/grupo de onde o corpo de prova foi retirado e é necessária para o
+          modelo aninhado.
         </Alert>
       ) : null}
 
@@ -707,7 +835,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
           }
         />
         <div className="max-h-[620px] overflow-auto">
-          <table className={`w-full ${dimensional ? 'min-w-[1560px]' : attribute ? 'min-w-[1220px]' : 'min-w-[1320px]'} border-collapse text-xs`}>
+          <table className={`w-full ${physicalDestructive ? 'min-w-[1700px]' : dimensional || physicalNonDestructive ? 'min-w-[1560px]' : attribute ? 'min-w-[1220px]' : 'min-w-[1320px]'} border-collapse text-xs`}>
             <thead className="sticky top-0 z-10 bg-ink-50 dark:bg-ink-900">
               <tr className="text-left text-[10px] uppercase tracking-wide text-ink-500">
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Ordem</th>
@@ -719,8 +847,18 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Equip.</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Lote</th>
                 <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Amostra</th>
-                {!attribute ? (
+                {showPartColumn ? (
                   <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Peça</th>
+                ) : null}
+                {showSpecimenColumn ? (
+                  <>
+                    <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">
+                      Corpo de prova
+                    </th>
+                    <th className="border-b border-ink-200 px-2 py-2 text-center dark:border-ink-800">
+                      Destrutivo
+                    </th>
+                  </>
                 ) : null}
                 <th className="border-b border-ink-200 px-2 py-2 text-center dark:border-ink-800">Rep.</th>
                 {!attribute ? (
@@ -733,7 +871,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                     Categoria observada
                   </th>
                 )}
-                {dimensional ? (
+                {showsReference ? (
                   <>
                     <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Valor ref. padrão</th>
                     <th className="border-b border-ink-200 px-2 py-2 dark:border-ink-800">Incerteza ref.</th>
@@ -747,7 +885,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
             <tbody>
               {measurements.length === 0 ? (
                 <tr>
-                  <td colSpan={dimensional ? 16 : attribute ? 12 : 14} className="px-3 py-10 text-center text-sm text-ink-500">
+                  <td colSpan={columnCount} className="px-3 py-10 text-center text-sm text-ink-500">
                     Nenhum dado. Adicione uma linha, preencha pelo plano ou importe uma planilha.
                   </td>
                 </tr>
@@ -781,10 +919,37 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input className={`${inputClass} w-28`} value={row.sample} disabled={locked} onChange={(e) => patch(row.id, { sample: e.target.value })} />
                     </td>
-                    {!attribute ? (
+                    {showPartColumn ? (
                       <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                         <input className={`${inputClass} w-20 font-mono`} value={row.partId ?? ''} disabled={locked} onChange={(e) => patch(row.id, { partId: e.target.value })} placeholder="P-01" />
                       </td>
+                    ) : null}
+                    {showSpecimenColumn ? (
+                      <>
+                        <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
+                          <input
+                            className={`${inputClass} w-24 font-mono ${
+                              (row.destructive ?? true) && !(row.specimen ?? '').trim()
+                                ? 'border-amber-300 bg-amber-50/60 dark:bg-amber-950/20'
+                                : ''
+                            }`}
+                            value={row.specimen ?? ''}
+                            disabled={locked}
+                            onChange={(e) => patch(row.id, { specimen: e.target.value })}
+                            placeholder="CP-001"
+                          />
+                        </td>
+                        <td className="border-b border-ink-100 px-1.5 py-1 text-center dark:border-ink-800">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+                            checked={row.destructive ?? true}
+                            disabled={locked}
+                            onChange={(e) => patch(row.id, { destructive: e.target.checked })}
+                            aria-label={`Linha ${row.runOrder} é destrutiva`}
+                          />
+                        </td>
+                      </>
                     ) : null}
                     <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                       <input
@@ -836,7 +1001,7 @@ export function StepCollection({ bundle, goTo, reload }: StepProps) {
                         </td>
                       </>
                     )}
-                    {dimensional ? (
+                    {showsReference ? (
                       <>
                         <td className="border-b border-ink-100 px-1.5 py-1 dark:border-ink-800">
                           <input

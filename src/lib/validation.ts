@@ -51,8 +51,8 @@ export function assertMethodTolerance(method: Pick<Method, 'lsl' | 'usl'>): void
 
 /**
  * Regras de importação/gravação das medições:
- *  - família dimensional exige `part_id`;
- *  - `destructive = 1` exige `specimen`.
+ *  - famílias dimensional e físico não destrutivo exigem `part_id`;
+ *  - `destructive = 1` exige `specimen` (ensaio físico destrutivo).
  *
  * As demais famílias não são restringidas nesta etapa.
  */
@@ -61,11 +61,13 @@ export function validateMeasurementIdentities(
   family: MethodFamily,
 ): string[] {
   const issues: string[] = [];
+  const requiresPart =
+    family === 'dimensional' || family === 'physical-nondestructive';
   rows.forEach((row, index) => {
     const line = Number.isFinite(row.runOrder) ? Number(row.runOrder) : index + 1;
-    if (family === 'dimensional' && !String(row.partId ?? '').trim()) {
+    if (requiresPart && !String(row.partId ?? '').trim()) {
       issues.push(
-        `Linha ${line}: o identificador da peça (part_id) é obrigatório para a família dimensional.`,
+        `Linha ${line}: o identificador da peça (part_id) é obrigatório para a família ${family}.`,
       );
     }
     const destructive = row.destructive === true || Number(row.destructive) === 1;

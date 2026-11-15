@@ -83,12 +83,14 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
     });
   }, [bundle.report, bundle.validation]);
 
+  const actor = bundle.validation.responsible.trim() || 'sistema';
+
   const patchConfig = (patch: Partial<typeof config>) => setConfig((prev) => ({ ...prev, ...patch }));
 
   const persistConfig = (): boolean => {
     if (locked) return false;
     try {
-      updateValidation({ ...bundle.validation, reportConfig: config }, 'sistema', 'Configuração do relatório');
+      updateValidation({ ...bundle.validation, reportConfig: config }, actor, 'Configuração do relatório');
       toast.push('Configuração do relatório salva.');
       reload();
       return true;
@@ -103,12 +105,12 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
     try {
       const effectiveValidation: Validation = { ...bundle.validation, reportConfig: config };
       if (!locked) {
-        updateValidation(effectiveValidation, 'sistema', 'Geração de relatório');
+        updateValidation(effectiveValidation, actor, 'Geração de relatório');
       }
       const generated = await composeReport(
         { ...bundle, validation: effectiveValidation, report: null },
         analysis,
-        bundle.validation.responsible || 'sistema',
+        actor,
       );
       const reuse = bundle.report && bundle.report.version === bundle.validation.version;
       const record: ReportRecord = reuse
@@ -132,7 +134,7 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
       record.approvedAt = null;
       record.status = 'draft';
       record.locked = false;
-      saveReport(record, 'sistema');
+      saveReport(record, actor);
       setReport(record);
       toast.push('Prévia do relatório gerada e registrada.');
       reload();
@@ -192,8 +194,9 @@ export function StepReport({ bundle, analysis, goTo, reload }: StepProps) {
         const bytes = await buildReportPdf(bundle, analysis, current);
         downloadReportPdf(bytes, bundle);
       } else if (kind === 'zip') {
-        const bytes = await buildEvidenceZip(bundle, analysis, current);
-        downloadEvidenceZip(bytes, bundle);
+        await buildEvidenceZip(bundle, analysis, current).then((bytes) =>
+          downloadEvidenceZip(bytes, bundle),
+        );
       } else if (kind === 'html') {
         downloadReportHtml(bundle, current, previewRef.current);
       } else if (kind === 'json') {

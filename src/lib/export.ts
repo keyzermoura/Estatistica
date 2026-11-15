@@ -673,3 +673,9 @@ export function downloadReportHtml(
 export function downloadBlobFile(blob: Blob, filename: string) {
   downloadBlob(blob, filename);
 }
+
+export {
+  computeBufferSha256,
+  parseSpreadsheetBuffer,
+  validateImportBalance,
+} from './spreadsheet';

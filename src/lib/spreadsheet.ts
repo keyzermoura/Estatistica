@@ -8,6 +8,7 @@
  */
 
 import * as XLSX from 'xlsx';
+import { sha256 } from './utils';
 import type {
   DesignRecord,
   Measurement,
@@ -114,6 +115,10 @@ export function buildMeasurementsXlsx(input: MeasurementWorkbookInput): Uint8Arr
         'Equipamento': r.equipment,
         'Lote': r.lot,
         'Amostra': r.sample,
+        'Parte': r.partId ?? '',
+        'Corpo de prova': r.specimen ?? '',
+        'Destrutivo (0/1)':
+          r.destructive === undefined ? '' : r.destructive ? 1 : 0,
         'Réplica': r.replicate,
         'Combinação': r.combination,
       })),
@@ -151,9 +156,10 @@ export function buildDesignTemplateXlsx(
       'Equipamento': r.equipment,
       'Lote': r.lot,
       'Amostra': r.sample,
-      'Parte': '',
-      'Corpo de prova': '',
-      'Destrutivo (0/1)': '',
+      'Parte': r.partId ?? '',
+      'Corpo de prova': r.specimen ?? '',
+      'Destrutivo (0/1)':
+        r.destructive === undefined ? '' : r.destructive ? 1 : 0,
       'Réplica': r.replicate,
       'Valor': '',
       'Referência': '',
@@ -215,17 +221,17 @@ const normalizeHeader = (value: string): string =>
 const HEADER_ALIASES: Record<string, string[]> = {
   runOrder: ['ordem', 'ordemexecucao', 'run', 'runorder', 'sequencia'],
   level: ['nivel', 'nivelconcentracao', 'concentracao', 'level', 'concentration'],
-  analyst: ['analista', 'analistalab', 'laboratorio', 'lab', 'analyst'],
-  day: ['dia', 'day', 'data'],
-  equipment: ['equipamento', 'equipment', 'instrumento'],
+  analyst: ['analista', 'analistalab', 'laboratorio', 'lab', 'analyst', 'operador', 'operator', 'avaliador'],
+  day: ['dia', 'day', 'data', 'timestamp'],
+  equipment: ['equipamento', 'equipment', 'instrumento', 'equip', 'device', 'maquina', 'celula', 'loadcell', 'instron', 'emic'],
   lot: ['lote', 'lot', 'batch'],
   sample: ['amostra', 'sample', 'id'],
-  partId: ['parte', 'partid', 'peca', 'idpeca', 'identificacaopeca'],
-  specimen: ['corpodeprova', 'specimen', 'especime', 'provete', 'exemplar'],
+  partId: ['parte', 'partid', 'peca', 'idpeca', 'identificacaopeca', 'part', 'componente'],
+  specimen: ['corpodeprova', 'specimen', 'especime', 'provete', 'exemplar', 'cp', 'corpoprova', 'knot'],
   destructive: ['destrutivo', 'destrutivo01', 'destructive', 'ensaiodestrutivo'],
   replicate: ['replica', 'replicate', 'rep'],
-  value: ['valor', 'resultado', 'value', 'resposta', 'response', 'medicao'],
-  referenceValue: ['referencia', 'reference', 'valoreferencia', 'nominal', 'fortificado'],
+  value: ['valor', 'resultado', 'value', 'resposta', 'response', 'medicao', 'forca', 'force', 'load', 'peakload', 'peakforce', 'maxforce', 'tensile', 'leitura', 'reading', 'area'],
+  referenceValue: ['referencia', 'reference', 'valoreferencia', 'nominal', 'fortificado', 'valornominal', 'padrao', 'target', 'crm'],
   refValue: [
     'valordereferencia',
     'valordereferenciapadrao',
@@ -243,7 +249,7 @@ const HEADER_ALIASES: Record<string, string[]> = {
   ],
   temperature: ['temperatura', 'temperature', 'temp'],
   humidity: ['umidade', 'humidity', 'ur'],
-  testSpeed: ['velocidadedeensaio', 'velocidade', 'testspeed', 'velocidadeensaio'],
+  testSpeed: ['velocidadedeensaio', 'velocidade', 'testspeed', 'velocidadeensaio', 'speed', 'crosshead'],
   otherCondition: ['outrascondicoes', 'outras', 'otherconditions', 'condicoesadicionais'],
   category: ['categoria', 'category', 'classificacao', 'resultadocategorico'],
   textValue: ['texto', 'textvalue', 'resultadotexto', 'qualitativo'],
@@ -340,4 +346,86 @@ export function importedToMeasurements(
       ...row,
     };
   });
+}
+
+/** Calcula o digest SHA-256 hexadecimal do buffer bruto importado (ALCOA+ / 21 CFR Part 11). */
+export async function computeBufferSha256(
+  buffer: ArrayBuffer | Uint8Array,
+): Promise<string> {
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  return sha256(bytes);
+}
+
+/**
+ * Verifica consistência e balanceamento básico das linhas importadas,
+ * retornando avisos não bloqueantes para orientar a revisão do analista.
+ */
+export function validateImportBalance(
+  rows: ReadonlyArray<{
+    analyst?: string;
+    level?: string;
+    sample?: string;
+    partId?: string;
+    specimen?: string;
+    value?: number | null;
+  }>,
+  family?: string,
+): string[] {
+  if (!rows.length) {
+    return ['Nenhuma medição válida encontrada para verificar balanceamento.'];
+  }
+  const warnings: string[] = [];
+  const cells = new Map<string, number>();
+
+  if (family === 'physical-destructive') {
+    const seenSpecimens = new Set<string>();
+    const dupSpecimens = new Set<string>();
+    for (const row of rows) {
+      const specimen = (row.specimen ?? '').trim();
+      if (specimen) {
+        if (seenSpecimens.has(specimen)) dupSpecimens.add(specimen);
+        seenSpecimens.add(specimen);
+      }
+      if (specimen && (row.sample ?? '').trim() && (row.analyst ?? '').trim()) {
+        const key = `${row.analyst!.trim()}\u0000${row.sample!.trim()}`;
+        cells.set(key, (cells.get(key) ?? 0) + 1);
+      }
+    }
+    if (dupSpecimens.size > 0) {
+      warnings.push(
+        `Corpos de prova duplicados detectados (${dupSpecimens.size}): ${[...dupSpecimens].slice(0, 5).join(', ')}.`,
+      );
+    }
+  } else if (family === 'dimensional') {
+    for (const row of rows) {
+      const part = (row.partId ?? '').trim();
+      const analyst = (row.analyst ?? '').trim();
+      if (part && analyst) {
+        const key = `${analyst}\u0000${part}`;
+        cells.set(key, (cells.get(key) ?? 0) + 1);
+      }
+    }
+  } else {
+    for (const row of rows) {
+      if (row.value !== null && row.value !== undefined) {
+        const key = `${(row.level ?? '').trim()}\u0000${(row.analyst ?? '').trim()}`;
+        cells.set(key, (cells.get(key) ?? 0) + 1);
+      }
+    }
+  }
+
+  if (cells.size > 1) {
+    const counts = [...cells.values()];
+    const distinct = new Set(counts);
+    if (distinct.size > 1) {
+      warnings.push(
+        `Delineamento desbalanceado na importação: contagem de réplicas por célula varia de ${Math.min(...counts)} a ${Math.max(...counts)}.`,
+      );
+    }
+    if (Math.min(...counts) < 2) {
+      warnings.push('Há células com apenas 1 réplica; repetibilidade requer pelo menos 2 réplicas.');
+    }
+  }
+
+  return warnings;
 }

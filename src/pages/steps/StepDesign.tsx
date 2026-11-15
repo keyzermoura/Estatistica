@@ -52,6 +52,9 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
   const locked = bundle.validation.locked;
   const profile = getProfileForMethod(bundle.method);
   const attribute = profile.id === 'attribute';
+  const physicalDestructive = profile.id === 'physical-destructive';
+  const physicalNonDestructive = profile.id === 'physical-nondestructive';
+  const physical = physicalDestructive || physicalNonDestructive;
   const defaultInput = (): DesignInput => {
     const template = profile.defaultDesignType
       ? profile.designTemplates.find(
@@ -195,6 +198,7 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
     });
     setSaving(true);
     try {
+      const actor = bundle.validation.responsible.trim() || 'sistema';
       saveDesign(
         {
           id: bundle.design?.id ?? uid('design'),
@@ -204,11 +208,11 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
           seed: normalized.seed,
           createdAt: bundle.design?.createdAt ?? nowIso(),
         },
-        'sistema',
+        actor,
         'Delineamento atualizado',
       );
       if (bundle.validation.status === 'draft') {
-        updateValidation({ ...bundle.validation, status: 'in_progress' });
+        updateValidation({ ...bundle.validation, status: 'in_progress' }, actor);
       }
       setInput(normalized);
       setPlan(nextPlan);
@@ -231,7 +235,11 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
       description={
         attribute
           ? 'Defina itens, avaliadores, réplicas e categorias de referência; a ordem e os códigos das amostras são aleatorizados por uma semente reproduzível.'
-          : 'Converta o objetivo estatístico em um plano executável: confiança, poder, σ, efeito mínimo, margem, fatores, níveis e aleatorização reprodutível.'
+          : physicalDestructive
+            ? 'Planeje operadores, amostras por operador e corpos de prova por amostra; cada corpo de prova é consumido uma única vez e a ordem é aleatorizada por uma semente reproduzível.'
+            : physicalNonDestructive
+              ? 'Planeje peças, operadores e réplicas do Gage R&R cruzado; as peças são reutilizadas e a ordem é aleatorizada por uma semente reproduzível.'
+              : 'Converta o objetivo estatístico em um plano executável: confiança, poder, σ, efeito mínimo, margem, fatores, níveis e aleatorização reprodutível.'
       }
       locked={locked}
       help={
@@ -262,6 +270,31 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
               categorias.
             </p>
           </>
+        ) : physicalDestructive ? (
+          <>
+            <p>
+              O delineamento recomendado é o <strong>estudo aninhado destrutivo</strong>:
+              operadores medem amostras do mesmo lote e cada corpo de prova é consumido uma
+              única vez. O modelo é Operador &gt; Amostra(Operador) &gt; Corpo de prova.
+            </p>
+            <p className="mt-1">
+              O padrão é <strong>3 operadores × 10 amostras × 3 corpos de prova</strong> = 90
+              corpos de prova. A repetibilidade inclui a variação entre corpos de prova; a
+              homogeneidade do lote é um pressuposto crítico.
+            </p>
+          </>
+        ) : physicalNonDestructive ? (
+          <>
+            <p>
+              O delineamento recomendado é o <strong>Gage R&amp;R cruzado</strong>: as mesmas
+              peças são medidas por todos os operadores, com réplicas independentes e ordem
+              aleatorizada pela semente. Não há consumo de corpos de prova.
+            </p>
+            <p className="mt-1">
+              Use <strong>10 peças</strong> cobrindo a variação real do processo, 3 operadores e
+              2–3 réplicas. Se ainda não houver dado piloto, estime σ por <strong>T/6</strong>.
+            </p>
+          </>
         ) : (
           <>
             <p>
@@ -281,6 +314,11 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
             {plan.recommended.total} {attribute ? 'classificações' : 'medições'}
           </Badge>
           <Badge tone="outline">{plan.runs.length} execuções</Badge>
+          {plan.specimenConsumption ? (
+            <Badge tone="warning">
+              {plan.specimenConsumption.total} corpos de prova
+            </Badge>
+          ) : null}
           {dirty ? <Badge tone="warning">não salvo</Badge> : null}
         </div>
       }
@@ -368,6 +406,16 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
         ) : null}
       </div>
 
+      {plan.specimenConsumption ? (
+        <Alert tone="info" title="Ensaio destrutivo: consumo de corpos de prova">
+          Este plano consome <strong>{plan.specimenConsumption.total}</strong> corpos de prova
+          ({plan.specimenConsumption.operators} operadores ×{' '}
+          {plan.specimenConsumption.samplesPerOperator} amostras ×{' '}
+          {plan.specimenConsumption.replicates} corpos de prova por amostra). Identifique cada
+          corpo de prova antes da coleta; o mesmo corpo não pode ser medido duas vezes.
+        </Alert>
+      ) : null}
+
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader
@@ -454,27 +502,31 @@ export function StepDesign({ bundle, goTo, reload }: StepProps) {
                 <Input label="Razão de variâncias" type="number" step="0.1" value={input.varianceRatio} disabled={locked} onChange={(e) => update('varianceRatio', Number(e.target.value))} />
                 <Input label="Razão entre laboratórios" type="number" step="0.1" value={input.betweenLabRatio} disabled={locked} onChange={(e) => update('betweenLabRatio', Number(e.target.value))} />
                 <Input label="Níveis (n)" type="number" min="2" value={input.nLevels} disabled={locked} onChange={(e) => update('nLevels', Number(e.target.value))} />
-                <Input label="Analistas" type="number" min="1" value={input.nAnalysts} disabled={locked} onChange={(e) => update('nAnalysts', Number(e.target.value))} />
+                <Input label={physical ? 'Operadores' : 'Analistas'} type="number" min="1" value={input.nAnalysts} disabled={locked} onChange={(e) => update('nAnalysts', Number(e.target.value))} hint={physical ? 'O estudo de precisão exige pelo menos 2 operadores.' : undefined} />
                 <Input label="Dias" type="number" min="1" value={input.nDays} disabled={locked} onChange={(e) => update('nDays', Number(e.target.value))} />
                 <Input label="Equipamentos" type="number" min="1" value={input.nEquipments} disabled={locked} onChange={(e) => update('nEquipments', Number(e.target.value))} />
                 <Input label="Lotes" type="number" min="1" value={input.nLots} disabled={locked} onChange={(e) => update('nLots', Number(e.target.value))} />
-                <Input label="Réplicas" type="number" min="2" value={input.nReplicates} disabled={locked} onChange={(e) => update('nReplicates', Number(e.target.value))} />
+                <Input label={physicalDestructive ? 'Corpos de prova por amostra' : 'Réplicas'} type="number" min="2" value={input.nReplicates} disabled={locked} onChange={(e) => update('nReplicates', Number(e.target.value))} hint={physicalDestructive ? 'Cada corpo de prova é consumido uma única vez.' : undefined} />
                 <Input label="Laboratórios" type="number" min="2" value={input.nLabs} disabled={locked} onChange={(e) => update('nLabs', Number(e.target.value))} />
                 <Input
                   label={
-                    input.designType === 'gage_rr'
-                      ? 'Peças (Gage R&R)'
-                      : 'Amostras (aninhado)'
+                    physicalDestructive
+                      ? 'Amostras por operador (aninhado)'
+                      : input.designType === 'gage_rr'
+                        ? 'Peças (Gage R&R)'
+                        : 'Amostras (aninhado)'
                   }
                   type="number"
-                  min="2"
+                  min={physicalDestructive ? '1' : '2'}
                   value={input.nSamples}
                   disabled={locked}
                   onChange={(e) => update('nSamples', Number(e.target.value))}
                   hint={
-                    input.designType === 'gage_rr'
-                      ? 'Use 10 peças cobrindo a variação real do processo, não só a tolerância.'
-                      : undefined
+                    physicalDestructive
+                      ? 'Cada operador avalia o mesmo número de amostras; cada amostra gera vários corpos de prova.'
+                      : input.designType === 'gage_rr'
+                        ? 'Use 10 peças cobrindo a variação real do processo, não só a tolerância.'
+                        : undefined
                   }
                 />
                 <Textarea

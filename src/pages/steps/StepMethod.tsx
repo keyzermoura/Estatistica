@@ -101,13 +101,18 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
     }
     setSaving(true);
     try {
-      saveMethod(method);
-      updateValidation({
-        ...validation,
-        status: validation.status === 'draft' ? 'in_progress' : validation.status,
-        objective: validation.objective,
-        scope: validation.scope,
-      });
+      const actor = validation.responsible.trim() || 'sistema';
+      saveMethod(method, actor);
+      updateValidation(
+        {
+          ...validation,
+          status: validation.status === 'draft' ? 'in_progress' : validation.status,
+          objective: validation.objective,
+          scope: validation.scope,
+        },
+        actor,
+        'Identificação do método e da validação',
+      );
       toast.push('Método e identificação salvos.');
       reload();
       return true;
@@ -166,13 +171,25 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
         </Alert>
       ) : null}
 
-      {method.family === 'dimensional' ? (
-        <Alert tone="info" title="Perfil dimensional: o que preencher">
+      {showTolerance ? (
+        <Alert
+          tone="info"
+          title={
+            method.family === 'dimensional'
+              ? 'Perfil dimensional: o que preencher'
+              : 'Perfil físico: o que preencher'
+          }
+        >
           <p>
-            <strong>LSL</strong> e <strong>USL</strong> são os limites de tolerância da peça
+            <strong>LSL</strong> e <strong>USL</strong> são os limites de tolerância do ensaio
             (menor e maior valor aceitável). A tolerância é{' '}
             <strong>T = USL − LSL</strong>
             {tolerance === null ? '; informe os dois limites para calculá-la.' : ` = ${tolerance}.`}
+            {method.family === 'physical-destructive'
+              ? ' No ensaio destrutivo, a tolerância se aplica ao resultado de cada corpo de prova; o consumo é planejado na etapa de delineamento.'
+              : method.family === 'physical-nondestructive'
+                ? ' No ensaio não destrutivo, a mesma peça é medida várias vezes, sem consumo.'
+                : ''}
           </p>
           <p className="mt-1">
             A <strong>resolução</strong> é a menor diferença que o instrumento consegue mostrar
@@ -263,7 +280,7 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
             onChange={(e) => setMethod({ ...method, unit: e.target.value })}
             placeholder="mg/L"
             hint={
-              method.family === 'dimensional'
+              showTolerance
                 ? 'Use a mesma unidade de LSL, USL, resolução e medições (ex.: mm).'
                 : undefined
             }
@@ -308,7 +325,7 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
                 disabled={locked}
                 onChange={(e) => setMethod({ ...method, lsl: parseNumber(e.target.value) })}
                 hint={
-                  method.family === 'dimensional'
+                  showTolerance
                     ? 'Menor valor aceitável da peça. Deve ser menor que o USL.'
                     : 'Deve ser menor que o USL.'
                 }
@@ -321,7 +338,7 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
                 disabled={locked}
                 onChange={(e) => setMethod({ ...method, usl: parseNumber(e.target.value) })}
                 hint={
-                  method.family === 'dimensional'
+                  showTolerance
                     ? `Maior valor aceitável da peça. T = USL − LSL${tolerance === null ? '' : ` = ${tolerance}`}.`
                     : undefined
                 }
@@ -336,7 +353,7 @@ export function StepMethod({ bundle, goTo, reload }: StepProps) {
                   setMethod({ ...method, resolution: parseNumber(e.target.value) })
                 }
                 hint={
-                  method.family === 'dimensional'
+                  showTolerance
                     ? 'Menor incremento mostrado pelo instrumento; deve ser ≤ 10% de T.'
                     : 'Menor incremento distinguível do instrumento.'
                 }

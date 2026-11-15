@@ -180,6 +180,29 @@ function buildRuns(input: DesignInput, total: number): { runs: RunRow[]; warning
                 sample: `A${s}`,
                 replicate: r,
                 specimen,
+                destructive: true,
+              },
+            );
+          }
+        }
+      }
+      break;
+    }
+    case 'gage_rr': {
+      const parts = Math.max(2, Math.round(input.nSamples));
+      for (let p = 1; p <= parts; p++) {
+        for (let a = 1; a <= analysts; a++) {
+          for (let r = 1; r <= reps; r++) {
+            push(
+              `Peça P${p} · operador Op${a} · réplica ${r}`,
+              { peca: `P${p}`, operador: `Op${a}`, replica: String(r) },
+              '',
+              {
+                analyst: `Op${a}`,
+                sample: `P${p}`,
+                partId: `P${p}`,
+                replicate: r,
+                destructive: false,
               },
             );
           }
@@ -291,7 +314,9 @@ function buildSummary(
   const designLabel =
     input.designType === 'attribute_agreement'
       ? 'Concordância de atributo'
-      : input.designType.toUpperCase();
+      : input.designType === 'gage_rr'
+        ? 'Gage R&R cruzado'
+        : input.designType.toUpperCase();
   const parts = [
     input.designType === 'attribute_agreement'
       ? `Delineamento de concordância de atributo com ${total} classificações recomendadas`
@@ -319,6 +344,14 @@ function buildSummary(
     const replicates = Math.max(2, Math.round(input.nReplicates));
     parts.push(
       `${operators} operadores × ${samples} amostras × ${replicates} corpos de prova = ${operators * samples * replicates} corpos de prova a retirar do lote`,
+    );
+  }
+  if (input.designType === 'gage_rr') {
+    const partsCount = Math.max(2, Math.round(input.nSamples));
+    const operators = Math.max(2, Math.round(input.nAnalysts));
+    const replicates = Math.max(2, Math.round(input.nReplicates));
+    parts.push(
+      `${partsCount} peças × ${operators} operadores × ${replicates} réplicas = ${partsCount * operators * replicates} medições, com peças reutilizadas`,
     );
   }
   if (input.designType === 'attribute_agreement') {
@@ -422,6 +455,32 @@ export function buildDesign(
     );
     assumptions.push(
       'Amostras do mesmo lote são homogêneas; a repetibilidade inclui a variação entre corpos de prova',
+    );
+  }
+  if (input.designType === 'gage_rr') {
+    const rawParts = Math.round(input.nSamples);
+    const rawOperators = Math.round(input.nAnalysts);
+    const rawReplicates = Math.round(input.nReplicates);
+    if (rawParts < 10) {
+      warnings.push(
+        'AIAG MSA (2010) recomenda pelo menos 10 peças para representar a variação do processo; o plano foi gerado com o valor informado.',
+      );
+    }
+    if (rawOperators < 3) {
+      warnings.push(
+        'AIAG MSA (2010) recomenda pelo menos 3 operadores para estimar a reprodutibilidade.',
+      );
+    }
+    if (rawReplicates < 3) {
+      warnings.push(
+        'AIAG MSA (2010) recomenda pelo menos 3 réplicas por peça × operador para estimar a repetibilidade.',
+      );
+    }
+    assumptions.push(
+      'Ensaio não destrutivo: a mesma peça é medida por todos os operadores e em todas as réplicas, sem consumo do corpo de prova',
+    );
+    assumptions.push(
+      'As peças cobrem a variação real do processo, incluindo casos próximos aos limites de tolerância',
     );
   }
   if (input.designType === 'attribute_agreement') {

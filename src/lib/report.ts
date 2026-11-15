@@ -7,11 +7,12 @@ import type {
   ParameterAnalysis,
   ValidationAnalysis,
 } from '../stats/analysis';
-import type {
-  ReportContent,
-  ReportRecord,
-  ValidationBundle,
-  Verdict,
+import {
+  DEFAULT_REPORT_CONFIG,
+  type ReportContent,
+  type ReportRecord,
+  type ValidationBundle,
+  type Verdict,
 } from './types';
 import { fmt } from '../stats/distributions';
 import { attributeObservationsFrom } from '../stats/attribute-data';
@@ -24,23 +25,36 @@ export const VERDICT_LABELS: Record<Verdict, string> = {
   not_evaluated: 'Não avaliado',
 };
 
-function conclusionFor(analysis: ValidationAnalysis): string {
+function conclusionFor(
+  analysis: ValidationAnalysis,
+  validationType: ValidationBundle['method']['validationType'] = 'full',
+): string {
   const failed = analysis.parameters.filter((p) => p.verdict === 'fail');
   const notEvaluated = analysis.parameters.filter((p) => p.verdict === 'not_evaluated');
+  const verification = validationType === 'verification';
   if (!analysis.parameters.length) {
-    return 'Não há parâmetros selecionados; não é possível concluir sobre a adequação do método.';
+    return verification
+      ? 'Não há parâmetros selecionados; não é possível concluir sobre a verificação e adequação do método.'
+      : 'Não há parâmetros selecionados; não é possível concluir sobre a adequação do método.';
   }
   if (failed.length) {
-    return `O método não atende integralmente aos critérios de aceitação. Parâmetros não conformes: ${failed
-      .map((p) => p.label)
-      .join(', ')}. Recomenda-se investigar as causas, corrigir o método e repetir a validação antes de uso rotineiro.`;
+    const labels = failed.map((p) => p.label).join(', ');
+    if (verification) {
+      return `Na verificação de método normalizado (ABNT NBR ISO/IEC 17025:2017, item 7.2.1.5), o laboratório não demonstrou atendimento integral aos critérios de aceitação. Parâmetros não conformes: ${labels}. Recomenda-se investigar as causas, ajustar a execução do método e repetir a verificação antes de uso rotineiro.`;
+    }
+    return `O método não atende integralmente aos critérios de aceitação. Parâmetros não conformes: ${labels}. Recomenda-se investigar as causas, corrigir o método e repetir a validação antes de uso rotineiro.`;
   }
   if (notEvaluated.length) {
-    return `A validação está incompleta: ${notEvaluated
-      .map((p) => p.label)
-      .join(', ')} não pôde(ram) ser avaliado(s) com os dados disponíveis. Conclua os experimentos e reavalie antes de aprovar.`;
+    const labels = notEvaluated.map((p) => p.label).join(', ');
+    if (verification) {
+      return `A verificação está incompleta: ${labels} não pôde(ram) ser avaliado(s) com os dados disponíveis. Conclua os experimentos e reavalie antes de aprovar.`;
+    }
+    return `A validação está incompleta: ${labels} não pôde(ram) ser avaliado(s) com os dados disponíveis. Conclua os experimentos e reavalie antes de aprovar.`;
   }
-  return 'O método demonstrou adequação ao uso pretendido para os parâmetros e a faixa avaliados, atendendo aos critérios de aceitação registrados. Os resultados aplicam-se às condições experimentais descritas.';
+  if (verification) {
+    return 'Na verificação de método normalizado (ABNT NBR ISO/IEC 17025:2017, item 7.2.1.5), o laboratório demonstrou capacidade de operar o método dentro das especificações estabelecidas para os parâmetros e a faixa avaliados, atendendo aos critérios de aceitação registrados. Os resultados aplicam-se às condições experimentais descritas.';
+  }
+  return 'Conforme a ABNT NBR ISO/IEC 17025:2017 (item 7.2.2 — validação de métodos), o método demonstrou adequação ao uso pretendido para os parâmetros e a faixa avaliados, atendendo aos critérios de aceitação registrados. Os resultados aplicam-se às condições experimentais descritas.';
 }
 
 function dataSummary(bundle: ValidationBundle): string {
@@ -63,7 +77,26 @@ function dataSummary(bundle: ValidationBundle): string {
   const levels = [...new Set(bundle.measurements.map((m) => m.level).filter(Boolean))];
   const analysts = [...new Set(bundle.measurements.map((m) => m.analyst).filter(Boolean))];
   const missing = total - numeric;
-  return `${numeric} medições numéricas de ${total} registros (${missing} faltante(s)/não numérico(s)), em ${levels.length} nível(is) e ${analysts.length} analista(s)/laboratório(s). Níveis: ${levels.join(', ') || '—'}.`;
+  const physical =
+    bundle.method.family === 'physical-destructive' ||
+    bundle.method.family === 'physical-nondestructive';
+  const physicalSummary = physical
+    ? (() => {
+        const parts = new Set(
+          bundle.measurements.map((m) => (m.partId ?? '').trim()).filter(Boolean),
+        );
+        const specimens = new Set(
+          bundle.measurements.map((m) => (m.specimen ?? '').trim()).filter(Boolean),
+        );
+        const destructive = bundle.measurements.filter((m) => m.destructive).length;
+        return ` Peças identificadas: ${parts.size}; corpos de prova identificados: ${specimens.size}${
+          bundle.method.family === 'physical-destructive'
+            ? `; linhas destrutivas: ${destructive}`
+            : ''
+        }.`;
+      })()
+    : '';
+  return `${numeric} medições numéricas de ${total} registros (${missing} faltante(s)/não numérico(s)), em ${levels.length} nível(is) e ${analysts.length} analista(s)/laboratório(s). Níveis: ${levels.join(', ') || '—'}.${physicalSummary}`;
 }
 
 function parameterToReport(p: ParameterAnalysis): ReportContent['parameterResults'][number] {
@@ -150,8 +183,19 @@ export async function composeReport(
       signed: false,
     },
   ];
+  const configuredTitle = (bundle.validation.reportConfig.reportTitle ?? '').trim();
+  const isDefaultValidationTitle =
+    !configuredTitle ||
+    configuredTitle === DEFAULT_REPORT_CONFIG.reportTitle ||
+    configuredTitle === `Relatório de Validação — ${bundle.method.name}`;
+  const title =
+    bundle.method.validationType === 'verification'
+      ? isDefaultValidationTitle
+        ? `Relatório de Verificação de Método — ${bundle.method.name}`
+        : configuredTitle
+      : configuredTitle || `Relatório de Validação — ${bundle.method.name}`;
   const content: ReportContent = {
-    title: bundle.validation.reportConfig.reportTitle || `Relatório de Validação — ${bundle.method.name}`,
+    title,
     subtitle: bundle.validation.title,
     laboratory: {
       name: bundle.validation.reportConfig.laboratoryName,
@@ -175,9 +219,43 @@ export async function composeReport(
     dataSummary: dataSummary(bundle),
     parameterResults: analysis.parameters.map(parameterToReport),
     uncertainty: reportUncertainty,
-    conclusion: conclusionFor(analysis),
+    conclusion: conclusionFor(analysis, bundle.method.validationType),
     limitations: [...new Set(limitations)],
-    assumptions: analysis.assumptions,
+    assumptions: [
+      ...new Set([
+        ...analysis.assumptions,
+        ...(bundle.validation.reportConfig.conformityRule
+          ? [
+              `Regra de decisão (ISO/IEC 17025:2017, 7.8.6): ${
+                bundle.validation.reportConfig.conformityRule === 'simple_acceptance'
+                  ? 'Aceitação simples (zona de guarda w = 0; ILAC-G8:09/2019).'
+                  : bundle.validation.reportConfig.conformityRule === 'probability'
+                    ? `Regra probabilística P_c ≥ ${((bundle.validation.reportConfig.probabilityThreshold ?? 0.95) * 100).toFixed(1)}% (JCGM 106:2012).`
+                    : `Faixa de guarda binária w = ${bundle.validation.reportConfig.guardBandFactor ?? 1}·U (JCGM 106:2012 / ILAC-G8).`
+              }`,
+            ]
+          : []),
+        ...(bundle.validation.reportConfig.individualLsl !== null &&
+        bundle.validation.reportConfig.individualLsl !== undefined
+          ? [
+              `Limite mínimo individual especificado (nó/corpo de prova): ${bundle.validation.reportConfig.individualLsl} ${bundle.method.toleranceUnit || bundle.method.unit}.`,
+            ]
+          : []),
+        ...(bundle.validation.reportConfig.processVariation !== null &&
+        bundle.validation.reportConfig.processVariation !== undefined &&
+        bundle.validation.reportConfig.processVariation > 0
+          ? [
+              `Variação do processo informada (PV = 6·σ): ${bundle.validation.reportConfig.processVariation} ${bundle.method.toleranceUnit || bundle.method.unit}.`,
+            ]
+          : []),
+        ...((bundle.method.lsl !== null && bundle.method.usl === null) ||
+        (bundle.method.lsl === null && bundle.method.usl !== null)
+          ? [
+              'Especificação unilateral ativa: métricas relativas utilizam referência/PV quando aplicável.',
+            ]
+          : []),
+      ]),
+    ],
     references: dedupReferences,
     signatures,
     generatedAt,

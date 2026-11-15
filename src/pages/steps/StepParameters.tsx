@@ -76,9 +76,15 @@ export function StepParameters({ bundle, goTo, reload }: StepProps) {
     }
     setSaving(true);
     try {
-      saveParameters(bundle.validation.id, parameters);
+      const actor = bundle.validation.responsible.trim() || 'sistema';
+      saveParameters(
+        bundle.validation.id,
+        parameters,
+        actor,
+        'Parâmetros e critérios salvos',
+      );
       if (bundle.validation.status === 'draft') {
-        updateValidation({ ...bundle.validation, status: 'in_progress' });
+        updateValidation({ ...bundle.validation, status: 'in_progress' }, actor);
       }
       toast.push('Parâmetros e critérios salvos.');
       reload();

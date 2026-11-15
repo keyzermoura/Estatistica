@@ -937,6 +937,56 @@ function sampleSizeGageRR(
   };
 }
 
+/**
+ * Plano do estudo aninhado destrutivo: operadores × amostras por operador ×
+ * corpos de prova por amostra. O número de corpos de prova é fixado pelo
+ * delineamento; o cálculo reporta o erro relativo padrão alcançado para s_r e
+ * o total de corpos de prova consumidos.
+ */
+function sampleSizeNestedDestructive(
+  key: 'repeatability' | 'reproducibility',
+  opts: {
+    nSamples: number;
+    nAnalysts: number;
+    nReplicates: number;
+    sigma: number;
+    confidence: number;
+    relativeSdError: number;
+  },
+): SampleSizeResult {
+  const replicates = Math.max(2, Math.round(opts.nReplicates));
+  const result = nestedDesignN({
+    sigmaRepeatability: opts.sigma > 0 ? opts.sigma : 0.5,
+    operators: Math.max(2, Math.round(opts.nAnalysts)),
+    samplesPerOperator: Math.max(1, Math.round(opts.nSamples)),
+    confidence: opts.confidence,
+    targetRelativeSdError:
+      opts.relativeSdError > 0 ? opts.relativeSdError : 0.2,
+    minReplicates: replicates,
+    maxReplicates: replicates,
+  });
+  return {
+    method: result.method,
+    nPerGroup: result.nPerGroup,
+    groups: result.groups,
+    total: result.total,
+    power: result.power,
+    precision: result.precision,
+    formula: result.formula,
+    reference: result.reference,
+    assumptions: [
+      ...result.assumptions,
+      'O número de corpos de prova é fixado pelo delineamento; o cálculo reporta o erro relativo alcançado.',
+    ],
+    notes: [
+      key === 'repeatability'
+        ? 'A repetibilidade inclui a variação entre corpos de prova do mesmo lote; verifique a homogeneidade do lote antes de interpretar o resultado.'
+        : 'A reprodutibilidade compara operadores que consomem corpos de prova distintos; o modelo é aninhado.',
+      ...result.notes,
+    ],
+  };
+}
+
 /** Orientações de tamanho para parâmetros exclusivos do perfil dimensional. */
 function sampleSizeDimensional(
   key: 'resolution' | 'bias' | 'stability' | 'conformity',
@@ -1089,13 +1139,35 @@ export function planForParameter(
 ): SampleSizeResult {
   const common = { alpha: opts.alpha, power: opts.power };
   const dimensional = opts.profileId === 'dimensional';
+  const physicalDestructive = opts.profileId === 'physical-destructive';
+  const physicalNonDestructive = opts.profileId === 'physical-nondestructive';
+  /** Perfis que compartilham as orientações dimensionais de tamanho. */
+  const dimensionalLike = dimensional || physicalDestructive || physicalNonDestructive;
   const attribute =
     opts.profileId === 'attribute' || opts.designType === 'attribute_agreement';
-  if (dimensional && opts.designType === 'gage_rr' && (key === 'repeatability' || key === 'reproducibility')) {
+  if (
+    (dimensional || physicalNonDestructive) &&
+    opts.designType === 'gage_rr' &&
+    (key === 'repeatability' || key === 'reproducibility')
+  ) {
     return sampleSizeGageRR(key, {
       nSamples: opts.nSamples ?? 10,
       nAnalysts: opts.nAnalysts,
       nReplicates: opts.nReplicates,
+    });
+  }
+  if (
+    physicalDestructive &&
+    opts.designType === 'nested_destructive' &&
+    (key === 'repeatability' || key === 'reproducibility')
+  ) {
+    return sampleSizeNestedDestructive(key, {
+      nSamples: opts.nSamples ?? 10,
+      nAnalysts: opts.nAnalysts,
+      nReplicates: opts.nReplicates,
+      sigma: opts.sigma,
+      confidence: opts.confidence,
+      relativeSdError: opts.relativeSdError,
     });
   }
   if (
@@ -1178,7 +1250,7 @@ export function planForParameter(
     case 'bias':
     case 'stability':
     case 'conformity':
-      return dimensional
+      return dimensionalLike
         ? sampleSizeDimensional(key, opts)
         : sampleSizeGuideline('uncertainty', opts.nReplicates);
     default:

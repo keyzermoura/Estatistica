@@ -1,9 +1,10 @@
 /**
  * Registro de perfis de método.
  *
- * Os perfis analítico, dimensional e de atributo estão registrados. Famílias
- * ainda sem módulos próprios usam o perfil analítico como fallback, sem quebrar
- * telas de métodos já classificados.
+ * Os perfis analítico, dimensional, de atributo e físicos (destrutivo e não
+ * destrutivo) estão registrados. Famílias ainda sem módulos próprios usam o
+ * perfil analítico como fallback, sem quebrar telas de métodos já
+ * classificados.
  */
 
 import type { Method, MethodFamily } from '../lib/types';
@@ -11,6 +12,8 @@ import type { MethodProfile } from './types';
 import { ANALYTICAL_PROFILE } from './analytical';
 import { DIMENSIONAL_PROFILE } from './dimensional';
 import { ATTRIBUTE_PROFILE } from './attribute';
+import { PHYSICAL_DESTRUCTIVE_PROFILE } from './physical-destructive';
+import { PHYSICAL_NONDESTRUCTIVE_PROFILE } from './physical-nondestructive';
 
 export const DEFAULT_PROFILE_ID = 'analytical';
 
@@ -18,6 +21,8 @@ const REGISTRY: Record<string, MethodProfile> = {
   [ANALYTICAL_PROFILE.id]: ANALYTICAL_PROFILE,
   [DIMENSIONAL_PROFILE.id]: DIMENSIONAL_PROFILE,
   [ATTRIBUTE_PROFILE.id]: ATTRIBUTE_PROFILE,
+  [PHYSICAL_DESTRUCTIVE_PROFILE.id]: PHYSICAL_DESTRUCTIVE_PROFILE,
+  [PHYSICAL_NONDESTRUCTIVE_PROFILE.id]: PHYSICAL_NONDESTRUCTIVE_PROFILE,
 };
 
 /** Retorna o perfil pelo identificador; família desconhecida falha explicitamente. */
