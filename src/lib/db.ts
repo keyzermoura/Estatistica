@@ -71,7 +71,10 @@ export async function initDb(): Promise<Database> {
   if (!SQL) {
     SQL = await initSqlJs({ locateFile: () => wasmUrl });
   }
-  const persisted = await get<Uint8Array>(STORAGE_KEY);
+  const persisted =
+    typeof indexedDB !== 'undefined'
+      ? await get<Uint8Array>(STORAGE_KEY)
+      : null;
   if (persisted && persisted.byteLength > 0) {
     try {
       database = new SQL.Database(persisted);
@@ -112,6 +115,11 @@ export function markDirty() {
 
 export async function persist(): Promise<void> {
   if (!database || !dirty) return;
+  if (typeof indexedDB === 'undefined') {
+    dirty = false;
+    setPersistenceStatus('saved');
+    return;
+  }
   setPersistenceStatus('saving');
   try {
     const bytes = database.export();
@@ -152,7 +160,9 @@ export async function resetDatabase(): Promise<void> {
   if (!SQL) SQL = await initSqlJs({ locateFile: () => wasmUrl });
   database = new SQL.Database();
   initializeSchema(database);
-  await del(STORAGE_KEY);
+  if (typeof indexedDB !== 'undefined') {
+    await del(STORAGE_KEY);
+  }
   txDepth = 0;
   dirty = true;
   await persist();
