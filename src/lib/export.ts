@@ -662,6 +662,11 @@ export function downloadEvidenceZip(bytes: Uint8Array, bundle: ValidationBundle)
   downloadBytes(bytes, `${baseName(bundle)}-evidencias.zip`, 'application/zip');
 }
 
+export async function downloadValidationSqlite(bundle: ValidationBundle) {
+  const bytes = await exportSqlite();
+  downloadBytes(bytes, `${baseName(bundle)}-banco.sqlite`, 'application/x-sqlite3');
+}
+
 export function downloadAnalysisJson(analysis: ValidationAnalysis, bundle: ValidationBundle) {
   downloadText(
     JSON.stringify(analysis, null, 2),

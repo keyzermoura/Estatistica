@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  Archive,
   ArrowLeft,
   CheckCircle2,
   Clock,
+  Database,
   Download,
   FileText,
   History,
@@ -21,6 +23,11 @@ import {
   newVersion,
   verifyValidationAuditTrail,
 } from '../../lib/repository';
+import {
+  buildEvidenceZip,
+  downloadEvidenceZip,
+  downloadValidationSqlite,
+} from '../../lib/export';
 import { formatDate, downloadText, slugify } from '../../lib/utils';
 import { StepShell } from '../../components/wizard';
 import {
@@ -101,6 +108,36 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
     },
   ];
 
+  const [postApproveOpen, setPostApproveOpen] = useState(false);
+  const [exportingZip, setExportingZip] = useState(false);
+  const [exportingSqlite, setExportingSqlite] = useState(false);
+
+  const handleDownloadEvidenceZip = async () => {
+    if (!report) return;
+    setExportingZip(true);
+    try {
+      const bytes = await buildEvidenceZip(bundle, analysis, report);
+      downloadEvidenceZip(bytes, bundle);
+      toast.push('Pacote de evidências baixado.');
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : 'Falha ao gerar pacote de evidências.', 'danger');
+    } finally {
+      setExportingZip(false);
+    }
+  };
+
+  const handleDownloadSqlite = async () => {
+    setExportingSqlite(true);
+    try {
+      await downloadValidationSqlite(bundle);
+      toast.push('Banco SQLite exportado.');
+    } catch (error) {
+      toast.push(error instanceof Error ? error.message : 'Falha ao exportar banco.', 'danger');
+    } finally {
+      setExportingSqlite(false);
+    }
+  };
+
   const doApprove = () => {
     if (!report) {
       toast.push('Gere o relatório da versão atual antes de aprovar.', 'danger');
@@ -120,6 +157,7 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
       approveValidation(validation.id, actor, reason.trim() || 'Aprovação da validação');
       toast.push('Validação aprovada, versionada e bloqueada.');
       setApproveOpen(false);
+      setPostApproveOpen(true);
       reload();
     } catch (error) {
       toast.push(error instanceof Error ? error.message : 'Falha ao aprovar.', 'danger');
@@ -204,9 +242,17 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
               <Download className="h-4 w-4" /> Snapshot atual
             </Button>
             {validation.locked ? (
-              <Button onClick={() => setVersionOpen(true)}>
-                <History className="h-4 w-4" /> Criar nova versão
-              </Button>
+              <>
+                <Button variant="outline" onClick={handleDownloadEvidenceZip} loading={exportingZip} disabled={!report}>
+                  <Archive className="h-4 w-4" /> Baixar evidências (.zip)
+                </Button>
+                <Button variant="outline" onClick={handleDownloadSqlite} loading={exportingSqlite}>
+                  <Database className="h-4 w-4" /> Baixar banco (.sqlite)
+                </Button>
+                <Button onClick={() => setVersionOpen(true)}>
+                  <History className="h-4 w-4" /> Criar nova versão
+                </Button>
+              </>
             ) : (
               <Button
                 onClick={() => setApproveOpen(true)}
@@ -294,6 +340,32 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
           </CardBody>
         </Card>
       </div>
+
+      {validation.locked ? (
+        <Card className="border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+          <CardBody className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <ShieldCheck className="h-8 w-8 text-emerald-600 dark:text-emerald-400 shrink-0" />
+              <div>
+                <h4 className="font-semibold text-emerald-900 dark:text-emerald-100 text-sm">
+                  Validação Aprovada e Congelada (v{validation.version})
+                </h4>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                  Os dados estão protegidos contra edições. Para retenção de dados brutos (ISO/IEC 17025 e BPL), baixe o pacote de evidências ou o backup do banco SQLite.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button size="sm" variant="outline" onClick={handleDownloadEvidenceZip} loading={exportingZip} disabled={!report}>
+                <Archive className="h-3.5 w-3.5 mr-1" /> Evidências (.zip)
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleDownloadSqlite} loading={exportingSqlite}>
+                <Database className="h-3.5 w-3.5 mr-1" /> Banco (.sqlite)
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader
@@ -526,6 +598,70 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
             </div>
           </div>
         ) : null}
+      </Modal>
+
+      <Modal
+        open={postApproveOpen}
+        onClose={() => setPostApproveOpen(false)}
+        title="Validação Aprovada com Sucesso!"
+        size="md"
+        footer={
+          <Button variant="outline" onClick={() => setPostApproveOpen(false)}>
+            Concluir
+          </Button>
+        }
+      >
+        <div className="space-y-4 text-xs text-ink-600 dark:text-ink-300">
+          <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900/50 dark:bg-emerald-950/30">
+            <ShieldCheck className="h-6 w-6 shrink-0 text-emerald-600 dark:text-emerald-400" />
+            <div>
+              <p className="font-semibold text-emerald-900 dark:text-emerald-100">
+                Estudo congelado na versão {validation.version}
+              </p>
+              <p className="text-[11px] text-emerald-700 dark:text-emerald-300">
+                Todas as 3 assinaturas foram validadas e a trilha de auditoria está selada criptograficamente.
+              </p>
+            </div>
+          </div>
+
+          <p>
+            Para atender aos requisitos regulatórios de retenção e arquivamento de dados brutos (ISO/IEC 17025 e BPL),
+            recomendamos o download imediato do pacote completo de evidências ou da cópia do banco de dados SQLite:
+          </p>
+
+          <div className="space-y-2">
+            <Button
+              className="w-full justify-start text-left py-3 px-3.5 h-auto"
+              variant="outline"
+              onClick={handleDownloadEvidenceZip}
+              loading={exportingZip}
+              disabled={!report}
+            >
+              <Archive className="h-5 w-5 text-teal-600 mr-3 shrink-0" />
+              <div>
+                <span className="font-semibold block text-ink-900 dark:text-ink-100">Baixar Pacote de Evidências (.zip)</span>
+                <span className="text-[11px] text-ink-400 block font-normal">
+                  Contém PDF, DOCX, CSV de dados, banco SQLite e MANIFESTO.txt com hashes SHA-256
+                </span>
+              </div>
+            </Button>
+
+            <Button
+              className="w-full justify-start text-left py-3 px-3.5 h-auto"
+              variant="outline"
+              onClick={handleDownloadSqlite}
+              loading={exportingSqlite}
+            >
+              <Database className="h-5 w-5 text-blue-600 mr-3 shrink-0" />
+              <div>
+                <span className="font-semibold block text-ink-900 dark:text-ink-100">Baixar Cópia do Banco SQLite (.sqlite)</span>
+                <span className="text-[11px] text-ink-400 block font-normal">
+                  Arquivo SQLite físico para armazenamento frio e auditorias externas
+                </span>
+              </div>
+            </Button>
+          </div>
+        </div>
       </Modal>
     </StepShell>
   );
