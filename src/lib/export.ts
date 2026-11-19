@@ -670,13 +670,30 @@ export function downloadAnalysisJson(analysis: ValidationAnalysis, bundle: Valid
   );
 }
 
+export function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+export function buildReportHtmlString(
+  report: ReportRecord,
+  bodyHtml: string,
+): string {
+  const safeTitle = escapeHtml(report.content?.title || 'Relatório de Validação');
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${safeTitle}</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1e293b}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{border:1px solid #cbd5e1;padding:6px;font-size:12px;text-align:left}h1{color:#0f766e}</style></head><body>${bodyHtml}</body></html>`;
+}
+
 export function downloadReportHtml(
   bundle: ValidationBundle,
   report: ReportRecord,
   element: HTMLElement | null,
 ) {
   if (!element) return;
-  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${report.content.title}</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1e293b}table{border-collapse:collapse;width:100%;margin:10px 0}th,td{border:1px solid #cbd5e1;padding:6px;font-size:12px;text-align:left}h1{color:#0f766e}</style></head><body>${element.innerHTML}</body></html>`;
+  const html = buildReportHtmlString(report, element.innerHTML);
   downloadText(html, `${baseName(bundle)}-relatorio.html`, 'text/html;charset=utf-8');
 }
 
