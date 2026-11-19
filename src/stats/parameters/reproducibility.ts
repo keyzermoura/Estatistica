@@ -10,6 +10,7 @@
 import type { AnalysisModule } from '../analysis-types';
 import { buildMetric, emptyParameter, parameterSummary } from '../analysis-utils';
 import { evaluateParameter } from '../../lib/criteria';
+import { mean } from '../descriptive';
 
 export const reproducibilityAnalysis: AnalysisModule = ({ parameter, criteria, context }) => {
   const iso5725 = context.iso5725;
@@ -20,6 +21,42 @@ export const reproducibilityAnalysis: AnalysisModule = ({ parameter, criteria, c
       'São necessários pelo menos 2 laboratórios (use a coluna analista/laboratório ou o desenho ISO 5725).',
     );
   }
+
+  if (iso5725.poolingDecision && !iso5725.poolingDecision.pooled) {
+    const meanSR = mean(iso5725.levels.map((l) => l.sR));
+    const maxSR = Math.max(...iso5725.levels.map((l) => l.sR));
+    const totalN = iso5725.levels.reduce((acc, l) => acc + l.p * l.n, 0);
+    const raw = { cvR: null, sR: meanSR };
+    const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+    return {
+      key: parameter.key,
+      label: parameter.label,
+      n: totalN,
+      verdict,
+      summary: parameterSummary(
+        parameter.label,
+        verdict,
+        `Precisão varia com a concentração (não agrupada conforme ISO 5725-2 Cl. 7). s_R médio = ${meanSR.toPrecision(4)}; s_R máx = ${maxSR.toPrecision(4)}.`,
+      ),
+      metrics: [
+        buildMetric(parameter, 'sR', meanSR, criteria, 's_R médio dos níveis (não agrupado)', iso5725.reference),
+      ],
+      rawMetrics: raw,
+      tables: [
+        {
+          title: 'ISO 5725-2 — precisão por nível (sem agregação)',
+          columns: ['Nível', 'p', 'n', 's_r', 's_L', 's_R', 'r', 'R'],
+          rows: iso5725.levels.map((l) => [l.level, l.p, l.n, l.sr, l.sL, l.sR, l.repeatabilityLimit, l.reproducibilityLimit]),
+        },
+      ],
+      charts: [],
+      warnings: iso5725.warnings,
+      notes: [iso5725.interpretation],
+      reference: iso5725.reference,
+      results: { iso5725 },
+    };
+  }
+
   const raw = {
     cvR: iso5725.pooled.cvReproducibility,
     sR: iso5725.pooled.sR,

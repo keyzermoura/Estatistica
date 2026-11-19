@@ -424,13 +424,23 @@ export function AnalysisQcTab({
                 <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">
                   ISO 5725-2 — precisão entre laboratórios / analistas e consistência de Mandel (h e k)
                 </p>
-                <div className="mt-2 grid gap-2 sm:grid-cols-5">
-                  <div><p className="text-[10px] uppercase text-ink-400">s_r</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.sr)}</p></div>
-                  <div><p className="text-[10px] uppercase text-ink-400">s_L</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.sL)}</p></div>
-                  <div><p className="text-[10px] uppercase text-ink-400">s_R</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.sR)}</p></div>
-                  <div><p className="text-[10px] uppercase text-ink-400">r (2,8·s_r)</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.repeatabilityLimit)}</p></div>
-                  <div><p className="text-[10px] uppercase text-ink-400">R (2,8·s_R)</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.reproducibilityLimit)}</p></div>
-                </div>
+                {analysis.qc.iso5725.poolingDecision?.pooled !== false ? (
+                  <div className="mt-2 grid gap-2 sm:grid-cols-5">
+                    <div><p className="text-[10px] uppercase text-ink-400">s_r</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.sr)}</p></div>
+                    <div><p className="text-[10px] uppercase text-ink-400">s_L</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.sL)}</p></div>
+                    <div><p className="text-[10px] uppercase text-ink-400">s_R</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.sR)}</p></div>
+                    <div><p className="text-[10px] uppercase text-ink-400">r (2,8·s_r)</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.repeatabilityLimit)}</p></div>
+                    <div><p className="text-[10px] uppercase text-ink-400">R (2,8·s_R)</p><p className="font-mono text-xs">{fmt(analysis.qc.iso5725.pooled.reproducibilityLimit)}</p></div>
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+                    <p className="font-semibold">Agregação global suprimida (ISO 5725-2 Cl. 7)</p>
+                    <p className="mt-0.5 text-[11px]">{analysis.qc.iso5725.poolingDecision?.reason ?? 'Dependência estatística entre desvio-padrão e concentração média.'}</p>
+                  </div>
+                )}
+                {analysis.qc.iso5725.poolingDecision?.pooled && analysis.qc.iso5725.levels.length > 1 ? (
+                  <p className="mt-1 text-[10px] text-ink-400">{analysis.qc.iso5725.poolingDecision.reason}</p>
+                ) : null}
                 <p className="mt-2 text-[11px] text-ink-500">{analysis.qc.iso5725.interpretation}</p>
                 {analysis.qc.iso5725.levels.some((l) => l.labMeans.length > 0) ? (
                   <div className="mt-3 overflow-x-auto">

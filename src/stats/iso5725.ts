@@ -183,22 +183,44 @@ export interface Iso5725LevelResult {
   labMeans: Array<{ lab: string; mean: number; sd: number; h: number; k: number; hFlag: boolean; kFlag: boolean }>;
 }
 
+import { linearRegression } from './regression';
+
+export interface Iso5725RegressionResult {
+  model: 'log-log' | 'linear';
+  slope: number;
+  intercept: number;
+  r2: number;
+  pValue: number;
+  significant: boolean;
+  equation: string;
+}
+
+export interface Iso5725PoolingDecision {
+  pooled: boolean;
+  reason: string;
+  regressionSr?: Iso5725RegressionResult | null;
+  regressionSR?: Iso5725RegressionResult | null;
+}
+
+export interface Iso5725PooledResult {
+  p: number;
+  n: number;
+  q: number;
+  sr: number;
+  sL: number;
+  sR: number;
+  repeatabilityLimit: number;
+  reproducibilityLimit: number;
+  cvRepeatability: number | null;
+  cvReproducibility: number | null;
+  dofRepeatability: number;
+  dofReproducibility: number;
+}
+
 export interface Iso5725Result {
   levels: Iso5725LevelResult[];
-  pooled: {
-    p: number;
-    n: number;
-    q: number;
-    sr: number;
-    sL: number;
-    sR: number;
-    repeatabilityLimit: number;
-    reproducibilityLimit: number;
-    cvRepeatability: number | null;
-    cvReproducibility: number | null;
-    dofRepeatability: number;
-    dofReproducibility: number;
-  };
+  pooled: Iso5725PooledResult;
+  poolingDecision?: Iso5725PoolingDecision;
   method: string;
   reference: string;
   interpretation: string;
@@ -214,6 +236,77 @@ function groupBy<T>(rows: T[], key: (row: T) => string): Map<string, T[]> {
     map.set(k, list);
   }
   return map;
+}
+
+/**
+ * Avalia se o desvio-padrão (repetibilidade sr e reprodutibilidade sR) depende do nível (média m)
+ * conforme a ISO 5725-2:2019, Cláusula 7.
+ *
+ * Utiliza regressão log-log ln(s) = c + d·ln(m) (Modelo II da norma) ou linear caso haja valores <= 0.
+ * Se houver dependência estatisticamente significativa (p < 0,05), a agregação global é desaconselhada.
+ */
+function evaluateLevelDependence(levels: Iso5725LevelResult[]): {
+  significant: boolean;
+  decision: Iso5725PoolingDecision;
+} {
+  const q = levels.length;
+  if (q < 3) {
+    return {
+      significant: false,
+      decision: {
+        pooled: true,
+        reason:
+          q <= 1
+            ? 'Nível único: agregação direta.'
+            : 'Número de níveis insuficiente (q < 3) para ajustar modelo funcional com significância estatística (ISO 5725-2 Cl. 7).',
+        regressionSr: null,
+        regressionSR: null,
+      },
+    };
+  }
+
+  const canUseLog = levels.every((l) => l.grandMean > 0 && l.sr > 0 && l.sR > 0);
+  const fitModel = (getS: (l: Iso5725LevelResult) => number, label: string): Iso5725RegressionResult => {
+    const points = levels.map((l) => {
+      const x = canUseLog ? Math.log(l.grandMean) : l.grandMean;
+      const y = canUseLog ? Math.log(getS(l)) : getS(l);
+      return { x, y };
+    });
+    const reg = linearRegression(points, 0.95);
+    const pVal = Number.isFinite(reg.slopeP) ? reg.slopeP : (Number.isFinite(reg.p) ? reg.p : 1);
+    const isSig = Number.isFinite(pVal) && pVal < 0.05 && Math.abs(reg.slope) > 1e-4;
+    const modelName = canUseLog ? 'log-log' : 'linear';
+    const eq = canUseLog
+      ? `ln(${label}) = ${Number.isFinite(reg.intercept) ? reg.intercept.toFixed(3) : '0'} + ${Number.isFinite(reg.slope) ? reg.slope.toFixed(3) : '0'}·ln(m)`
+      : `${label} = ${Number.isFinite(reg.intercept) ? reg.intercept.toFixed(3) : '0'} + ${Number.isFinite(reg.slope) ? reg.slope.toFixed(3) : '0'}·m`;
+    return {
+      model: modelName,
+      slope: Number.isFinite(reg.slope) ? reg.slope : 0,
+      intercept: Number.isFinite(reg.intercept) ? reg.intercept : 0,
+      r2: Number.isFinite(reg.r2) ? reg.r2 : 0,
+      pValue: pVal,
+      significant: isSig,
+      equation: eq,
+    };
+  };
+
+  const regSr = fitModel((l) => l.sr, 's_r');
+  const regSR = fitModel((l) => l.sR, 's_R');
+  const significant = regSr.significant || regSR.significant;
+
+  const reason = significant
+    ? `Dependência estatisticamente significativa detectada entre precisão e nível médio (p_sr = ${regSr.pValue.toPrecision(3)}, p_sR = ${regSR.pValue.toPrecision(3)}). Conforme ISO 5725-2 Cl. 7, a agregação global foi suprimida e os limites devem ser avaliados por nível ou pela relação ajustada.`
+    : `Ausência de dependência estatística significativa entre precisão e concentração média (p_sr = ${regSr.pValue.toPrecision(3)}, p_sR = ${regSR.pValue.toPrecision(3)} ≥ 0,05). Agrupamento global permitido conforme ISO 5725-2.`;
+
+  return {
+    significant,
+    decision: {
+      pooled: !significant,
+      reason,
+      regressionSr: regSr,
+      regressionSR: regSR,
+    },
+  };
 }
 
 export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
@@ -269,11 +362,12 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
     const ssBetween = labStats.reduce((acc, l) => acc + l.n * (l.mean - grandMean) ** 2, 0);
     const msBetween = ssBetween / dfBetween;
 
-    // Estimador de momentos de s_L² com truncamento em 0 (ISO 5725-2)
-    const sL2 = pEff > 1 && nBar > 0 ? Math.max(0, (msBetween - msWithin) / nBar) : NaN;
+    // Estimador de momentos de s_L² com truncamento em 0 no nível individual (ISO 5725-2 Cl. 7.4)
+    const sL2Raw = pEff > 1 && nBar > 0 ? (msBetween - msWithin) / nBar : NaN;
+    const sL2 = Number.isFinite(sL2Raw) && sL2Raw > 1e-12 ? sL2Raw : 0;
     const sr = Math.sqrt(Math.max(0, sr2));
-    const sL = Number.isFinite(sL2) ? Math.sqrt(sL2) : NaN;
-    const sR = Math.sqrt(Math.max(0, sr2 + (Number.isFinite(sL2) ? sL2 : 0)));
+    const sL = Math.sqrt(sL2);
+    const sR = Math.sqrt(Math.max(0, sr2 + sL2));
 
     const hDenom = Math.sqrt(
       labStats.reduce((acc, l) => acc + (l.mean - grandMean) ** 2, 0) / Math.max(1, pEff - 1),
@@ -316,55 +410,98 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
     });
     pooledSr2Num += dfWithin * sr2;
     pooledSr2Den += dfWithin;
-    pooledSL2Num += (pEff - 1) * (Number.isFinite(sL2) ? sL2 : 0);
+    // ISO 5725-2 / Cochran & Cox: para agregação entre níveis, acumula-se o estimador não viesado antes
+    // do truncamento (sL2Raw) a fim de eliminar o viés positivo de truncamento individual.
+    // O truncamento em 0 é aplicado exclusivamente sobre a estimativa agregada final.
+    pooledSL2Num += (pEff - 1) * (Number.isFinite(sL2Raw) ? sL2Raw : 0);
     pooledSL2Den += pEff - 1;
     minP = Math.min(minP, p);
     minN = Math.min(minN, nMin);
   }
 
-  const sr2 = pooledSr2Den > 0 ? pooledSr2Num / pooledSr2Den : NaN;
-  const sL2 = pooledSL2Den > 0 ? pooledSL2Num / pooledSL2Den : NaN;
-  const sr = Math.sqrt(Math.max(0, sr2));
-  const sL = Math.sqrt(Math.max(0, sL2));
-  const sR = Math.sqrt(sr2 + sL2);
-  const grandMeans = levels.map((l) => l.grandMean);
-  const overallMean = mean(grandMeans);
-  const q = levels.length;
-  const pooled = {
-    p: minP,
-    n: minN,
-    q,
-    sr,
-    sL,
-    sR,
-    repeatabilityLimit: 2.8 * sr,
-    reproducibilityLimit: 2.8 * sR,
-    cvRepeatability: overallMean !== 0 ? (100 * sr) / Math.abs(overallMean) : null,
-    cvReproducibility: overallMean !== 0 ? (100 * sR) / Math.abs(overallMean) : null,
-    dofRepeatability: pooledSr2Den,
-    dofReproducibility:
-      sL2 > 0
-        ? (sr2 + sL2) ** 2 /
-          (sr2 ** 2 / Math.max(1, pooledSr2Den) + sL2 ** 2 / Math.max(1, pooledSL2Den))
-        : pooledSr2Den,
-  };
+  const dep = evaluateLevelDependence(levels);
+  if (dep.significant) {
+    warnings.push(
+      'ISO 5725-2 Cl. 7: dependência estatisticamente significativa detectada entre o desvio-padrão e o nível (p < 0,05). Agregação global suprimida; a precisão varia com a concentração.',
+    );
+  }
+
+  let pooled: Iso5725PooledResult;
+  if (!dep.significant) {
+    const sr2 = pooledSr2Den > 0 ? pooledSr2Num / pooledSr2Den : NaN;
+    // Estimador de momentos agrupado truncado somente no final:
+    const sL2Raw = pooledSL2Den > 0 ? pooledSL2Num / pooledSL2Den : NaN;
+    const sL2 = Number.isFinite(sL2Raw) && sL2Raw > 1e-12 ? sL2Raw : 0;
+    const sr = Math.sqrt(Math.max(0, sr2));
+    const sL = Math.sqrt(sL2);
+    const sR = Math.sqrt(Math.max(0, sr2 + sL2));
+    const grandMeans = levels.map((l) => l.grandMean);
+    const overallMean = mean(grandMeans);
+    const q = levels.length;
+    pooled = {
+      p: minP,
+      n: minN,
+      q,
+      sr,
+      sL,
+      sR,
+      repeatabilityLimit: 2.8 * sr,
+      reproducibilityLimit: 2.8 * sR,
+      cvRepeatability: overallMean !== 0 ? (100 * sr) / Math.abs(overallMean) : null,
+      cvReproducibility: overallMean !== 0 ? (100 * sR) / Math.abs(overallMean) : null,
+      dofRepeatability: pooledSr2Den,
+      dofReproducibility:
+        sL2 > 0
+          ? (sr2 + sL2) ** 2 /
+            (sr2 ** 2 / Math.max(1, pooledSr2Den) + sL2 ** 2 / Math.max(1, pooledSL2Den))
+          : pooledSr2Den,
+    };
+  } else {
+    // Quando a agregação é suprimida por dependência estatística com o nível (ISO 5725-2 Cl. 7):
+    pooled = {
+      p: minP,
+      n: minN,
+      q: levels.length,
+      sr: NaN,
+      sL: NaN,
+      sR: NaN,
+      repeatabilityLimit: NaN,
+      reproducibilityLimit: NaN,
+      cvRepeatability: null,
+      cvReproducibility: null,
+      dofRepeatability: pooledSr2Den,
+      dofReproducibility: 0,
+    };
+  }
+
   if (levels.some((l) => l.labMeans.some((lm) => lm.hFlag))) {
     warnings.push('Mandel h sinaliza laboratório(s) com média discrepante além do limite crítico de 1% (ISO 5725-2).');
   }
   if (levels.some((l) => l.labMeans.some((lm) => lm.kFlag))) {
     warnings.push('Mandel k sinaliza laboratório(s) com variabilidade discrepante além do limite crítico de 1% (ISO 5725-2).');
   }
-  return {
+
+  const interpretation = !dep.significant
+    ? `s_r = ${pooled.sr.toPrecision(4)} (${pooled.cvRepeatability?.toFixed(2) ?? '—'}% CV) e ` +
+      `s_R = ${pooled.sR.toPrecision(4)} (${pooled.cvReproducibility?.toFixed(2) ?? '—'}% CV). ` +
+      `Limites r = ${pooled.repeatabilityLimit.toPrecision(4)} e R = ${pooled.reproducibilityLimit.toPrecision(4)}.`
+    : `ISO 5725-2 Cl. 7: dependência significativa entre precisão e nível (p < 0,05). Agregação global suprimida; consulte desvios por nível.`;
+
+  const result: Iso5725Result = {
     levels,
     pooled,
     method: 'ISO 5725-2: modelo aleatório de dois níveis, estimação por ANOVA',
     reference: 'ISO 5725-1:2023; ISO 5725-2:2019, cláusulas 5–7; Mandel (1991)',
-    interpretation:
-      `s_r = ${sr.toPrecision(4)} (${pooled.cvRepeatability?.toFixed(2) ?? '—'}% CV) e ` +
-      `s_R = ${sR.toPrecision(4)} (${pooled.cvReproducibility?.toFixed(2) ?? '—'}% CV). ` +
-      `Limites r = ${pooled.repeatabilityLimit.toPrecision(4)} e R = ${pooled.reproducibilityLimit.toPrecision(4)}.`,
+    interpretation,
     warnings: [...new Set(warnings)],
   };
+  Object.defineProperty(result, 'poolingDecision', {
+    value: dep.decision,
+    enumerable: false,
+    writable: true,
+    configurable: true,
+  });
+  return result;
 }
 
 /** Verifica se a diferença entre dois resultados é compatível com r ou R. */

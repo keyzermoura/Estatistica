@@ -170,6 +170,111 @@ describe('ISO 5725-2', () => {
     expect(Math.abs(unbalancedResult.sR - balancedResult.sR) / balancedResult.sR).toBeLessThan(0.08);
     expect(Math.abs(unbalancedResult.grandMean - balancedResult.grandMean)).toBeLessThan(0.1);
   });
+
+  it('agregação entre níveis: agrupa quando desvio-padrão é constante entre níveis (p ≥ 0,05)', () => {
+    // 3 níveis com médias distintas (10, 50, 100), mas mesma dispersão residual (sr ≈ 0,1)
+    const rows: Array<{ lab: string; level: string; replicate: number; value: number }> = [];
+    const levels = [
+      { name: 'N1', base: 10 },
+      { name: 'N2', base: 50 },
+      { name: 'N3', base: 100 },
+    ];
+    for (const lvl of levels) {
+      for (let l = 1; l <= 4; l++) {
+        // Lab offset constante entre níveis
+        const labOffset = (l - 2.5) * 0.05;
+        // Erros de réplica idênticos em dispersão
+        rows.push({ lab: `L${l}`, level: lvl.name, replicate: 1, value: lvl.base + labOffset - 0.1 });
+        rows.push({ lab: `L${l}`, level: lvl.name, replicate: 2, value: lvl.base + labOffset + 0.1 });
+      }
+    }
+    const result = iso5725Analysis(rows);
+    expect(result.poolingDecision?.pooled).toBe(true);
+    expect(result.pooled).not.toBeNull();
+    expect(result.poolingDecision?.regressionSr?.significant).toBe(false);
+    expect(result.warnings.some((w) => w.includes('dependência estatisticamente significativa'))).toBe(false);
+  });
+
+  it('agregação entre níveis: não agrupa quando desvio-padrão é proporcional à média (p < 0,05)', () => {
+    // 3 níveis onde sr é proporcional à concentração média (CV ≈ 1%)
+    // N1 (m=10, erro=±0,10), N2 (m=50, erro=±0,50), N3 (m=100, erro=±1,00)
+    const rows: Array<{ lab: string; level: string; replicate: number; value: number }> = [];
+    const configs = [
+      { name: 'N1', base: 10, scale: 0.1 },
+      { name: 'N2', base: 50, scale: 0.5 },
+      { name: 'N3', base: 100, scale: 1.0 },
+    ];
+    for (const cfg of configs) {
+      for (let l = 1; l <= 4; l++) {
+        const labOffset = (l - 2.5) * cfg.scale * 0.2;
+        rows.push({ lab: `L${l}`, level: cfg.name, replicate: 1, value: cfg.base + labOffset - cfg.scale });
+        rows.push({ lab: `L${l}`, level: cfg.name, replicate: 2, value: cfg.base + labOffset + cfg.scale });
+      }
+    }
+    const result = iso5725Analysis(rows);
+    expect(result.poolingDecision?.pooled).toBe(false);
+    expect(Number.isNaN(result.pooled.sr)).toBe(true);
+    expect(result.poolingDecision?.regressionSr?.significant).toBe(true);
+    // Inclinação log-log de sr vs m deve ser próxima de 1,0 (proporcionalidade direta)
+    expect(result.poolingDecision?.regressionSr?.slope).toBeCloseTo(1.0, 1);
+    expect(result.warnings.some((w) => w.includes('dependência estatisticamente significativa'))).toBe(true);
+    expect(result.interpretation).toContain('Agregação global suprimida');
+  });
+
+  it('prevenção do viés de truncamento de s_L² em simulação determinística', () => {
+    // Estudo determinístico em 3 níveis onde a variância real interlaboratorial é nula (σ_L² = 0).
+    // Amostras finitas geram flutuações simétricas: Nível A tem MSB > MSW (sL² > 0) e Nível B tem MSB < MSW (sL² < 0).
+    // Delineamento: 3 laboratórios por nível, 2 réplicas por laboratório (n = 2, df_between = 2, df_within = 3).
+    // Nível A: MSB = 0,08, MSW = 0,02 => sL²_raw = (0,08 - 0,02)/2 = +0,03
+    // Nível B: MSB = 0,02, MSW = 0,08 => sL²_raw = (0,02 - 0,08)/2 = -0,03
+    // Nível C: MSB = 0,04, MSW = 0,04 => sL²_raw = 0
+    const rows: Array<{ lab: string; level: string; replicate: number; value: number }> = [
+      // Nível A (MSB > MSW):
+      // Lab 1: [9.8, 10.0] (mean 9.9)
+      // Lab 2: [10.0, 10.0] (mean 10.0)
+      // Lab 3: [10.1, 10.1] (mean 10.1)
+      { lab: 'L1', level: 'A', replicate: 1, value: 9.9 },
+      { lab: 'L1', level: 'A', replicate: 2, value: 9.9 },
+      { lab: 'L2', level: 'A', replicate: 1, value: 10.0 },
+      { lab: 'L2', level: 'A', replicate: 2, value: 10.0 },
+      { lab: 'L3', level: 'A', replicate: 1, value: 10.1 },
+      { lab: 'L3', level: 'A', replicate: 2, value: 10.1 },
+
+      // Nível B (MSB < MSW: médias dos laboratórios iguais a 10.0, mas variabilidade interna):
+      // Lab 1: [9.9, 10.1] (mean 10.0)
+      // Lab 2: [9.9, 10.1] (mean 10.0)
+      // Lab 3: [9.9, 10.1] (mean 10.0)
+      { lab: 'L1', level: 'B', replicate: 1, value: 9.9 },
+      { lab: 'L1', level: 'B', replicate: 2, value: 10.1 },
+      { lab: 'L2', level: 'B', replicate: 1, value: 9.9 },
+      { lab: 'L2', level: 'B', replicate: 2, value: 10.1 },
+      { lab: 'L3', level: 'B', replicate: 1, value: 9.9 },
+      { lab: 'L3', level: 'B', replicate: 2, value: 10.1 },
+
+      // Nível C (neutro):
+      { lab: 'L1', level: 'C', replicate: 1, value: 10.0 },
+      { lab: 'L1', level: 'C', replicate: 2, value: 10.0 },
+      { lab: 'L2', level: 'C', replicate: 1, value: 10.0 },
+      { lab: 'L2', level: 'C', replicate: 2, value: 10.0 },
+      { lab: 'L3', level: 'C', replicate: 1, value: 10.0 },
+      { lab: 'L3', level: 'C', replicate: 2, value: 10.0 },
+    ];
+
+    const result = iso5725Analysis(rows);
+    const lvlA = result.levels.find((l) => l.level === 'A')!;
+    const lvlB = result.levels.find((l) => l.level === 'B')!;
+
+    // No nível individual, o truncamento é obrigatório pela norma:
+    expect(lvlA.sL).toBeGreaterThan(0);
+    expect(lvlB.sL).toBe(0); // MSB < MSW foi truncado em 0
+
+    // Se o motor agrupasse truncando antes da soma (bug antigo):
+    // soma truncada = (df_A * sL_A² + df_B * 0) / (df_A + df_B) > 0 (viés positivo artificial!)
+    // Com agregação não-viesada: os termos brutos se compensam e o truncamento final resulta em 0:
+    expect(result.pooled).not.toBeNull();
+    // A variância agrupada sL² antes do truncamento é ≤ 0, eliminando o viés artificial:
+    expect(result.pooled!.sL).toBe(0);
+  });
 });
 
 describe('normalidade', () => {
