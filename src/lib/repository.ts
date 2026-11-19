@@ -89,6 +89,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   approver: '',
   userName: '',
   userRegistration: '',
+  backupReminderDays: 7,
+  lastBackupExportedAt: null,
   defaultConfidence: 0.95,
   defaultPower: 0.8,
   reportFooter: DEFAULT_REPORT_CONFIG.templateFooter,
@@ -1406,6 +1408,33 @@ export function saveSettings(settings: AppSettings, actor = 'sistema') {
     [JSON.stringify(settings)],
   );
   logAudit('global', 'settings', 'update', actor, before, settings);
+}
+
+/**
+ * Registra o timestamp da exportação de backup nas configurações locais.
+ */
+export function recordBackupExport(exportedAt = nowIso(), actor = 'sistema'): AppSettings {
+  const current = loadSettings();
+  const updated: AppSettings = {
+    ...current,
+    lastBackupExportedAt: exportedAt,
+  };
+  saveSettings(updated, actor);
+  return updated;
+}
+
+/**
+ * Retorna o timestamp da modificação mais recente no banco (via audit_logs), se houver.
+ */
+export function getLastDataModifiedAt(): string | null {
+  try {
+    const r = row<{ last_mod: string | null }>(
+      'SELECT MAX(timestamp) AS last_mod FROM audit_logs',
+    );
+    return r?.last_mod ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Bundle ─────────────────────────────────────────────────────────────────

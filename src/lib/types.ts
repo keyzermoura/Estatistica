@@ -486,6 +486,8 @@ export interface AppSettings {
   approver: string;
   userName?: string;
   userRegistration?: string;
+  backupReminderDays?: number;
+  lastBackupExportedAt?: string | null;
   defaultConfidence: number;
   defaultPower: number;
   reportFooter: string;

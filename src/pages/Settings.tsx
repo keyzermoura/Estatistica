@@ -1,9 +1,12 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
+  AlertTriangle,
   Building2,
+  CheckCircle2,
   Database,
   Download,
   FileText,
+  HardDrive,
   ImagePlus,
   RotateCcw,
   Save,
@@ -14,9 +17,21 @@ import {
 } from 'lucide-react';
 import { useApp } from '../lib/app-context';
 import type { AppSettings } from '../lib/types';
-import { exportSqlite, loadSettings, saveSettings } from '../lib/repository';
-import { resetDatabase } from '../lib/db';
-import { importDatabase } from '../lib/db';
+import {
+  exportSqlite,
+  getLastDataModifiedAt,
+  loadSettings,
+  recordBackupExport,
+  saveSettings,
+} from '../lib/repository';
+import {
+  getStoragePersistenceState,
+  importDatabase,
+  requestStoragePersistence,
+  resetDatabase,
+  type StoragePersistenceState,
+} from '../lib/db';
+import { evaluateBackupReminder } from '../lib/backupReminder';
 import { seedIfEmpty } from '../lib/seed';
 import { downloadBytes, readFileAsDataUrl } from '../lib/utils';
 import {
@@ -40,9 +55,30 @@ export function Settings() {
   const [saved, setSaved] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [persistenceState, setPersistenceState] = useState<StoragePersistenceState>('unsupported');
+  const [requestingPersistence, setRequestingPersistence] = useState(false);
   const logoInput = useRef<HTMLInputElement>(null);
   const dbInput = useRef<HTMLInputElement>(null);
   const toast = useToast();
+
+  useEffect(() => {
+    void getStoragePersistenceState().then(setPersistenceState);
+  }, []);
+
+  const onRequestPersistence = async () => {
+    setRequestingPersistence(true);
+    try {
+      const granted = await requestStoragePersistence();
+      setPersistenceState(granted ? 'persisted' : 'not_persisted');
+      if (granted) {
+        toast.push('Armazenamento persistente habilitado no navegador.', 'success');
+      } else {
+        toast.push('Navegador não concedeu persistência de armazenamento.', 'info');
+      }
+    } finally {
+      setRequestingPersistence(false);
+    }
+  };
 
   const set = <K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
@@ -69,8 +105,16 @@ export function Settings() {
 
   const downloadDb = async () => {
     const bytes = await exportSqlite();
-    downloadBytes(bytes, `validametodo-${new Date().toISOString().slice(0, 10)}.sqlite`, 'application/x-sqlite3');
-    toast.push('Banco SQLite exportado.');
+    const updated = recordBackupExport();
+    await updateSettings(updated);
+    setDraft(updated);
+    downloadBytes(
+      bytes,
+      `validametodo-${new Date().toISOString().slice(0, 10)}.sqlite`,
+      'application/x-sqlite3',
+    );
+    toast.push('Banco SQLite exportado e data de backup atualizada.');
+    bumpRefresh();
   };
 
   const importDb = async (file: File | null) => {
@@ -104,6 +148,13 @@ export function Settings() {
     setResetOpen(false);
     toast.push('Banco reiniciado com os dados de demonstração.');
   };
+
+  const lastModifiedAt = getLastDataModifiedAt();
+  const reminderStatus = evaluateBackupReminder({
+    lastExportedAt: draft.lastBackupExportedAt,
+    lastModifiedAt,
+    thresholdDays: draft.backupReminderDays,
+  });
 
   return (
     <div className="space-y-6">
@@ -202,11 +253,25 @@ export function Settings() {
         </Card>
 
         <Card className="lg:col-span-2">
-          <CardHeader title="Dados e backup" description="O banco é um arquivo SQLite real persistido em IndexedDB." icon={<Database className="h-4 w-4" />} />
-          <CardBody className="space-y-3">
+          <CardHeader
+            title="Dados e backup"
+            description="O banco é um arquivo SQLite real persistido em IndexedDB."
+            icon={<Database className="h-4 w-4" />}
+          />
+          <CardBody className="space-y-4">
+            {reminderStatus.shouldRemind && (
+              <Alert
+                tone={reminderStatus.reason === 'never_exported' ? 'danger' : 'warning'}
+                title="Lembrete de backup de dados locais"
+              >
+                {reminderStatus.message}
+              </Alert>
+            )}
+
             <Alert tone="info" title="Offline-first">
-              Nada é enviado a servidores. Exporte o .sqlite periodicamente ou antes de limpar o navegador. O pacote de evidências de cada validação inclui o banco e um manifesto de hashes.
+              Nada é enviado a servidores externos. Exporte o .sqlite periodicamente ou antes de limpar o navegador. O pacote de evidências de cada validação inclui o banco e um manifesto de hashes.
             </Alert>
+
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" onClick={() => void downloadDb()}>
                 <Download className="h-4 w-4" /> Exportar banco (.sqlite)
@@ -225,18 +290,106 @@ export function Settings() {
                 <RotateCcw className="h-4 w-4" /> Reiniciar dados
               </Button>
             </div>
-            <div className="grid gap-3 sm:grid-cols-3">
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
-                <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">Persistência</p>
-                <p className="mt-1 text-sm font-medium text-ink-800 dark:text-ink-100">IndexedDB + SQLite WASM</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+                  Persistência do Navegador
+                </p>
+                <div className="mt-1 flex items-center gap-1.5">
+                  {persistenceState === 'persisted' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                      <CheckCircle2 className="h-3 w-3" /> Persistente
+                    </span>
+                  )}
+                  {persistenceState === 'not_persisted' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                      <AlertTriangle className="h-3 w-3" /> Não persistente
+                    </span>
+                  )}
+                  {persistenceState === 'unsupported' && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-600 dark:bg-ink-800 dark:text-ink-300">
+                      Indisponível
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1.5 text-[11px] text-ink-500">
+                  {persistenceState === 'persisted'
+                    ? 'Protegido contra limpeza automática de cache pelo navegador sob pressão de armazenamento.'
+                    : persistenceState === 'not_persisted'
+                      ? 'O navegador pode descartar dados locais caso falte espaço em disco.'
+                      : 'StorageManager API não suportada neste ambiente.'}
+                </p>
+                {persistenceState === 'not_persisted' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-2 w-full text-xs"
+                    loading={requestingPersistence}
+                    onClick={() => void onRequestPersistence()}
+                  >
+                    <HardDrive className="h-3.5 w-3.5" /> Solicitar persistência
+                  </Button>
+                )}
               </div>
+
+              <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">
+                  Lembrete de Backup
+                </p>
+                <p className="mt-1 text-sm font-medium text-ink-800 dark:text-ink-100">
+                  {reminderStatus.shouldRemind ? (
+                    <span className="font-semibold text-amber-600 dark:text-amber-400">Backup recomendado</span>
+                  ) : (
+                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">Em dia</span>
+                  )}
+                </p>
+                <p className="mt-1.5 text-[11px] text-ink-500">
+                  Último export:{' '}
+                  {draft.lastBackupExportedAt
+                    ? new Date(draft.lastBackupExportedAt).toLocaleDateString()
+                    : 'Nunca exportado'}
+                </p>
+              </div>
+
               <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
                 <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">Portabilidade</p>
                 <p className="mt-1 text-sm font-medium text-ink-800 dark:text-ink-100">Arquivo .sqlite padrão</p>
+                <p className="mt-1.5 text-[11px] text-ink-500">Compatível com DB Browser, Python, R e CLI</p>
               </div>
+
               <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
                 <p className="text-xs font-semibold uppercase tracking-wide text-ink-400">Integridade</p>
                 <p className="mt-1 text-sm font-medium text-ink-800 dark:text-ink-100">Hash SHA-256 no relatório</p>
+                <p className="mt-1.5 text-[11px] text-ink-500">Cadeia de custódia e âncora externa exportável</p>
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-ink-200 bg-ink-50/50 p-3 dark:border-ink-800 dark:bg-ink-900/30">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input
+                  label="Intervalo para lembrete de backup (dias)"
+                  type="number"
+                  min="1"
+                  max="90"
+                  value={draft.backupReminderDays ?? 7}
+                  onChange={(e) =>
+                    set('backupReminderDays', Math.max(1, Number(e.target.value) || 7))
+                  }
+                  hint="Exibe um alerta quando o último backup exportado ultrapassar este limite."
+                />
+                <div className="flex flex-col justify-end pb-1 text-xs text-ink-500">
+                  <p>
+                    <strong>Último backup exportado:</strong>{' '}
+                    {draft.lastBackupExportedAt
+                      ? new Date(draft.lastBackupExportedAt).toLocaleString()
+                      : 'Nenhum backup registrado'}
+                  </p>
+                  <p className="mt-0.5">
+                    <strong>Última alteração de dados:</strong>{' '}
+                    {lastModifiedAt ? new Date(lastModifiedAt).toLocaleString() : 'Nenhuma alteração registrada'}
+                  </p>
+                </div>
               </div>
             </div>
           </CardBody>

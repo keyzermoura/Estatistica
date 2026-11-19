@@ -42,6 +42,46 @@ export function onPersistenceStatusChange(
   return () => persistenceListeners.delete(listener);
 }
 
+/** Estado da permissão de armazenamento persistente do navegador (StorageManager API). */
+export type StoragePersistenceState = 'persisted' | 'not_persisted' | 'unsupported';
+
+/**
+ * Consulta se o armazenamento local possui permissão de persistência (evita evicção automática).
+ */
+export async function getStoragePersistenceState(): Promise<StoragePersistenceState> {
+  if (
+    typeof navigator === 'undefined' ||
+    !navigator.storage ||
+    typeof navigator.storage.persisted !== 'function'
+  ) {
+    return 'unsupported';
+  }
+  try {
+    const isPersisted = await navigator.storage.persisted();
+    return isPersisted ? 'persisted' : 'not_persisted';
+  } catch {
+    return 'unsupported';
+  }
+}
+
+/**
+ * Solicita ao navegador a permissão de persistência durável dos dados locais.
+ */
+export async function requestStoragePersistence(): Promise<boolean> {
+  if (
+    typeof navigator === 'undefined' ||
+    !navigator.storage ||
+    typeof navigator.storage.persist !== 'function'
+  ) {
+    return false;
+  }
+  try {
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
 function registerLifecycleFlush(): void {
   if (typeof window === 'undefined' || lifecycleRegistered) return;
   lifecycleRegistered = true;
@@ -93,6 +133,7 @@ export async function initDb(): Promise<Database> {
   dirty = true;
   await persist();
   registerLifecycleFlush();
+  void requestStoragePersistence();
   return database;
 }
 
