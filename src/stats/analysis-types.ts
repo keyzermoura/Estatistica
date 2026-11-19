@@ -152,6 +152,10 @@ export interface AnalysisOptions {
   homogeneity?: HomogeneityAnalysisOptions | null;
   /** Forçar uso de modelo cruzado mesmo se o diagnóstico apontar estrutura aninhada/desconexa. */
   forceCrossedModel?: boolean;
+  /** Modelo de estudo no perfil dimensional ('crossed' | 'nested_day'). */
+  studyModel?: 'crossed' | 'nested_day';
+  /** Habilitar explicitamente o modelo aninhado Dia > Peça > Réplica no perfil dimensional. */
+  useNestedDayModel?: boolean;
 }
 
 /** Opções da verificação de homogeneidade do lote (ensaio destrutivo). */

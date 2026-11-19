@@ -154,9 +154,17 @@ export interface NestedObservation {
   value: number;
 }
 
+export interface NestedFactorLabels {
+  levelALabel?: string;
+  levelBALabel?: string;
+  replicateLabel?: string;
+}
+
 export interface NestedAnovaOptions {
   /** Nível de significância dos testes F; padrão 0,05. */
   alpha?: number;
+  /** Rótulos semânticos personalizados dos níveis hierárquicos. */
+  labels?: NestedFactorLabels;
 }
 
 export interface NestedVarianceComponent {
@@ -500,23 +508,29 @@ export function anovaNested(
         ])
       : null;
 
+  const aName = options.labels?.levelALabel ?? 'Operador';
+  const baName = options.labels?.levelBALabel ?? 'Amostra(Operador)';
+  const rName = options.labels?.replicateLabel ?? 'Réplica';
+
   const repeatability = buildNestedComponent(
     'repeatability',
-    'Repetibilidade (σ²_e)',
+    options.labels?.replicateLabel
+      ? `Repetibilidade (${options.labels.replicateLabel.toLowerCase()}) (σ²_e)`
+      : 'Repetibilidade (σ²_e)',
     rawE,
     dfE,
     'σ²_e = MS_E',
   );
   const sample = buildNestedComponent(
     'sample',
-    'Amostra(operador) (σ²_B(A))',
+    options.labels?.levelBALabel ? `${options.labels.levelBALabel} (σ²_B(A))` : 'Amostra(operador) (σ²_B(A))',
     rawBA,
     sampleDf,
     'σ²_B(A) = max(0, (MS_B(A) − MS_E)/n)',
   );
   const operator = buildNestedComponent(
     'operator',
-    'Operador (σ²_A)',
+    options.labels?.levelALabel ? `${options.labels.levelALabel} (σ²_A)` : 'Operador (σ²_A)',
     rawA,
     operatorDf,
     'σ²_A = max(0, (MS_A − MS_B(A))/(b·n))',
@@ -530,14 +544,14 @@ export function anovaNested(
     );
   }
   if (dfE < 1) warnings.push('Sem graus de liberdade residuais: não é possível estimar a repetibilidade.');
-  if (dfBA < 1) warnings.push('Sem graus de liberdade para amostra(operador).');
+  if (dfBA < 1) warnings.push(`Sem graus de liberdade para ${baName.toLowerCase()}.`);
   if (replicates < 3) {
-    warnings.push('Menos de 3 réplicas por amostra: a repetibilidade é estimada com poucos graus de liberdade.');
+    warnings.push(`Menos de 3 réplicas por ${baName.toLowerCase()}: a repetibilidade é estimada com poucos graus de liberdade.`);
   }
 
   const rows: AnovaRow[] = [
     {
-      source: 'Operador (A)',
+      source: `${aName} (A)`,
       df: dfA,
       ss: ssA,
       ms: msA,
@@ -546,7 +560,7 @@ export function anovaNested(
       eta2: totalSs > 0 ? ssA / totalSs : null,
     },
     {
-      source: 'Amostra(Operador) (B(A))',
+      source: `${baName} (B(A))`,
       df: dfBA,
       ss: ssBA,
       ms: msBA,
@@ -555,7 +569,7 @@ export function anovaNested(
       eta2: totalSs > 0 ? ssBA / totalSs : null,
     },
     {
-      source: 'Erro (réplica)',
+      source: `Erro (${rName.toLowerCase()})`,
       df: dfE,
       ss: ssE,
       ms: msE,
@@ -576,15 +590,15 @@ export function anovaNested(
   if (pA !== null) {
     interpretations.push(
       pA < alpha
-        ? `Efeito de operador significativo (F = ${fmt(fA)}, p = ${fmt(pA)} < ${fmt(alpha)}).`
-        : `Sem evidência de efeito de operador (F = ${fmt(fA)}, p = ${fmt(pA)} ≥ ${fmt(alpha)}).`,
+        ? `Efeito de ${aName.toLowerCase()} significativo (F = ${fmt(fA)}, p = ${fmt(pA)} < ${fmt(alpha)}).`
+        : `Sem evidência de efeito de ${aName.toLowerCase()} (F = ${fmt(fA)}, p = ${fmt(pA)} ≥ ${fmt(alpha)}).`,
     );
   }
   if (pBA !== null) {
     interpretations.push(
       pBA < alpha
-        ? `Efeito de amostra(operador) significativo (F = ${fmt(fBA)}, p = ${fmt(pBA)} < ${fmt(alpha)}); há variação de amostragem.`
-        : `Sem evidência de efeito de amostra(operador) (F = ${fmt(fBA)}, p = ${fmt(pBA)} ≥ ${fmt(alpha)}).`,
+        ? `Efeito de ${baName.toLowerCase()} significativo (F = ${fmt(fBA)}, p = ${fmt(pBA)} < ${fmt(alpha)}); há variação de amostragem.`
+        : `Sem evidência de efeito de ${baName.toLowerCase()} (F = ${fmt(fBA)}, p = ${fmt(pBA)} ≥ ${fmt(alpha)}).`,
     );
   }
 
@@ -616,7 +630,7 @@ export function anovaNested(
     },
     twoLevel: false,
     iso5725: null,
-    method: 'ANOVA aninhada balanceada de três níveis (Operador > Amostra(Operador) > Réplica)',
+    method: `ANOVA aninhada balanceada de três níveis (${aName} > ${baName} > ${rName})`,
     reference: REFERENCE,
     interpretation: interpretations.join(' '),
     warnings,
@@ -1022,6 +1036,10 @@ export interface GageRRNestedOptions {
   unit?: string;
   /** Dados de homogeneidade do lote ou resultado já calculado. */
   homogeneity?: NestedHomogeneityInput | HomogeneityCheckResult | null;
+  /** Rótulos semânticos personalizados dos níveis hierárquicos. */
+  labels?: NestedFactorLabels;
+  /** Modo do estudo: 'destructive' (ensaio destrutivo: Operador > Amostra > Réplica) ou 'nested_day' (dimensional: Dia > Peça > Réplica). */
+  mode?: 'destructive' | 'nested_day';
 }
 
 export interface GageRRNestedComponent {
@@ -1108,30 +1126,35 @@ interface NestedData {
   }>;
 }
 
-function extractNestedMatrix(input: GageRRNestedInput): NestedData {
+function extractNestedMatrix(input: GageRRNestedInput, labels?: NestedFactorLabels): NestedData {
   const y = input.y;
+  const aPlural = labels?.levelALabel ? labels.levelALabel.toLowerCase() + 's' : 'operadores';
+  const aSingle = labels?.levelALabel ? labels.levelALabel.toLowerCase() : 'operador';
+  const baSingle = labels?.levelBALabel ? labels.levelBALabel.toLowerCase() : 'amostra';
+  const rSingle = labels?.replicateLabel ? labels.replicateLabel.toLowerCase() : 'réplica';
+
   if (!Array.isArray(y) || y.length < 2) {
-    throw new Error('Gage R&R aninhado requer pelo menos 2 operadores (y[operador][amostra][réplica]).');
+    throw new Error(`Gage R&R aninhado requer pelo menos 2 ${aPlural} (y[${aSingle}][${baSingle}][${rSingle}]).`);
   }
   const operators = y.length;
   const samplesPerOperator = y[0]?.length ?? 0;
   if (samplesPerOperator < 1) {
-    throw new Error('Gage R&R aninhado requer pelo menos 1 amostra por operador.');
+    throw new Error(`Gage R&R aninhado requer pelo menos 1 ${baSingle} por ${aSingle}.`);
   }
   const replicates = y[0]?.[0]?.length ?? 0;
   if (replicates < 2) {
     throw new Error(
-      'Gage R&R aninhado requer pelo menos 2 réplicas (corpos de prova) por amostra; r = 1 não permite estimar a repetibilidade.',
+      `Gage R&R aninhado requer pelo menos 2 réplicas (corpos de prova) por ${baSingle}; r = 1 não permite estimar a repetibilidade.`,
     );
   }
   const operatorLabels = input.operatorLabels
     ? [...input.operatorLabels]
-    : Array.from({ length: operators }, (_, index) => `Operador ${index + 1}`);
+    : Array.from({ length: operators }, (_, index) => `${labels?.levelALabel ?? 'Operador'} ${index + 1}`);
   if (operatorLabels.length !== operators) {
     throw new Error(`operatorLabels deve ter ${operators} rótulos.`);
   }
   if (input.sampleLabels && input.sampleLabels.length !== operators) {
-    throw new Error(`sampleLabels deve ter ${operators} listas (uma por operador).`);
+    throw new Error(`sampleLabels deve ter ${operators} listas (uma por ${aSingle}).`);
   }
   const sampleLabels: string[][] = [];
   const observations: NestedObservation[] = [];
@@ -1140,7 +1163,7 @@ function extractNestedMatrix(input: GageRRNestedInput): NestedData {
   for (let i = 0; i < operators; i++) {
     if (!Array.isArray(y[i]) || y[i].length !== samplesPerOperator) {
       throw new Error(
-        `Formato inválido: o operador ${i + 1} deve ter ${samplesPerOperator} amostras, mas tem ${y[i]?.length ?? 0}.`,
+        `Formato inválido: o ${aSingle} ${i + 1} deve ter ${samplesPerOperator} ${baSingle}s, mas tem ${y[i]?.length ?? 0}.`,
       );
     }
     const labelsForOperator = input.sampleLabels
@@ -1161,7 +1184,7 @@ function extractNestedMatrix(input: GageRRNestedInput): NestedData {
         const value = y[i][j][k];
         if (value === null || value === undefined) {
           throw new Error(
-            `Dados faltantes em y[${i}][${j}][${k}]: o delineamento aninhado destrutivo exige células completas.`,
+            `Dados faltantes em y[${i}][${j}][${k}]: o delineamento aninhado exige células completas.`,
           );
         }
         if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -1251,7 +1274,10 @@ function nestedDegreesOfFreedom(anova: NestedAnovaResult): {
   };
 }
 
-function componentTable(components: GageRRNestedComponent[]): AnalysisTable {
+function componentTable(
+  components: GageRRNestedComponent[],
+  mode: 'destructive' | 'nested_day' = 'destructive',
+): AnalysisTable {
   return {
     title: 'Componentes de variância e contribuições',
     columns: [
@@ -1280,7 +1306,10 @@ function componentTable(components: GageRRNestedComponent[]): AnalysisTable {
           ? 'não estimável'
           : '—',
     ]),
-    note: '% contribuição = 100·variância/total; % variação do estudo = 100·desvio/total. A segunda coluna não soma 100%. Em ensaio destrutivo, a repetibilidade inclui a variação entre corpos de prova.',
+    note:
+      mode === 'nested_day'
+        ? '% contribuição = 100·variância/total; % variação do estudo = 100·desvio/total. Delineamento aninhado (Dia > Peça > Réplica): a variação entre peças representa o produto/processo e não é somada em σ²_GRR.'
+        : '% contribuição = 100·variância/total; % variação do estudo = 100·desvio/total. A segunda coluna não soma 100%. Em ensaio destrutivo, a repetibilidade inclui a variação entre corpos de prova.',
   };
 }
 
@@ -1331,7 +1360,14 @@ function intervalTable(
   };
 }
 
-function anovaTable(rows: AnovaRow[], twoLevel: boolean): AnalysisTable {
+function anovaTable(
+  rows: AnovaRow[],
+  twoLevel: boolean,
+  labels?: NestedFactorLabels,
+): AnalysisTable {
+  const aName = labels?.levelALabel ?? 'Operador';
+  const baName = labels?.levelBALabel ?? 'Amostra(Operador)';
+  const rName = labels?.replicateLabel ?? 'Réplica';
   return {
     title: twoLevel
       ? 'ANOVA aninhada de dois níveis (ISO 5725-2)'
@@ -1346,15 +1382,17 @@ function anovaTable(rows: AnovaRow[], twoLevel: boolean): AnalysisTable {
       formatP(row.p),
     ]),
     note: twoLevel
-      ? 'Operador > Réplica: σ²_B(A) não é separável; resultado delegado ao ISO 5725-2.'
-      : 'Operador > Amostra(Operador) > Réplica. F_A = MS_A/MS_B(A); F_B(A) = MS_B(A)/MS_E.',
+      ? `${aName} > ${rName}: σ²_B(A) não é separável; resultado delegado ao ISO 5725-2.`
+      : `${aName} > ${baName} > ${rName}. F_A = MS_A/MS_B(A); F_B(A) = MS_B(A)/MS_E.`,
   };
 }
 
-function sampleTable(data: NestedData): AnalysisTable {
+function sampleTable(data: NestedData, labels?: NestedFactorLabels): AnalysisTable {
+  const aName = labels?.levelALabel ?? 'Operador';
+  const baName = labels?.levelBALabel ?? 'Amostra';
   return {
-    title: 'Resumo por operador e amostra',
-    columns: ['Operador', 'Amostra', 'n', 'Média', 'Desvio-padrão', 'Amplitude'],
+    title: `Resumo por ${aName.toLowerCase()} e ${baName.toLowerCase()}`,
+    columns: [aName, baName, 'n', 'Média', 'Desvio-padrão', 'Amplitude'],
     rows: data.cells.map((cell) => [
       cell.operator,
       cell.sample,
@@ -1367,18 +1405,20 @@ function sampleTable(data: NestedData): AnalysisTable {
   };
 }
 
-function buildCharts(data: NestedData): AnalysisChart[] {
+function buildCharts(data: NestedData, labels?: NestedFactorLabels): AnalysisChart[] {
+  const aName = labels?.levelALabel ?? 'Operador';
+  const baName = labels?.levelBALabel ?? 'Amostra';
   const means: AnalysisChart = {
     kind: 'line',
-    title: 'Médias por operador × amostra',
-    xLabel: 'Amostra',
+    title: `Médias por ${aName.toLowerCase()} × ${baName.toLowerCase()}`,
+    xLabel: baName,
     yLabel: 'Média',
     data: [],
   };
   const ranges: AnalysisChart = {
     kind: 'bar',
-    title: 'Amplitude por operador × amostra',
-    xLabel: 'Amostra',
+    title: `Amplitude por ${aName.toLowerCase()} × ${baName.toLowerCase()}`,
+    xLabel: baName,
     yLabel: 'Amplitude',
     data: [],
   };
@@ -1418,6 +1458,7 @@ function buildSummary(
   metrics: GageRRNestedMetric[],
   tolerance: number | null,
   verdict: Verdict,
+  mode: 'destructive' | 'nested_day' = 'destructive',
 ): string {
   const grr = metrics.find((metric) => metric.key === 'grr_pct');
   const pt = metrics.find((metric) => metric.key === 'pt_pct');
@@ -1436,7 +1477,11 @@ function buildSummary(
     ndc && ndc.value !== null
       ? `${fmt(ndc.value)} (${verdictLabel(ndc.verdict)})`
       : 'não avaliado';
-  return `Gage R&R aninhado: %GRR = ${grrText}; %P/T = ${ptText}; ndc = ${ndcText}. Veredito global: ${verdictLabel(verdict)}. ${NESTED_DESTRUCTIVE_WARNING}`;
+  const tail =
+    mode === 'nested_day'
+      ? 'Delineamento aninhado: repetibilidade intra-peça e reprodutibilidade entre dias.'
+      : NESTED_DESTRUCTIVE_WARNING;
+  return `Gage R&R aninhado: %GRR = ${grrText}; %P/T = ${ptText}; ndc = ${ndcText}. Veredito global: ${verdictLabel(verdict)}. ${tail}`;
 }
 
 /**
@@ -1468,8 +1513,12 @@ export function gageRRNested(
     throw new Error('O nível de significância α deve estar entre 0 e 1 (ex.: 0,05).');
   }
   const criteria = normalizeCriteria(options.criteria);
-  const data = extractNestedMatrix(input);
-  const anova = anovaNested(data.observations, { alpha });
+  const mode = options.mode ?? 'destructive';
+  const labels = options.labels;
+  const baLabel = labels?.levelBALabel ?? (mode === 'nested_day' ? 'Peça (dentro do dia)' : 'Amostra(operador)');
+
+  const data = extractNestedMatrix(input, labels);
+  const anova = anovaNested(data.observations, { alpha, labels });
   const dfs = nestedDegreesOfFreedom(anova);
   const repVariance = anova.components.repeatability.variance;
   const sampleVariance = anova.components.sample.variance;
@@ -1488,8 +1537,21 @@ export function gageRRNested(
       : null;
 
   const sampleLabel = anova.twoLevel
-    ? 'Amostra(operador) — não estimável (b = 1)'
-    : 'Amostra(operador) — variação de amostragem (σ²_amostra)';
+    ? `${baLabel} — não estimável (b = 1)`
+    : mode === 'nested_day'
+      ? `${baLabel} — variação do produto (σ²_peça(dia))`
+      : `${baLabel} — variação de amostragem (σ²_amostra)`;
+
+  const operLabel =
+    mode === 'nested_day'
+      ? `Reprodutibilidade entre dias (σ²_dia)`
+      : `Reprodutibilidade (σ²_oper)`;
+
+  const repLabel =
+    mode === 'nested_day'
+      ? 'Repetibilidade intra-peça (σ²_rep)'
+      : 'Repetibilidade (σ²_e)';
+
   const drafts: Array<{
     key: GageRRNestedComponent['key'];
     label: string;
@@ -1502,7 +1564,7 @@ export function gageRRNested(
   }> = [
     {
       key: 'repeatability',
-      label: 'Repetibilidade (σ²_e)',
+      label: repLabel,
       variance: repVariance,
       rawVariance: repVariance,
       truncated: false,
@@ -1520,11 +1582,13 @@ export function gageRRNested(
       df: dfs.sample,
       formula: anova.twoLevel
         ? 'σ²_amostra não estimável com b = 1'
-        : 'σ²_amostra = max(0, (MS_B(A) − MS_E)/n)',
+        : mode === 'nested_day'
+          ? 'σ²_peça(dia) = max(0, (MS_B(A) − MS_E)/n)'
+          : 'σ²_amostra = max(0, (MS_B(A) − MS_E)/n)',
     },
     {
       key: 'operator',
-      label: 'Reprodutibilidade (σ²_oper)',
+      label: operLabel,
       variance: operatorVariance,
       rawVariance: anova.components.operator.rawVariance,
       truncated: anova.components.operator.truncated,
@@ -1532,17 +1596,19 @@ export function gageRRNested(
       df: dfs.operator,
       formula: anova.twoLevel
         ? 'σ²_oper = max(0, (MS_A − MS_E)/n)'
-        : 'σ²_oper = max(0, (MS_A − MS_B(A))/(b·n))',
+        : mode === 'nested_day'
+          ? 'σ²_dia = max(0, (MS_A − MS_B(A))/(b·n))'
+          : 'σ²_oper = max(0, (MS_A − MS_B(A))/(b·n))',
     },
     {
       key: 'grr',
-      label: 'Gage R&R (σ²_GRR)',
+      label: mode === 'nested_day' ? 'Precisão intermediária / GRR (σ²_GRR)' : 'Gage R&R (σ²_GRR)',
       variance: grrVariance,
       rawVariance: repVariance + anova.components.operator.rawVariance,
       truncated: repVariance + anova.components.operator.rawVariance < 0,
       estimable: true,
       df: dfs.grr,
-      formula: 'σ²_GRR = σ²_e + σ²_oper',
+      formula: mode === 'nested_day' ? 'σ²_GRR = σ²_rep + σ²_dia' : 'σ²_GRR = σ²_e + σ²_oper',
     },
     {
       key: 'total',
@@ -1552,7 +1618,7 @@ export function gageRRNested(
       truncated: false,
       estimable: true,
       df: null,
-      formula: 'σ²_total = σ²_GRR + σ²_amostra',
+      formula: mode === 'nested_day' ? 'σ²_total = σ²_GRR + σ²_peça(dia)' : 'σ²_total = σ²_GRR + σ²_amostra',
     },
   ];
 
@@ -1602,10 +1668,10 @@ export function gageRRNested(
   const unit = options.unit ?? '';
   const sigmaMetric: GageRRNestedMetric = {
     key: 'sigma_grr',
-    label: 'Desvio-padrão do Gage R&R (σ_GRR)',
+    label: mode === 'nested_day' ? 'Desvio-padrão de precisão intermediária (σ_GRR)' : 'Desvio-padrão do Gage R&R (σ_GRR)',
     value: grrVariance > 0 ? sigmaGrr : grrVariance === 0 ? 0 : null,
     unit,
-    formula: 'σ_GRR = √(σ²_e + σ²_oper)',
+    formula: mode === 'nested_day' ? 'σ_GRR = √(σ²_rep + σ²_dia)' : 'σ_GRR = √(σ²_e + σ²_oper)',
     criterionText: 'Sem critério direto; avaliado por %GRR e %P/T.',
     verdict: 'not_evaluated',
     interval: intervals.sigmaGrr,
@@ -1639,7 +1705,7 @@ export function gageRRNested(
     label: 'Número de categorias distintas (ndc)',
     value: ndc,
     unit: '',
-    formula: 'ndc = floor(1,41·σ_amostra/σ_GRR)',
+    formula: mode === 'nested_day' ? 'ndc = floor(1,41·σ_peça/σ_GRR)' : 'ndc = floor(1,41·σ_amostra/σ_GRR)',
     criterionText: `ndc ≥ ${fmt(criteria.ndcMin)}`,
     verdict: ndcVerdict,
     interval: null,
@@ -1667,7 +1733,7 @@ export function gageRRNested(
     }
   }
 
-  const warnings: string[] = [NESTED_DESTRUCTIVE_WARNING];
+  const warnings: string[] = mode === 'nested_day' ? [] : [NESTED_DESTRUCTIVE_WARNING];
   const notes: string[] = [];
   if (anova.twoLevel) {
     warnings.push(
@@ -1692,31 +1758,40 @@ export function gageRRNested(
   } else if (intervals.grrPct === null) {
     warnings.push('Intervalo de %GRR não estimável com os graus de liberdade disponíveis.');
   }
-  if (!homogeneity) {
-    warnings.push(
-      'Homogeneidade do lote não avaliada: informe os grupos de amostras do lote para verificar a validade da repetibilidade.',
-    );
-  } else if (homogeneity.homogeneous === false) {
-    warnings.push(
-      `Homogeneidade do lote rejeitada; justificativa registrada: ${homogeneity.justification ?? '—'}.`,
-    );
-  } else if (homogeneity.homogeneous === null) {
-    warnings.push('Homogeneidade do lote não avaliada por dados insuficientes.');
+  if (mode !== 'nested_day') {
+    if (!homogeneity) {
+      warnings.push(
+        'Homogeneidade do lote não avaliada: informe os grupos de amostras do lote para verificar a validade da repetibilidade.',
+      );
+    } else if (homogeneity.homogeneous === false) {
+      warnings.push(
+        `Homogeneidade do lote rejeitada; justificativa registrada: ${homogeneity.justification ?? '—'}.`,
+      );
+    } else if (homogeneity.homogeneous === null) {
+      warnings.push('Homogeneidade do lote não avaliada por dados insuficientes.');
+    }
   }
 
-  notes.push('Modelo aninhado: Operador > Amostra(Operador) > Réplica; componentes estimados pelo método dos momentos.');
-  notes.push('σ²_GRR = σ²_e + σ²_oper. A componente entre amostras é reportada separadamente como variação de amostragem e não compõe σ²_GRR.');
-  notes.push('Em ensaio destrutivo cada réplica é um corpo de prova distinto; a repetibilidade inclui a variação entre corpos de prova.');
-  notes.push('ICs por Satterthwaite para σ_GRR, %GRR e %P/T; o IC de %GRR usa a razão de variâncias GRR/amostra e quantis F.');
-  notes.push('Premissas: delineamento balanceado, componentes aleatórios, resíduos normais e independentes, amostras homogêneas dentro do lote.');
+  if (mode === 'nested_day') {
+    notes.push('Modelo aninhado: Dia > Peça(Dia) > Réplica; componentes estimados pelo método dos momentos.');
+    notes.push('σ²_GRR = σ²_rep + σ²_dia. A variação entre peças representa a variação de processo/produto e não compõe o erro de medição.');
+    notes.push('Repetibilidade estimada dentro de peças (resíduo); reprodutibilidade estimada entre dias (Satterthwaite).');
+    notes.push('ICs por Satterthwaite para σ_GRR, %GRR e %P/T.');
+  } else {
+    notes.push('Modelo aninhado: Operador > Amostra(Operador) > Réplica; componentes estimados pelo método dos momentos.');
+    notes.push('σ²_GRR = σ²_e + σ²_oper. A componente entre amostras é reportada separadamente como variação de amostragem e não compõe σ²_GRR.');
+    notes.push('Em ensaio destrutivo cada réplica é um corpo de prova distinto; a repetibilidade inclui a variação entre corpos de prova.');
+    notes.push('ICs por Satterthwaite para σ_GRR, %GRR e %P/T; o IC de %GRR usa a razão de variâncias GRR/amostra e quantis F.');
+    notes.push('Premissas: delineamento balanceado, componentes aleatórios, resíduos normais e independentes, amostras homogêneas dentro do lote.');
+  }
   if (homogeneity) {
     notes.push(`Homogeneidade do lote: ${homogeneity.interpretation}`);
   }
 
   const tables: AnalysisTable[] = [
-    anovaTable(anova.rows, anova.twoLevel),
-    sampleTable(data),
-    componentTable(components),
+    anovaTable(anova.rows, anova.twoLevel, labels),
+    sampleTable(data, labels),
+    componentTable(components, mode),
     intervalTable(components, intervals, metrics),
   ];
   if (homogeneity) tables.push(homogeneity.table);
@@ -1767,13 +1842,13 @@ export function gageRRNested(
     intervals,
     ndc,
     tables,
-    charts: buildCharts(data),
+    charts: buildCharts(data, labels),
     warnings: [...new Set(warnings)],
     notes,
-    summary: buildSummary(metrics, tolerance, verdict),
+    summary: buildSummary(metrics, tolerance, verdict, mode),
     verdict,
     criteria,
-    destructiveWarning: NESTED_DESTRUCTIVE_WARNING,
+    destructiveWarning: mode === 'nested_day' ? '' : NESTED_DESTRUCTIVE_WARNING,
     homogeneity,
     justificationRequired: homogeneity?.justificationRequired ?? false,
     justification: homogeneity?.justification ?? null,

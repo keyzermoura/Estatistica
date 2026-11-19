@@ -462,8 +462,18 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
       (reproParam?.results?.mixedAnova as any) ??
       null;
 
+    const nestedStudy =
+      (repParam?.results?.nested as any) ??
+      (reproParam?.results?.nested as any) ??
+      null;
+
+    const isNestedDay =
+      repParam?.results?.study === 'nested_day' ||
+      reproParam?.results?.study === 'nested_day';
+
     const repDof =
       mixedAnova?.budget?.repeatability?.df ??
+      nestedStudy?.anova?.dfE ??
       (typeof repParam?.rawMetrics?.df_rep === 'number' && repParam.rawMetrics.df_rep > 0
         ? repParam.rawMetrics.df_rep
         : ((repParam?.results?.gageRR as any)?.components?.find((c: any) => c.key === 'repeatability')?.df ??
@@ -479,11 +489,15 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
 
     const daySd =
       mixedAnova?.budget?.day?.sd ??
-      (typeof reproParam?.rawMetrics?.sigma_day === 'number' ? reproParam.rawMetrics.sigma_day : null);
+      (nestedStudy
+        ? (nestedStudy.components?.find((c: any) => c.key === 'operator')?.standardDeviation ?? null)
+        : (typeof reproParam?.rawMetrics?.sigma_day === 'number' ? reproParam.rawMetrics.sigma_day : null));
 
     const dayDof =
       mixedAnova?.budget?.day?.df ??
-      (typeof reproParam?.rawMetrics?.df_day === 'number' ? reproParam.rawMetrics.df_day : null);
+      (nestedStudy
+        ? (nestedStudy.components?.find((c: any) => c.key === 'operator')?.df ?? null)
+        : (typeof reproParam?.rawMetrics?.df_day === 'number' ? reproParam.rawMetrics.df_day : null));
 
     const modelItems =
       profile.id === 'dimensional'
@@ -495,8 +509,8 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
             repeatabilitySd: sigmaRep,
             repeatabilityDof: repDof,
             nReplicates: bundle.design?.input.nReplicates ?? 3,
-            reproducibilitySd: sigmaOper,
-            reproducibilityDof: reproDof,
+            reproducibilitySd: isNestedDay ? null : sigmaOper,
+            reproducibilityDof: isNestedDay ? null : reproDof,
             daySd,
             dayDof,
             referenceUncertainty: calU,

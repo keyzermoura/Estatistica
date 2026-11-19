@@ -66,10 +66,16 @@ import {
   diagnoseDesignStructure,
   type DesignDiagnosis,
 } from '../designStructure';
+import {
+  gageRRNested,
+  type GageRRNestedResult,
+} from '../nested';
 
 const GAGE_REFERENCE = 'AIAG MSA (2010), 4. ed.; ISO 22514-7:2021; Montgomery (2020)';
 const MIXED_ANOVA_REFERENCE =
   'Montgomery (2020), Design and Analysis of Experiments, Caps. 13-14; Satterthwaite (1946); ISO 5725-2:2019';
+const NESTED_ANOVA_REFERENCE =
+  'Montgomery (2020), Design and Analysis of Experiments, cap. 14; Satterthwaite (1946); ISO 5725-2:2019';
 const STABILITY_REFERENCE = 'AIAG MSA (2010); ISO 7870-2; Montgomery (2020)';
 const TOLERANCE_REFERENCE = 'JCGM 100:2008 (GUM); ISO/IEC 17025:2017, 7.6';
 
@@ -520,6 +526,176 @@ function mixedAnovaToTables(study: MixedAnovaResult) {
   };
 }
 
+interface NestedDayStudySuccess {
+  result: GageRRNestedResult;
+  measurements: number;
+  diagnosis: DesignDiagnosis;
+}
+
+interface NestedDayStudyError {
+  error: string;
+  diagnosis: DesignDiagnosis;
+}
+
+type NestedDayStudyOutcome = NestedDayStudySuccess | NestedDayStudyError;
+
+export function isNestedDaySelected(context: AnalysisContext): boolean {
+  if (context.options.forceCrossedModel) return false;
+  if (context.options.studyModel === 'crossed') return false;
+  if (context.options.studyModel === 'nested_day') return true;
+  if (context.options.useNestedDayModel === true) return true;
+  if (
+    context.options.plans?.some(
+      (p) =>
+        p.notes?.includes('aninhado_dia') ||
+        p.notes?.includes('nested_day') ||
+        p.notes?.includes('modelo_aninhado'),
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export function dimensionalNestedDayStudy(
+  context: AnalysisContext,
+  criteria: AcceptanceCriterion[],
+): NestedDayStudyOutcome | null {
+  if (!isNestedDaySelected(context)) {
+    return null;
+  }
+
+  const measurements = context.used.filter(
+    (m) =>
+      (m.partId ?? '').trim() !== '' &&
+      !hasReference(m) &&
+      m.value !== null &&
+      Number.isFinite(m.value),
+  );
+  if (!measurements.length) return null;
+
+  const diagnosis = diagnoseDesignStructure(measurements);
+  if (
+    diagnosis.classification !== 'nested' ||
+    diagnosis.nestedHierarchy?.nestedFactor !== 'part' ||
+    diagnosis.nestedHierarchy?.parentFactor !== 'day'
+  ) {
+    return null;
+  }
+
+  if (!diagnosis.isBalanced) {
+    return {
+      error:
+        `O delineamento aninhado Dia > Peça > Réplica requer desenho balanceado (mesmo número de peças por dia e de réplicas por peça). Foram identificadas células com contagens desiguais (mín. ${diagnosis.partAnalystIncidence.minReplicates}, máx. ${diagnosis.partAnalystIncidence.maxReplicates}).`,
+      diagnosis,
+    };
+  }
+
+  const days = [
+    ...new Set(measurements.map((m) => (m.day ?? '').trim()).filter(Boolean)),
+  ].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+
+  if (days.length < 2) {
+    return {
+      error:
+        'O modelo aninhado Dia > Peça requer pelo menos 2 dias distintos com medições válidas.',
+      diagnosis,
+    };
+  }
+
+  const sampleLabels: string[][] = [];
+  const y: number[][][] = [];
+
+  const firstDayParts = [
+    ...new Set(
+      measurements
+        .filter((m) => (m.day ?? '').trim() === days[0])
+        .map((m) => (m.partId ?? '').trim())
+        .filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+  const partsPerDay = firstDayParts.length;
+
+  if (partsPerDay < 2) {
+    return {
+      error:
+        'O modelo aninhado requer pelo menos 2 peças por dia para estimar a variação entre peças.',
+      diagnosis,
+    };
+  }
+
+  for (let d = 0; d < days.length; d++) {
+    const day = days[d];
+    const dayParts = [
+      ...new Set(
+        measurements
+          .filter((m) => (m.day ?? '').trim() === day)
+          .map((m) => (m.partId ?? '').trim())
+          .filter(Boolean),
+      ),
+    ].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
+
+    if (dayParts.length !== partsPerDay) {
+      return {
+        error:
+          `Delineamento aninhado desbalanceado: o dia ${day} tem ${dayParts.length} peças; esperado ${partsPerDay}.`,
+        diagnosis,
+      };
+    }
+
+    sampleLabels.push(dayParts);
+    const dayMatrix: number[][] = [];
+
+    for (const part of dayParts) {
+      const partValues = measurements
+        .filter(
+          (m) =>
+            (m.day ?? '').trim() === day &&
+            (m.partId ?? '').trim() === part,
+        )
+        .map((m) => m.value!);
+
+      dayMatrix.push(partValues);
+    }
+    y.push(dayMatrix);
+  }
+
+  const nativeCriteria: Partial<GageRRCriteria> = {
+    grrAccept: criterionLimit(criteria, 'grr_pct', 10),
+    grrWarning: Math.max(criterionLimit(criteria, 'grr_pct', 10), 30),
+    ptAccept: criterionLimit(criteria, 'pt_pct', 10),
+    ptWarning: Math.max(criterionLimit(criteria, 'pt_pct', 10), 30),
+    ndcMin: criterionLimit(criteria, 'ndc', 5),
+  };
+
+  try {
+    const result = gageRRNested(
+      {
+        y,
+        tolerance: toleranceOf(context.options),
+        operatorLabels: days,
+        sampleLabels,
+        k: 6,
+      },
+      {
+        confidence: context.options.confidence ?? 0.95,
+        alpha: context.options.alpha ?? 0.05,
+        criteria: nativeCriteria,
+        unit: unitOf(context.options),
+        mode: 'nested_day',
+        labels: {
+          levelALabel: 'Dia',
+          levelBALabel: 'Peça (dentro do dia)',
+          replicateLabel: 'Réplica',
+        },
+      },
+    );
+    return { result, measurements: measurements.length, diagnosis };
+  } catch (err) {
+    return { error: errorMessage(err), diagnosis };
+  }
+}
+
 export const dimensionalRepeatabilityAnalysis: AnalysisModule = ({
   parameter,
   criteria,
@@ -580,6 +756,94 @@ export const dimensionalRepeatabilityAnalysis: AnalysisModule = ({
       notes: mixedExtras.notes,
       reference: MIXED_ANOVA_REFERENCE,
       results: { mixedAnova: mixedStudy, study: 'mixed_anova' },
+    };
+  }
+
+  const nestedStudy = dimensionalNestedDayStudy(context, criteria);
+  if (nestedStudy) {
+    if ('error' in nestedStudy) {
+      const notes = [
+        nestedStudy.diagnosis.recommendation,
+        ...nestedStudy.diagnosis.warnings,
+      ];
+      const param = emptyParameter(parameter, context.used.length, nestedStudy.error, notes);
+      param.warnings = nestedStudy.diagnosis.warnings;
+      param.tables = [designDiagnosisTable(nestedStudy.diagnosis)];
+      param.results = { diagnosis: nestedStudy.diagnosis };
+      return param;
+    }
+
+    const { result, diagnosis } = nestedStudy;
+    const repComp = result.components.find((c) => c.key === 'repeatability');
+    const sigmaRep = repComp?.standardDeviation ?? null;
+    const dfRep = result.anova.dfE;
+    const totalVar = result.components.find((c) => c.key === 'total')?.variance ?? 0;
+    const evPct =
+      totalVar > 0 && sigmaRep !== null ? (100 * (sigmaRep * sigmaRep)) / totalVar : null;
+    const grrMetric = result.metrics.find((m) => m.key === 'grr_pct');
+    const ndcMetric = result.metrics.find((m) => m.key === 'ndc');
+
+    const raw = {
+      ev_pct: evPct,
+      sigma_rep: sigmaRep,
+      df_rep: dfRep,
+      grr_pct: grrMetric?.value ?? null,
+      ndc: ndcMetric?.value ?? null,
+    };
+    const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+    const diagTable = [designDiagnosisTable(diagnosis)];
+
+    return {
+      key: parameter.key,
+      label: parameter.label,
+      n: result.n,
+      verdict,
+      summary: parameterSummary(
+        parameter.label,
+        verdict,
+        `ANOVA aninhada (Dia > Peça > Réplica): σ_rep = ${fmt(sigmaRep)} ${unitOf(context.options)} (ν = ${dfRep} g.l., resíduo); %GRR = ${raw.grr_pct === null ? '—' : fmt(raw.grr_pct)}%; ndc = ${raw.ndc === null ? '—' : fmt(raw.ndc)}. ${result.summary}`,
+      ),
+      metrics: [
+        buildMetric(
+          parameter,
+          'ev_pct',
+          raw.ev_pct,
+          criteria,
+          '%EV = 100·σ²_rep/σ²_total',
+          NESTED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'sigma_rep',
+          raw.sigma_rep,
+          criteria,
+          'σ_rep = √MS_E (variação intra-peça / resíduo)',
+          NESTED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'grr_pct',
+          raw.grr_pct,
+          criteria,
+          '%GRR = 100·σ_GRR/σ_total',
+          NESTED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'ndc',
+          raw.ndc,
+          criteria,
+          'ndc = 1,41·(σ_peça/σ_GRR)',
+          NESTED_ANOVA_REFERENCE,
+        ),
+      ],
+      rawMetrics: raw,
+      tables: [...diagTable, ...result.tables],
+      charts: result.charts,
+      warnings: [...result.warnings, ...diagnosis.warnings],
+      notes: result.notes,
+      reference: NESTED_ANOVA_REFERENCE,
+      results: { nested: result, study: 'nested_day', diagnosis },
     };
   }
 
@@ -774,6 +1038,111 @@ export const dimensionalReproducibilityAnalysis: AnalysisModule = ({
       notes: mixedExtras.notes,
       reference: MIXED_ANOVA_REFERENCE,
       results: { mixedAnova: mixedStudy, study: 'mixed_anova' },
+    };
+  }
+
+  const nestedStudy = dimensionalNestedDayStudy(context, criteria);
+  if (nestedStudy) {
+    if ('error' in nestedStudy) {
+      const notes = [
+        nestedStudy.diagnosis.recommendation,
+        ...nestedStudy.diagnosis.warnings,
+      ];
+      const param = emptyParameter(parameter, context.used.length, nestedStudy.error, notes);
+      param.warnings = nestedStudy.diagnosis.warnings;
+      param.tables = [designDiagnosisTable(nestedStudy.diagnosis)];
+      param.results = { diagnosis: nestedStudy.diagnosis };
+      return param;
+    }
+
+    const { result, diagnosis } = nestedStudy;
+    const dayComp = result.components.find((c) => c.key === 'operator');
+    const sigmaDay = dayComp?.standardDeviation ?? null;
+    const dfDay = dayComp?.df ?? null;
+    const grrComp = result.components.find((c) => c.key === 'grr');
+    const sigmaIp = grrComp?.standardDeviation ?? null;
+    const dfIp = grrComp?.df ?? null;
+    const totalVar = result.components.find((c) => c.key === 'total')?.variance ?? 0;
+    const operPct =
+      totalVar > 0 && sigmaDay !== null ? (100 * (sigmaDay * sigmaDay)) / totalVar : null;
+    const grrMetric = result.metrics.find((m) => m.key === 'grr_pct');
+    const ptMetric = result.metrics.find((m) => m.key === 'pt_pct');
+    const ndcMetric = result.metrics.find((m) => m.key === 'ndc');
+
+    const raw = {
+      oper_pct: operPct,
+      sigma_oper: sigmaDay,
+      df_oper: dfDay,
+      sigma_day: sigmaDay,
+      df_day: dfDay,
+      sigma_ip: sigmaIp,
+      df_ip: dfIp,
+      grr_pct: grrMetric?.value ?? null,
+      pt_pct: ptMetric?.value ?? null,
+      ndc: ndcMetric?.value ?? null,
+    };
+    const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+    const diagTable = [designDiagnosisTable(diagnosis)];
+
+    return {
+      key: parameter.key,
+      label: parameter.label,
+      n: result.n,
+      verdict,
+      summary: parameterSummary(
+        parameter.label,
+        verdict,
+        `ANOVA aninhada (Dia > Peça > Réplica): σ_dia = ${fmt(sigmaDay)} ${unitOf(context.options)} (ν = ${dfDay === null ? '—' : fmt(dfDay)} g.l. Satterthwaite); σ_GRR = ${fmt(sigmaIp)} ${unitOf(context.options)} (ν = ${dfIp === null ? '—' : fmt(dfIp)} g.l.); %AV = ${raw.oper_pct === null ? '—' : fmt(raw.oper_pct)}%; %GRR = ${raw.grr_pct === null ? '—' : fmt(raw.grr_pct)}%. ${result.summary}`,
+      ),
+      metrics: [
+        buildMetric(
+          parameter,
+          'oper_pct',
+          raw.oper_pct,
+          criteria,
+          '%AV = 100·σ²_dia/σ²_total',
+          NESTED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'sigma_oper',
+          raw.sigma_oper,
+          criteria,
+          'σ_dia da ANOVA aninhada (Satterthwaite)',
+          NESTED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'grr_pct',
+          raw.grr_pct,
+          criteria,
+          '%GRR = 100·σ_GRR/σ_total',
+          NESTED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'pt_pct',
+          raw.pt_pct,
+          criteria,
+          '%P/T = 100·6·σ_GRR/T',
+          NESTED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'ndc',
+          raw.ndc,
+          criteria,
+          'ndc = 1,41·(σ_peça/σ_GRR)',
+          NESTED_ANOVA_REFERENCE,
+        ),
+      ],
+      rawMetrics: raw,
+      tables: [...diagTable, ...result.tables],
+      charts: result.charts,
+      warnings: [...result.warnings, ...diagnosis.warnings],
+      notes: result.notes,
+      reference: NESTED_ANOVA_REFERENCE,
+      results: { nested: result, study: 'nested_day', diagnosis },
     };
   }
 
