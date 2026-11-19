@@ -241,10 +241,19 @@ export function AnalysisUncertaintyTab({
                         <input
                           type="number"
                           step="any"
-                          className="w-16 rounded-lg border border-ink-200 bg-white px-1.5 py-1 text-right text-xs dark:border-ink-700 dark:bg-ink-900"
+                          className={`w-16 rounded-lg border bg-white px-1.5 py-1 text-right text-xs dark:bg-ink-900 ${
+                            item.type === 'A' && (item.dof === null || item.dof <= 0)
+                              ? 'border-amber-400 bg-amber-50/50 dark:border-amber-600 dark:bg-amber-950/20'
+                              : 'border-ink-200 dark:border-ink-700'
+                          }`}
                           value={item.dof ?? ''}
                           disabled={locked}
-                          placeholder="∞"
+                          placeholder={item.type === 'A' ? 'n − 1' : '∞'}
+                          title={
+                            item.type === 'A'
+                              ? 'Graus de liberdade obrigatórios para Tipo A (n − 1)'
+                              : 'Deixe vazio para ν = ∞'
+                          }
                           onChange={(e) =>
                             patchItem(item.id, {
                               dof: e.target.value === '' ? null : Number(e.target.value),
@@ -271,6 +280,13 @@ export function AnalysisUncertaintyTab({
           </div>
         )}
 
+        {uncertaintyPreview.dofComplete === false ? (
+          <Alert tone="warning" title="Graus de liberdade ausentes em fonte(s) Tipo A">
+            Fontes Tipo A requerem informação de graus de liberdade válidos (n − 1 ou ν do estudo).
+            Conforme JCGM 100:2008 (§G.4), o ν_eff não pode ser calculado omitindo fontes e o fator k = 2,000 foi adotado em caráter provisório.
+          </Alert>
+        ) : null}
+
         {items.length ? (
           <div className="grid gap-3 lg:grid-cols-3">
             <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
@@ -282,12 +298,16 @@ export function AnalysisUncertaintyTab({
                 <br />
                 ν_eff ={' '}
                 {uncertaintyPreview.effectiveDof === null
-                  ? '—'
+                  ? uncertaintyPreview.dofComplete === false
+                    ? '— (GL incompleto)'
+                    : '—'
                   : uncertaintyPreview.effectiveDof.toFixed(2)}
                 <br />
                 k = {fmt(uncertaintyPreview.coverageFactor)}
+                {uncertaintyPreview.dofComplete === false ? ' (provisório)' : ''}
                 <br />
                 U = {fmt(uncertaintyPreview.expanded)}
+                {uncertaintyPreview.dofComplete === false ? ' (provisório)' : ''}
               </p>
             </div>
             <div className="rounded-xl border border-ink-200 p-3 dark:border-ink-800 lg:col-span-2">

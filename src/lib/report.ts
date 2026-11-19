@@ -126,11 +126,12 @@ export async function composeReport(
     analysis.qc.uncertainty ?? null;
   const reportUncertainty: ReportContent['uncertainty'] = uncertainty
     ? {
-        summary: `u_c = ${uncertainty.combined.toPrecision(4)}; U = ${uncertainty.expanded.toPrecision(4)}; k = ${uncertainty.coverageFactor.toFixed(3)}; ν_eff = ${uncertainty.effectiveDof?.toFixed(1) ?? '—'}.`,
+        summary: `u_c = ${uncertainty.combined.toPrecision(4)}; U = ${uncertainty.expanded.toPrecision(4)}${uncertainty.dofComplete === false ? ' (provisório)' : ''}; k = ${uncertainty.coverageFactor.toFixed(3)}${uncertainty.dofComplete === false ? ' (provisório)' : ''}; ν_eff = ${uncertainty.effectiveDof?.toFixed(1) ?? (uncertainty.dofComplete === false ? '— (incompleto)' : '—')}.`,
         combined: uncertainty.combined,
         expanded: uncertainty.expanded,
         coverageFactor: uncertainty.coverageFactor,
         effectiveDof: uncertainty.effectiveDof,
+        dofComplete: uncertainty.dofComplete,
         items: uncertainty.items.map((i) => ({
           source: i.source,
           type: i.type,

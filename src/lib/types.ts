@@ -413,6 +413,7 @@ export interface ReportContent {
     expanded: number;
     coverageFactor: number;
     effectiveDof: number | null;
+    dofComplete?: boolean;
     items: Array<{
       source: string;
       type: string;

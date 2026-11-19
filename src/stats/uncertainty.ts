@@ -55,6 +55,7 @@ export interface UncertaintyResult {
   expanded: number;
   coverageFactor: number;
   effectiveDof: number | null;
+  dofComplete?: boolean;
   confidence: number;
   relativeExpanded: number | null;
   covarianceTerm?: number;
@@ -171,42 +172,69 @@ export function computeUncertainty(
   const isInfiniteB = (i: UncertaintyComputedItem): boolean =>
     i.type === 'B' && (i.dof === null || i.dof === Infinity);
 
-  const denominator = items.reduce((acc, i) => {
-    if (i.contribution === 0) return acc;
-    if (isInfiniteB(i) || i.dof === Infinity) return acc;
-    if (i.dof === null || !Number.isFinite(i.dof) || i.dof <= 0) return acc;
-    return acc + i.contribution ** 4 / i.dof;
-  }, 0);
-
-  const allDofKnown = items.every(
+  // Fontes Tipo A com contribuição relevante (> 0) devem possuir GL válido (finito e > 0)
+  const hasInvalidTypeA = items.some(
     (i) =>
-      i.contribution === 0 ||
-      isInfiniteB(i) ||
-      i.dof === Infinity ||
-      (i.dof !== null && Number.isFinite(i.dof) && i.dof > 0),
+      i.contribution > 0 &&
+      i.type === 'A' &&
+      (i.dof === null || i.dof === undefined || !Number.isFinite(i.dof) || i.dof <= 0),
   );
 
-  const effectiveDof =
-    denominator > 0 && combined > 0
-      ? combined ** 4 / denominator
-      : allDofKnown
-        ? 1e6
-        : null;
-  const coverageFactor =
-    effectiveDof !== null && Number.isFinite(effectiveDof)
-      ? tInv(1 - (1 - confidence) / 2, Math.max(1, Math.round(effectiveDof)))
-      : 2;
-  const expanded = coverageFactor * combined;
-  if (effectiveDof === null) {
-    warnings.push('Graus de liberdade não informados em todas as fontes; adotado k = 2 (≈95%).');
-  } else if (effectiveDof < 10) {
-    warnings.push(`ν_eff = ${effectiveDof.toFixed(1)} < 10: o fator de abrangência t é sensível à estimativa.`);
+  const dofComplete = !hasInvalidTypeA;
+
+  let denominator = 0;
+  let effectiveDof: number | null = null;
+  let coverageFactor = 2;
+
+  if (!dofComplete) {
+    // JCGM 100:2008 §G.4: GL ausente em fonte Tipo A invalida Welch–Satterthwaite.
+    // Não omitir do denominador (o que equivaleria a assumir GL = ∞).
+    effectiveDof = null;
+    coverageFactor = 2;
+    warnings.push(
+      'Fonte(s) Tipo A com graus de liberdade ausentes ou inválidos: ν_eff não pôde ser calculado por Welch–Satterthwaite. Fator k = 2,000 adotado em caráter provisório.',
+    );
+  } else {
+    denominator = items.reduce((acc, i) => {
+      if (i.contribution === 0) return acc;
+      if (isInfiniteB(i) || i.dof === Infinity) return acc;
+      if (i.dof === null || !Number.isFinite(i.dof) || i.dof <= 0) return acc;
+      return acc + i.contribution ** 4 / i.dof;
+    }, 0);
+
+    const allInfiniteB = items.every(
+      (i) => i.contribution === 0 || isInfiniteB(i) || i.dof === Infinity,
+    );
+
+    if (denominator > 0 && combined > 0) {
+      effectiveDof = combined ** 4 / denominator;
+      coverageFactor = tInv(1 - (1 - confidence) / 2, Math.max(1, Math.round(effectiveDof)));
+    } else if (allInfiniteB && combined > 0) {
+      effectiveDof = 1e6;
+      coverageFactor = tInv(1 - (1 - confidence) / 2, 1e6);
+    } else {
+      effectiveDof = null;
+      coverageFactor = 2;
+    }
+
+    if (effectiveDof === null) {
+      warnings.push('Graus de liberdade não informados em todas as fontes; adotado k = 2 (≈95%).');
+    } else if (effectiveDof < 10) {
+      warnings.push(
+        `ν_eff = ${effectiveDof.toFixed(1)} < 10: o fator de abrangência t é sensível à estimativa.`,
+      );
+    }
   }
+
+  const expanded = coverageFactor * combined;
+
   if (hasCorrelation && denominator > 0) {
-    warnings.push('Fontes correlacionadas presentes: ν_eff por Welch–Satterthwaite é aproximado (JCGM 100:2008 §5.2).');
+    warnings.push(
+      'Fontes correlacionadas presentes: ν_eff por Welch–Satterthwaite é aproximado (JCGM 100:2008 §5.2).',
+    );
   }
   if (items.length === 0) warnings.push('Nenhuma fonte de incerteza informada.');
-  if (items.some((i) => i.type === 'A' && i.dof === null)) {
+  if (items.some((i) => i.type === 'A' && (i.dof === null || i.dof <= 0))) {
     warnings.push('Fontes Tipo A devem informar graus de liberdade (n − 1).');
   }
   return {
@@ -215,6 +243,7 @@ export function computeUncertainty(
     expanded,
     coverageFactor,
     effectiveDof,
+    ...(dofComplete ? {} : { dofComplete: false }),
     confidence,
     relativeExpanded: null,
     ...(hasCorrelation ? { covarianceTerm } : {}),
