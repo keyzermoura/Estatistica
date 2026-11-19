@@ -1072,13 +1072,13 @@ export function mixedNestedCrossedAnova(
   };
 
   if (isHetero) {
-    notes.push(
-      `Variâncias entre analistas heterocedásticas pelo teste de Bartlett (p = ${fmt(
-        bartlettP,
-      )}). A Welch-ANOVA bloqueada por agulha confirma F_Welch = ${fmt(
-        welchF,
-      )} (p = ${fmt(welchP)}).`,
-    );
+    const msg = `Variâncias entre analistas heterocedásticas pelo teste de Bartlett (p = ${fmt(
+      bartlettP,
+    )}). A Welch-ANOVA bloqueada por agulha confirma F_Welch = ${fmt(
+      welchF,
+    )} (p = ${fmt(welchP)}).`;
+    notes.push(msg);
+    warnings.push(msg);
   }
 
   // 9. Tabela ANOVA completa
