@@ -246,6 +246,8 @@ export interface RunRow {
   specimen?: string;
   /** Marca a linha como ensaio destrutivo (corpo de prova consumido). */
   destructive?: boolean;
+  /** Fabricante (fator em delineamentos de ANOVA mista). */
+  manufacturer?: string;
   combination: string;
   factorValues: Record<string, string>;
 }
@@ -313,6 +315,8 @@ export interface Measurement {
   specimen?: string;
   /** 1/0 no banco; `true` quando o corpo de prova é consumido. */
   destructive?: boolean;
+  /** Fabricante (fator em delineamentos de ANOVA mista). */
+  manufacturer?: string;
   /** Condições de ensaio; serializadas em `condition_json`. */
   condition?: MeasurementCondition | null;
   /** Valor aceito do padrão de referência (distinto de `referenceValue`). */

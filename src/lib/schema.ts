@@ -13,7 +13,7 @@
 
 import type { Database } from 'sql.js';
 
-export const LATEST_SCHEMA_VERSION = 3;
+export const LATEST_SCHEMA_VERSION = 4;
 
 export const SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS measurements (
   reference_value REAL,
   text_value TEXT DEFAULT '',
   notes TEXT DEFAULT '',
+  manufacturer TEXT DEFAULT '',
   FOREIGN KEY(validation_id) REFERENCES validations(id)
 );
 
@@ -309,6 +310,13 @@ const MIGRATIONS: Migration[] = [
     up: (db, addedColumns) => {
       addColumnIfMissing(db, 'audit_logs', 'previous_hash', 'TEXT', addedColumns);
       addColumnIfMissing(db, 'audit_logs', 'current_hash', 'TEXT', addedColumns);
+    },
+  },
+  {
+    version: 4,
+    description: 'Suporte a fabricante em medições (ANOVA mista aninhada-cruzada)',
+    up: (db, addedColumns) => {
+      addColumnIfMissing(db, 'measurements', 'manufacturer', "TEXT DEFAULT ''", addedColumns);
     },
   },
 ];

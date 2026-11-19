@@ -213,6 +213,7 @@ function mapMeasurement(r: Row): Measurement {
     referenceValue: maybeNum(r.reference_value),
     textValue: str(r.text_value),
     notes: str(r.notes),
+    manufacturer: str(r.manufacturer),
   };
 }
 
@@ -224,6 +225,7 @@ type NormalizedMeasurement = Measurement & {
   refValue: number | null;
   refUncertainty: number | null;
   category: string;
+  manufacturer: string;
 };
 
 /** Garante que campos opcionais vindos de chamadas antigas tenham defaults. */
@@ -237,6 +239,7 @@ function normalizeMeasurement(measurement: Measurement): NormalizedMeasurement {
     refValue: measurement.refValue ?? null,
     refUncertainty: measurement.refUncertainty ?? null,
     category: measurement.category ?? '',
+    manufacturer: (measurement.manufacturer ?? '').trim(),
   };
 }
 
@@ -897,8 +900,8 @@ export function replaceMeasurements(
     run('DELETE FROM measurements WHERE validation_id = ?', [validationId]);
     for (const m of normalized) {
       run(
-        `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, part_id, specimen, destructive, condition_json, ref_value, ref_uncertainty, category, replicate, value, reference_value, text_value, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, part_id, specimen, destructive, condition_json, ref_value, ref_uncertainty, category, replicate, value, reference_value, text_value, notes, manufacturer)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           m.id,
           validationId,
@@ -921,6 +924,7 @@ export function replaceMeasurements(
           m.referenceValue ?? null,
           m.textValue,
           m.notes,
+          m.manufacturer,
         ],
       );
     }
@@ -949,8 +953,8 @@ export function addMeasurement(measurement: Measurement, actor = 'sistema'): Mea
   assertMeasurementIdentities([next], methodFamilyForValidation(measurement.validationId));
   transaction(() => {
     run(
-      `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, part_id, specimen, destructive, condition_json, ref_value, ref_uncertainty, category, replicate, value, reference_value, text_value, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO measurements (id, validation_id, run_order, level, analyst, day, equipment, lot, sample, part_id, specimen, destructive, condition_json, ref_value, ref_uncertainty, category, replicate, value, reference_value, text_value, notes, manufacturer)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         next.id,
         next.validationId,
@@ -973,6 +977,7 @@ export function addMeasurement(measurement: Measurement, actor = 'sistema'): Mea
         next.referenceValue ?? null,
         next.textValue,
         next.notes,
+        next.manufacturer,
       ],
     );
     invalidateCurrentReportIfSigned(
@@ -992,7 +997,7 @@ export function updateMeasurement(measurement: Measurement, actor = 'sistema'): 
   assertMeasurementIdentities([next], methodFamilyForValidation(measurement.validationId));
   transaction(() => {
     run(
-      `UPDATE measurements SET run_order=?, level=?, analyst=?, day=?, equipment=?, lot=?, sample=?, part_id=?, specimen=?, destructive=?, condition_json=?, ref_value=?, ref_uncertainty=?, category=?, replicate=?, value=?, reference_value=?, text_value=?, notes=?
+      `UPDATE measurements SET run_order=?, level=?, analyst=?, day=?, equipment=?, lot=?, sample=?, part_id=?, specimen=?, destructive=?, condition_json=?, ref_value=?, ref_uncertainty=?, category=?, replicate=?, value=?, reference_value=?, text_value=?, notes=?, manufacturer=?
        WHERE id=?`,
       [
         next.runOrder,
@@ -1014,6 +1019,7 @@ export function updateMeasurement(measurement: Measurement, actor = 'sistema'): 
         next.referenceValue ?? null,
         next.textValue,
         next.notes,
+        next.manufacturer,
         next.id,
       ],
     );

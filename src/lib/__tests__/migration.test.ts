@@ -126,7 +126,7 @@ describe('migração versionada do banco', () => {
 
     expect(result.from).toBe(0);
     expect(result.to).toBe(LATEST_SCHEMA_VERSION);
-    expect(result.applied).toEqual([1, 2, 3]);
+    expect(result.applied).toEqual([1, 2, 3, 4]);
     expect(getSchemaVersion(db)).toBe(LATEST_SCHEMA_VERSION);
 
     const after = snapshotLegacy(db);
@@ -201,6 +201,7 @@ describe('migração versionada do banco', () => {
         'ref_value',
         'ref_uncertainty',
         'category',
+        'manufacturer',
       ]),
     );
 
@@ -214,6 +215,7 @@ describe('migração versionada do banco', () => {
       'ref_value',
       'ref_uncertainty',
       'category',
+      'manufacturer',
     ]) {
       const info = measurementInfo.find((row) => row.name === column);
       expect(info?.notnull, `${column} deve aceitar nulo`).toBe(0);
@@ -269,7 +271,7 @@ describe('migração versionada do banco', () => {
   it('é idempotente em execuções repetidas', async () => {
     const db = await openFixture();
     const first = initializeSchema(db);
-    expect(first.applied).toEqual([1, 2, 3]);
+    expect(first.applied).toEqual([1, 2, 3, 4]);
 
     const second = applyMigrations(db);
     expect(second).toEqual({
@@ -283,8 +285,8 @@ describe('migração versionada do banco', () => {
       db,
       'SELECT version, description FROM schema_migrations ORDER BY version',
     );
-    expect(versions).toHaveLength(3);
-    expect(versions.map((row) => row.version)).toEqual([1, 2, 3]);
+    expect(versions).toHaveLength(4);
+    expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4]);
     db.close();
   });
 });
