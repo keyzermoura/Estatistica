@@ -1234,6 +1234,85 @@ O modelo exporta os componentes com graus de liberdade exatos para o `dimensiona
 
 Garante-se assim que o orçamento de incerteza atenda rigorosamente ao JCGM 100:2008 §G.4, eliminando o risco de graus de liberdade ausentes ou infinitos superestimarem a capacidade do processo de medição.
 
+### 17.2 Diagnóstico de Estrutura do Delineamento Amostral
+
+Arquivo: `src/stats/designStructure.ts`.
+
+A função pura `diagnoseDesignStructure(measurements)` analisa a topologia do plano experimental antes do ajuste de modelos ANOVA, prevenindo o erro metodológico crítico de aplicar modelos cruzados (Gage R&R) a dados com estrutura aninhada ou desconexa.
+
+#### 1. Construção da Matriz de Incidência e Grafo Bipartido
+São construídas tabelas de contingência bidimensionais:
+- **Peça × Analista/Operador**: células $(i, j)$ com contagem de repetições $r_{ij}$;
+- **Peça × Dia**: células $(i, d)$ com contagem de repetições $r_{id}$.
+
+A conectividade da rede Peça × Analista é avaliada tratando os pares com $r_{ij} > 0$ como arestas de um grafo bipartido não direcionado $G = (V_P \cup V_O, E)$. Uma busca em largura (BFS) determina o número de componentes conexos. Se o número de componentes for maior que 1, a rede é classificada como **desconexa** (`disconnected`), indicando "ilhas isoladas" de medição que impedem a estimação consistente da variância entre operadores sem confundimento com peças.
+
+#### 2. Classificação Topológica
+O delineamento é categorizado em uma das seguintes classes:
+- `crossed_balanced`: todas as células possuem $r_{ij} = r \ge 2$, $100\%$ preenchidas e grafo conexo.
+- `crossed_unbalanced`: grafo conexo, células preenchidas $\ge 50\%$, nenhuma exclusividade sistemática de peça a um único operador ou dia, mas repetições desiguais ou células vazias residuais.
+- `nested`: peças são estritamente exclusivas de um único nível de outro fator (ex.: 100% das peças medidas em um único dia, ou em um único analista). A hierarquia é identificada (`nestedFactor: 'part'`, `parentFactor: 'day'`).
+- `partially_crossed`: algumas peças são compartilhadas entre operadores/dias e outras são exclusivas, sem formar aninhamento completo nem cruzamento uniforme.
+- `disconnected`: o grafo bipartido possui dois ou mais componentes disjuntos.
+- `insufficient_data`: menos de 2 peças ou fatores sem contraste suficiente para cálculo de repetibilidade e reprodutibilidade.
+
+#### 3. Política de Bloqueio Metrológico e Governança
+- Quando o delineamento é classificado como `nested`, `disconnected` ou `partially_crossed`, a execução do Gage R&R cruzado padrão é **bloqueada** por salvaguarda metrológica, transicionando o parâmetro para `not_evaluated`.
+- O relatório apresenta a tabela diagnóstica explicativa, apontando peças exclusivas, células vazias, equilíbrio amostral e o modelo estatístico sugerido (ex.: ANOVA Aninhada Dia > Peça > Réplica).
+- **Sem exclusão automática**: nenhuma observação é descartada silenciosamente. A transição para o modelo aninhado ou o uso de modelo cruzado com risco metrológico aceito (`forceCrossedModel: true`) é decisão explícita do usuário, documentada em auditoria e com emissão de `AVISO DE RISCO METROLÓGICO`.
+
+---
+
+### 17.3 Modelo Aninhado Dia > Peça > Réplica no Perfil Dimensional
+
+Arquivo: `src/stats/nested.ts` e `src/stats/parameters/dimensional.ts`.
+
+Em estudos dimensionais nos quais novos lotes ou corpos de prova distintos são medidos a cada dia (frequente em verificações de fios de sutura, diâmetros ou ensaios sem preservação da peça entre dias), o modelo adequado é a ANOVA aninhada de 3 níveis:
+
+$$y_{ijk} = \mu + D_i + P_{j(i)} + e_{k(ij)}$$
+
+onde:
+- $D_i \sim \mathcal{N}(0, \sigma^2_{\text{dia}})$ representa o efeito aleatório do $i$-ésimo Dia ($i = 1, \dots, a$);
+- $P_{j(i)} \sim \mathcal{N}(0, \sigma^2_{\text{peça(dia)}})$ representa o efeito aleatório da $j$-ésima Peça aninhada no $i$-ésimo Dia ($j = 1, \dots, b$);
+- $e_{k(ij)} \sim \mathcal{N}(0, \sigma^2_{\text{rep}})$ representa o erro residual intra-peça da $k$-ésima Réplica ($k = 1, \dots, n$).
+
+#### 1. Decomposição de Graus de Liberdade e Esperança de Quadrados Médios
+Para delineamento balanceado ($a$ dias, $b$ peças por dia, $n$ réplicas por peça, $N = a \cdot b \cdot n$ medições):
+
+| Fonte de Variação | Notação | Graus de Liberdade ($df$) | Quadrado Médio ($MS$) | Esperança $E[MS]$ |
+|---|---|---|---|---|
+| Dia ($A$) | Dia | $df_A = a - 1$ | $MS_A = SS_A / (a - 1)$ | $\sigma^2_E + n \sigma^2_{B(A)} + bn \sigma^2_A$ |
+| Peça dentro do Dia ($B(A)$) | Peça(Dia) | $df_{BA} = a(b - 1)$ | $MS_{BA} = SS_{BA} / [a(b - 1)]$ | $\sigma^2_E + n \sigma^2_{B(A)}$ |
+| Repetibilidade (Resíduo $E$) | Resíduo | $df_E = ab(n - 1)$ | $MS_E = SS_E / [ab(n - 1)]$ | $\sigma^2_E$ |
+| **Total** | | $N - 1 = abn - 1$ | | |
+
+#### 2. Estimativas dos Componentes de Variância (Método dos Momentos)
+- **Repetibilidade intra-peça**:
+  $$\sigma^2_{\text{rep}} = MS_E \quad \implies \quad \sigma_{\text{rep}} = \sqrt{MS_E}, \quad \nu_{\text{rep}} = df_E = ab(n - 1)$$
+- **Reprodutibilidade entre dias (Precisão Intermediária)**:
+  $$\sigma^2_{\text{dia}} = \max\left(0, \frac{MS_A - MS_{BA}}{b \cdot n}\right) \quad \implies \quad \sigma_{\text{dia}} = \sqrt{\sigma^2_{\text{dia}}}$$
+- **Separação estrita da variação do produto**:
+  $$\sigma^2_{\text{peça(dia)}} = \max\left(0, \frac{MS_{BA} - MS_E}{n}\right)$$
+  > [!IMPORTANT]
+  > A variabilidade entre peças $\sigma^2_{\text{peça(dia)}}$ decorre do processo de fabricação do produto e **não faz parte do erro do sistema de medição**. No modelo `nested_day`, a variância do sistema de medição (repetibilidade e precisão intermediária) é estritamente:
+  > $$\sigma^2_{\text{GRR}} = \sigma^2_{\text{rep}} + \sigma^2_{\text{dia}}, \qquad \sigma_{\text{GRR}} = \sqrt{\sigma^2_{\text{rep}} + \sigma^2_{\text{dia}}}$$
+- **Número de Categorias Distintas (ndc)**:
+  $$ndc = \lfloor 1,41 \cdot \frac{\sigma_{\text{peça(dia)}}}{\sigma_{\text{GRR}}} \rfloor$$
+
+#### 3. Graus de Liberdade Efetivos de Satterthwaite para o Fator Dia
+Como $\sigma^2_{\text{dia}}$ é uma combinação linear dos quadrados médios $MS_A$ e $MS_{BA}$ ($\sigma^2_{\text{dia}} = \frac{MS_A - MS_{BA}}{bn}$), seus graus de liberdade efetivos aproximados são derivados por Satterthwaite (1946):
+
+$$\nu_{\text{dia}} = \frac{\left(MS_A - MS_{BA}\right)^2}{\frac{MS_A^2}{df_A} + \frac{MS_{BA}^2}{df_{BA}}}$$
+
+#### 4. Propagação ao Orçamento de Incerteza GUM
+Ao compor o orçamento de incerteza pelo método bottom-up (`dimensionalUncertaintyBudget`):
+1. **Repetibilidade**: incerteza-padrão $u_{\text{rep}} = \sigma_{\text{rep}}$, com $\nu = df_E = ab(n - 1)$;
+2. **Precisão intermediária (entre dias)**: incerteza-padrão $u_{\text{dia}} = \sigma_{\text{dia}}$, com $\nu = \nu_{\text{dia}}$ (graus de liberdade de Satterthwaite);
+3. O componente de reprodutibilidade entre operadores é omitido para evitar dupla contagem com a precisão intermediária de dias;
+4. Ambos os componentes Tipo A ingressam na fórmula de Welch–Satterthwaite (JCGM 100:2008 §G.4) com seus graus de liberdade finitos rigorosamente determinados, resultando em $\nu_{\text{eff}}$ e fator de abrangência $k$ matematicamente válidos.
+
+---
+
 ## 18. Módulos complementares e pacotes Eurachem/CITAC
 
 | Funcionalidade | Módulo / Função | Equação / Regra principal | Referência |
@@ -1308,6 +1387,8 @@ Garante-se assim que o orçamento de incerteza atenda rigorosamente ao JCGM 100:
 | Orçamentos e relatórios | `seedDimensionalDemo` aprova 8 parâmetros; DOCX (`PK`) e PDF (`%PDF`) válidos nas 5 famílias | estrutural |
 | Refinamentos metrológicos | Mandel `h`/`k` exatos (5%/1%), GUM `ν_B = ∞` e `r(x_i,x_j)`, Henderson Tipo III/REML (invariância à transposição) e JCGM 106 bayesiano (`R_C = R_P = 0,125` em Sheppard) | 1e-7 a 1e-9 |
 | ANOVA mista aninhada-cruzada | Delineamento 2×6×3×2×6 (432 obs, 431 GL): partição exata de SQ; F sintetizado com GL de Satterthwaite; resíduos estudentizados (Bonferroni) e Welch-ANOVA | 1e-7 a 1e-9 |
+| Diagnóstico de delineamento | BFS em grafo bipartido detecta ilhas desconexas, células vazias e hierarquia aninhada (Dia > Peça) com bloqueio de modelo incorreto | exata |
+| ANOVA aninhada Dia > Peça | Modelo $y_{ijk} = \mu + D_i + P_{j(i)} + e_{k(ij)}$ (2×12×3 = 72 obs): $\nu_A = 1$, $\nu_{BA} = 22$, $\nu_E = 48$; $\sigma^2_{\text{peça}}$ separada de $\sigma_{\text{GRR}}$; $\nu_{\text{dia}}$ Satterthwaite | 1e-9 |
 
 Os testes de referência ficam em `src/stats/__tests__/` e `src/lib/__tests__/`; a
 caracterização da análise analítica fica em
