@@ -2,7 +2,10 @@ import { useState, type ReactNode } from 'react';
 import { AlertTriangle, HelpCircle, Info } from 'lucide-react';
 import type { ParameterAnalysis } from '../stats/analysis';
 import { fmt } from '../stats/distributions';
-import { ExplainableDecisionDrawer, type ExplainableDecisionData } from './ExplainableDecisionDrawer';
+import {
+  ExplainableDecisionDrawer,
+  type ExplainableDecisionData,
+} from './ExplainableDecisionDrawer';
 import {
   AccuracyProfilePlotChart,
   BarSeriesChart,
@@ -19,16 +22,59 @@ import {
 } from './charts';
 import { Card, CardBody, CardHeader, VerdictBadge } from './ui';
 
-function chartFor(
-  chart: ParameterAnalysis['charts'][number],
-  compact?: boolean,
-): ReactNode {
+type HistogramDataPoint = {
+  classe: string;
+  binMid: number;
+  contagem: number;
+  esperado: number;
+  densidade?: number;
+};
+
+type QQDataPoint = {
+  z: number;
+  observado: number;
+  esperado: number;
+  lic?: number;
+  lsc?: number;
+  outlier?: boolean;
+  percentil?: number;
+};
+
+type ShewhartDataPoint = {
+  ponto: number | string;
+  valor: number;
+  rotulo?: string;
+  lc?: number;
+  lic?: number;
+  lsc?: number;
+  alarme?: boolean | string;
+};
+
+type MandelDataPoint = {
+  lab: string;
+  [key: string]: unknown;
+};
+
+type DensityDataPoint = {
+  x: number;
+  density: number;
+  postDensity?: number;
+};
+
+type AccuracyProfileDataPoint = {
+  nivel: string;
+  vies: number;
+  itInferior: number;
+  itSuperior: number;
+};
+
+function chartFor(chart: ParameterAnalysis['charts'][number], compact?: boolean): ReactNode {
   const height = compact ? 200 : 250;
 
   if (chart.kind === 'histogram') {
     return (
       <HistogramWithNormalCurveChart
-        data={chart.data as any}
+        data={chart.data as unknown as HistogramDataPoint[]}
         mean={chart.meta?.mean as number | undefined}
         sd={chart.meta?.sd as number | undefined}
         xLabel={chart.xLabel}
@@ -41,7 +87,7 @@ function chartFor(
   if (chart.kind === 'qq') {
     return (
       <NormalProbabilityPlotChart
-        data={chart.data as any}
+        data={chart.data as unknown as QQDataPoint[]}
         xLabel={chart.xLabel}
         yLabel={chart.yLabel}
         height={height}
@@ -52,7 +98,7 @@ function chartFor(
   if (chart.kind === 'control') {
     return (
       <ShewhartControlChartPlot
-        data={chart.data as any}
+        data={chart.data as unknown as ShewhartDataPoint[]}
         center={chart.meta?.center as number | undefined}
         lcl={chart.meta?.lcl as number | undefined}
         ucl={chart.meta?.ucl as number | undefined}
@@ -83,7 +129,7 @@ function chartFor(
   if (chart.kind === 'mandel') {
     return (
       <MandelConsistencyPlotChart
-        data={chart.data as any}
+        data={chart.data as unknown as MandelDataPoint[]}
         statKey={(chart.meta?.statKey as string) ?? 'h'}
         crit05={chart.meta?.crit05 as number | undefined}
         crit01={chart.meta?.crit01 as number | undefined}
@@ -98,7 +144,7 @@ function chartFor(
   if (chart.kind === 'interaction') {
     return (
       <InteractionPlot
-        data={chart.data as any}
+        data={chart.data as Array<Record<string, unknown>>}
         xLabel={chart.xLabel}
         yLabel={chart.yLabel}
         height={height}
@@ -112,7 +158,7 @@ function chartFor(
     const yKey = Object.keys(first).find((k) => typeof first[k] === 'number') ?? 'efeito';
     return (
       <ParetoPlotChart
-        data={chart.data as any}
+        data={chart.data as Array<Record<string, unknown>>}
         xKey={xKey}
         yKey={yKey}
         cutoffLine={chart.meta?.youdenCrit as number | undefined}
@@ -127,7 +173,7 @@ function chartFor(
   if (chart.kind === 'density') {
     return (
       <ConformityDensityChartPlot
-        data={chart.data as any}
+        data={chart.data as unknown as DensityDataPoint[]}
         value={chart.meta?.value as number | undefined}
         lsl={chart.meta?.lsl as number | null | undefined}
         usl={chart.meta?.usl as number | null | undefined}
@@ -145,7 +191,7 @@ function chartFor(
     if (first.ponto !== undefined) {
       return (
         <ShewhartControlChartPlot
-          data={chart.data as any}
+          data={chart.data as unknown as ShewhartDataPoint[]}
           center={chart.meta?.center as number | undefined}
           lcl={chart.meta?.lcl as number | undefined}
           ucl={chart.meta?.ucl as number | undefined}
@@ -158,7 +204,7 @@ function chartFor(
     if (first.part !== undefined && first.operator !== undefined) {
       return (
         <InteractionPlot
-          data={chart.data as any}
+          data={chart.data as Array<Record<string, unknown>>}
           xLabel={chart.xLabel}
           yLabel={chart.yLabel}
           height={height}
@@ -168,7 +214,7 @@ function chartFor(
     if (first.itInferior !== undefined) {
       return (
         <AccuracyProfilePlotChart
-          data={chart.data as any}
+          data={chart.data as unknown as AccuracyProfileDataPoint[]}
           acceptanceLimit={chart.meta?.acceptanceLimit as number | undefined}
           xLabel={chart.xLabel}
           yLabel={chart.yLabel}
@@ -186,7 +232,13 @@ function chartFor(
     return chart.kind === 'residual' ? (
       <ResidualPlot data={data} xLabel={chart.xLabel} yLabel={chart.yLabel} height={height} />
     ) : (
-      <ScatterPlot data={data} xLabel={chart.xLabel} yLabel={chart.yLabel} height={height} line={chart.kind === 'line'} />
+      <ScatterPlot
+        data={data}
+        xLabel={chart.xLabel}
+        yLabel={chart.yLabel}
+        height={height}
+        line={chart.kind === 'line'}
+      />
     );
   }
 
@@ -195,7 +247,7 @@ function chartFor(
     if (first.part !== undefined && first.operator !== undefined && first.range !== undefined) {
       return (
         <InteractionPlot
-          data={chart.data as any}
+          data={chart.data as Array<Record<string, unknown>>}
           xLabel={chart.xLabel}
           yLabel="Amplitude"
           height={height}
@@ -207,7 +259,7 @@ function chartFor(
       const yKey = Object.keys(first).find((key) => typeof first[key] === 'number') ?? 'efeito';
       return (
         <ParetoPlotChart
-          data={chart.data as any}
+          data={chart.data as Array<Record<string, unknown>>}
           xKey={xKey}
           yKey={yKey}
           cutoffLine={chart.meta?.youdenCrit as number | undefined}
@@ -318,7 +370,8 @@ export function ParameterResultCard({
                                       : 'Não avaliado'
                               }`,
                             ],
-                            normativeReference: analysis.reference || 'Eurachem / ISO / Normas aplicáveis',
+                            normativeReference:
+                              analysis.reference || 'Eurachem / ISO / Normas aplicáveis',
                             interpretationText:
                               metric.verdict === 'pass'
                                 ? `A métrica '${metric.label}' atende rigorosamente ao critério estabelecido (${metric.criterionText}).`
@@ -343,13 +396,16 @@ export function ParameterResultCard({
           </div>
         ) : (
           <p className="rounded-xl border border-dashed border-ink-300 px-3 py-3 text-xs text-ink-500 dark:border-ink-700">
-            Nenhuma métrica pôde ser calculada com os dados atuais. O resultado permanece “não avaliado”.
+            Nenhuma métrica pôde ser calculada com os dados atuais. O resultado permanece “não
+            avaliado”.
           </p>
         )}
 
         {analysis.tables.map((table) => (
           <div key={table.title}>
-            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">{table.title}</p>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-500">
+              {table.title}
+            </p>
             <div className="table-wrap">
               <table className="data-table">
                 <thead>
@@ -363,7 +419,10 @@ export function ParameterResultCard({
                   {table.rows.map((row, index) => (
                     <tr key={index}>
                       {row.map((cell, cellIndex) => (
-                        <td key={cellIndex} className={typeof cell === 'number' ? 'font-mono text-xs' : ''}>
+                        <td
+                          key={cellIndex}
+                          className={typeof cell === 'number' ? 'font-mono text-xs' : ''}
+                        >
                           {typeof cell === 'number' ? fmt(cell) : cell || '—'}
                         </td>
                       ))}
@@ -381,8 +440,13 @@ export function ParameterResultCard({
             {analysis.charts.map((chart) => {
               const rendered = chartFor(chart, compact);
               return rendered ? (
-                <div key={chart.title} className="rounded-xl border border-ink-200 p-3 dark:border-ink-800">
-                  <p className="mb-1 text-xs font-semibold text-ink-700 dark:text-ink-200">{chart.title}</p>
+                <div
+                  key={chart.title}
+                  className="rounded-xl border border-ink-200 p-3 dark:border-ink-800"
+                >
+                  <p className="mb-1 text-xs font-semibold text-ink-700 dark:text-ink-200">
+                    {chart.title}
+                  </p>
                   {rendered}
                 </div>
               ) : null;
@@ -393,12 +457,18 @@ export function ParameterResultCard({
         {analysis.notes.length || analysis.warnings.length ? (
           <div className="space-y-1.5 text-xs">
             {analysis.notes.map((note) => (
-              <p key={note} className="rounded-lg bg-ink-50 px-3 py-2 text-ink-600 dark:bg-ink-800/60 dark:text-ink-300">
+              <p
+                key={note}
+                className="rounded-lg bg-ink-50 px-3 py-2 text-ink-600 dark:bg-ink-800/60 dark:text-ink-300"
+              >
                 {note}
               </p>
             ))}
             {analysis.warnings.map((warning) => (
-              <p key={warning} className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              <p
+                key={warning}
+                className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200"
+              >
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 {warning}
               </p>
