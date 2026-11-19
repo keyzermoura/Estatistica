@@ -1058,9 +1058,10 @@ export const dimensionalUncertaintyAnalysis: AnalysisModule = ({
     tur: toleranceValues.tur,
   };
   const baseVerdict = evaluateParameter(parameter.key, raw, criteria).verdict;
-  let verdict = baseVerdict;
+  const isDofIncomplete = result.dofComplete === false;
+  let verdict = isDofIncomplete ? 'not_evaluated' : baseVerdict;
   let unilateralUncertaintyNote: string | null = null;
-  if (baseVerdict === 'not_evaluated' && tolerance === null && relative !== null) {
+  if (!isDofIncomplete && baseVerdict === 'not_evaluated' && tolerance === null && relative !== null) {
     const relLimit = criterionLimit(
       criteria,
       'relative_expanded',
@@ -1077,7 +1078,7 @@ export const dimensionalUncertaintyAnalysis: AnalysisModule = ({
     summary: parameterSummary(
       parameter.label,
       verdict,
-      `u_c = ${fmt(result.combined)} ${unitOf(context.options)}; U = ${fmt(result.expanded)} ${unitOf(context.options)} (k = ${fmt(result.coverageFactor)}); T = ${tolerance === null ? '— (unilateral)' : fmt(tolerance)}; U_rel = ${relative === null ? '—' : `${fmt(relative)}%`}; %P/T = ${raw.pct_pt === null ? '—' : `${fmt(raw.pct_pt)}%`}; TUR/TAR = ${raw.tur === null ? '—' : fmt(raw.tur)}.`,
+      `u_c = ${fmt(result.combined)} ${unitOf(context.options)}; U = ${fmt(result.expanded)} ${unitOf(context.options)}${isDofIncomplete ? ' (provisório)' : ''} (k = ${fmt(result.coverageFactor)}${isDofIncomplete ? ' provisório' : ''}); T = ${tolerance === null ? '— (unilateral)' : fmt(tolerance)}; U_rel = ${relative === null ? '—' : `${fmt(relative)}%`}; %P/T = ${raw.pct_pt === null ? '—' : `${fmt(raw.pct_pt)}%`}; TUR/TAR = ${raw.tur === null ? '—' : fmt(raw.tur)}.${isDofIncomplete ? ' GL Tipo A ausentes: conformidade não avaliada.' : ''}`,
     ),
     metrics: [
       buildMetric(
@@ -1173,6 +1174,11 @@ export const dimensionalUncertaintyAnalysis: AnalysisModule = ({
     ],
     warnings: result.warnings,
     notes: [
+      ...(isDofIncomplete
+        ? [
+            'O parâmetro de incerteza de medição permanece Não Avaliado porque existem fontes experimentais (Tipo A) com graus de liberdade ausentes, impedindo a determinação formal de ν_eff e do fator de abrangência k pela fórmula de Welch–Satterthwaite (JCGM 100:2008 §G.4).',
+          ]
+        : []),
       ...(tolerance === null
         ? ['Sem tolerância bilateral, %P/T, U/T e TUR/TAR ficam não avaliados.']
         : []),

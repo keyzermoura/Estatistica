@@ -3,9 +3,12 @@ import { computeUncertainty } from '../uncertainty';
 import {
   dimensionalRepeatabilityAnalysis,
   dimensionalReproducibilityAnalysis,
+  dimensionalUncertaintyAnalysis,
   dimensionalUncertaintyBudget,
 } from '../parameters/dimensional';
+import { uncertaintyAnalysis } from '../parameters/uncertainty';
 import { DIMENSIONAL_PROFILE } from '../../profiles/dimensional';
+import { ANALYTICAL_PROFILE } from '../../profiles/analytical';
 
 describe('Item A1: Tratamento de graus de liberdade (GL) no orçamento GUM (JCGM 100 §G.4)', () => {
   // Caso ilustrativo:
@@ -224,5 +227,140 @@ describe('Item A2: GL do orçamento dimensional ligado ao estudo de origem', () 
     expect([6, 8]).toContain(repRes.rawMetrics.df_rep);
     expect(reproRes.rawMetrics.df_oper).toBeDefined();
     expect(Number.isFinite(reproRes.rawMetrics.df_oper)).toBe(true);
+  });
+});
+
+describe('Veredito de conformidade do parâmetro Incerteza quando GL é incompleto', () => {
+  it('no perfil analítico, define veredito como not_evaluated e adiciona nota técnica quando GL Tipo A for nulo', () => {
+    const uncertDef = ANALYTICAL_PROFILE.parameters.find((p) => p.key === 'uncertainty')!;
+    const criteria = [
+      {
+        id: 'crit-u-1',
+        parameter: 'uncertainty' as const,
+        metric: 'expanded',
+        operator: '<=' as const,
+        limit: 0.1,
+      },
+    ];
+
+    // Caso 1: GL Tipo A ausente -> not_evaluated
+    const incompleteContext = {
+      uncertaintyItems: [
+        {
+          id: 'u-rep',
+          source: 'Repetibilidade',
+          type: 'A' as const,
+          distribution: 'normal' as const,
+          value: 0.01,
+          divisor: 1,
+          sensitivity: 1,
+          dof: null, // incompleto!
+        },
+      ],
+      observedMean: 10,
+    } as any;
+
+    const resIncomplete = uncertaintyAnalysis({
+      parameter: uncertDef,
+      criteria,
+      context: incompleteContext,
+    });
+
+    expect(resIncomplete.verdict).toBe('not_evaluated');
+    expect(resIncomplete.notes.length).toBeGreaterThan(0);
+    expect(resIncomplete.notes[0]).toContain('permanece Não Avaliado porque existem fontes experimentais (Tipo A) com graus de liberdade ausentes');
+    expect(resIncomplete.summary).toContain('GL Tipo A ausentes: conformidade não avaliada');
+
+    // Caso 2: GL Tipo A completo -> avalia normalmente critério (pass)
+    const completeContext = {
+      uncertaintyItems: [
+        {
+          id: 'u-rep',
+          source: 'Repetibilidade',
+          type: 'A' as const,
+          distribution: 'normal' as const,
+          value: 0.01,
+          divisor: 1,
+          sensitivity: 1,
+          dof: 10,
+        },
+      ],
+      observedMean: 10,
+    } as any;
+
+    const resComplete = uncertaintyAnalysis({
+      parameter: uncertDef,
+      criteria,
+      context: completeContext,
+    });
+
+    expect(resComplete.verdict).toBe('pass');
+    expect(resComplete.notes.length).toBe(0);
+  });
+
+  it('no perfil dimensional, define veredito como not_evaluated e adiciona nota técnica quando GL Tipo A for nulo', () => {
+    const uncertDef = DIMENSIONAL_PROFILE.parameters.find((p) => p.key === 'uncertainty')!;
+    const criteria = [
+      {
+        id: 'crit-dim-u-1',
+        parameter: 'uncertainty' as const,
+        metric: 'expanded',
+        operator: '<=' as const,
+        limit: 0.05,
+      },
+    ];
+
+    // Orçamento com reprodutibilidade sem GL
+    const incompleteBudget = dimensionalUncertaintyBudget({
+      validationId: 'val-test-dim',
+      resolution: 0.001,
+      calibrationUncertainty: 0.0008,
+      repeatabilitySd: 0.0007,
+      repeatabilityDof: 60,
+      reproducibilitySd: 0.0003,
+      // reproducibilityDof ausente -> dof: null
+    });
+
+    const incompleteContext = {
+      uncertaintyItems: incompleteBudget,
+      observedMean: 10,
+      options: { tolerance: 0.1, unit: 'mm' },
+    } as any;
+
+    const resIncomplete = dimensionalUncertaintyAnalysis({
+      parameter: uncertDef,
+      criteria,
+      context: incompleteContext,
+    });
+
+    expect(resIncomplete.verdict).toBe('not_evaluated');
+    expect(resIncomplete.notes.some((n) => n.includes('permanece Não Avaliado'))).toBe(true);
+    expect(resIncomplete.summary).toContain('GL Tipo A ausentes: conformidade não avaliada');
+
+    // Orçamento completo com GL
+    const completeBudget = dimensionalUncertaintyBudget({
+      validationId: 'val-test-dim-2',
+      resolution: 0.001,
+      calibrationUncertainty: 0.0008,
+      repeatabilitySd: 0.0007,
+      repeatabilityDof: 60,
+      reproducibilitySd: 0.0003,
+      reproducibilityDof: 2,
+    });
+
+    const completeContext = {
+      uncertaintyItems: completeBudget,
+      observedMean: 10,
+      options: { tolerance: 0.1, unit: 'mm' },
+    } as any;
+
+    const resComplete = dimensionalUncertaintyAnalysis({
+      parameter: uncertDef,
+      criteria,
+      context: completeContext,
+    });
+
+    expect(resComplete.verdict).toBe('pass');
+    expect(resComplete.notes.some((n) => n.includes('permanece Não Avaliado'))).toBe(false);
   });
 });

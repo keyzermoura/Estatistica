@@ -38,7 +38,12 @@ export const uncertaintyAnalysis: AnalysisModule = ({ parameter, criteria, conte
   const relative =
     observedMean && observedMean !== 0 ? (100 * result.expanded) / Math.abs(observedMean) : null;
   const rawMetrics = { expanded: result.expanded, relativeExpanded: relative };
-  const verdict = evaluateParameter(parameter.key, rawMetrics, criteria).verdict;
+  const evaluated = evaluateParameter(parameter.key, rawMetrics, criteria);
+  const isDofIncomplete = result.dofComplete === false;
+  const verdict = isDofIncomplete ? 'not_evaluated' : evaluated.verdict;
+  const dofIncompleteNote = isDofIncomplete
+    ? 'O parâmetro de incerteza de medição permanece Não Avaliado porque existem fontes experimentais (Tipo A) com graus de liberdade ausentes, impedindo a determinação formal de ν_eff e do fator de abrangência k pela fórmula de Welch–Satterthwaite (JCGM 100:2008 §G.4).'
+    : null;
   return {
     key: parameter.key,
     label: parameter.label,
@@ -47,7 +52,7 @@ export const uncertaintyAnalysis: AnalysisModule = ({ parameter, criteria, conte
     summary: parameterSummary(
       parameter.label,
       verdict,
-      `u_c = ${result.combined.toPrecision(4)}; U = ${result.expanded.toPrecision(4)} (k = ${result.coverageFactor.toFixed(3)}, ν_eff ≈ ${result.effectiveDof?.toFixed(1) ?? '—'}).`,
+      `u_c = ${result.combined.toPrecision(4)}; U = ${result.expanded.toPrecision(4)}${isDofIncomplete ? ' (provisório)' : ''} (k = ${result.coverageFactor.toFixed(3)}${isDofIncomplete ? ' provisório' : ''}, ν_eff ≈ ${result.effectiveDof?.toFixed(1) ?? (isDofIncomplete ? '— [incompleto]' : '—')}).${isDofIncomplete ? ' GL Tipo A ausentes: conformidade não avaliada.' : ''}`,
     ),
     metrics: [
       buildMetric(parameter, 'expanded', result.expanded, criteria, 'U = k·u_c', result.reference),
@@ -80,7 +85,7 @@ export const uncertaintyAnalysis: AnalysisModule = ({ parameter, criteria, conte
       },
     ],
     warnings: result.warnings,
-    notes: [],
+    notes: dofIncompleteNote ? [dofIncompleteNote] : [],
     reference: result.reference,
     results: { uncertainty: result },
   };
