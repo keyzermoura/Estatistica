@@ -173,6 +173,36 @@ const UNCERTAINTY: UncertaintyItem[] = [
   },
 ];
 
+/**
+ * Normaliza recursivamente estruturas de dados para comparação determinística em snapshot.
+ *
+ * Justificativa:
+ * Em operações de ponto flutuante IEEE 754 (como cálculo de covariâncias e momentos
+ * estatísticos de alta ordem como assimetria/skewness), pequenas variações na ordem de 1e-14
+ * ocorrem naturalmente entre diferentes compiladores, arquiteturas (x86_64 vs ARM64) e versões
+ * do V8. Para evitar testes frágeis sem significância estatística real:
+ *  1. Valores finitos com módulo inferior a 1e-10 são normalizados para 0;
+ *  2. Números finitos são arredondados para 9 algarismos significativos.
+ */
+function normalizeForSnapshot(value: unknown): unknown {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return value;
+    if (Math.abs(value) < 1e-10) return 0;
+    return Number(value.toPrecision(9));
+  }
+  if (Array.isArray(value)) {
+    return value.map(normalizeForSnapshot);
+  }
+  if (value !== null && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = normalizeForSnapshot(v);
+    }
+    return out;
+  }
+  return value;
+}
+
 describe('caracterização da análise analítica', () => {
   it('reproduz o resultado completo do motor original', () => {
     const analysis = analyzeValidation(
@@ -189,6 +219,7 @@ describe('caracterização da análise analítica', () => {
       },
     );
     const { generatedAt: _generatedAt, ...stable } = analysis;
-    expect(stable).toMatchSnapshot();
+    const normalized = normalizeForSnapshot(stable);
+    expect(normalized).toMatchSnapshot();
   });
 });
