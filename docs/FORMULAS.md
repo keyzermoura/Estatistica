@@ -1177,6 +1177,63 @@ O tamanho amostral mínimo `n_min` (`wilksMinimumN`) é o menor inteiro `n ≥ 2
 
 Para cada ponto de calibração/referência `j`, apresenta o erro relativo percentual ao valor de referência (`100 · (x̄_j − x_ref,j) / x_ref,j`) com a incerteza-padrão da referência `u_ref`, permitindo comparação contra o critério de classe editável cadastrado pelo laboratório (ex.: ISO 7500-1 ou OIML R76) sem embutir limiares normativos fixos.
 
+### 17.5 ANOVA Mista Aninhada-Cruzada com Graus de Liberdade por Satterthwaite (`src/stats/mixedAnova.ts`)
+
+Desenvolvido para estudos multifatoriais em dispositivos médicos (ex.: verificação dimensional de agulhas hipodérmicas conforme ABNT NBR ISO 7864 / ISO 9626), o módulo decompõe e quantifica os componentes de variabilidade sob modelo linear misto irrestrito:
+
+**Delineamento balanceado:**
+Fabricante (`f = 2`, efeito fixo) > Agulha aninhada em Fabricante (`a = 6` agulhas/fabricante, aleatória) × Analista (`o = 3`, aleatório) × Dia (`d = 2`, aleatório), com `r = 6` réplicas por célula = **432 observações**, totalizando **431 graus de liberdade**.
+
+#### Equação do modelo (Montgomery 2020, Caps. 13 e 14; Searle et al. 1992):
+$$y_{ijklm} = \mu + \alpha_i + \beta_{j(i)} + \gamma_k + \delta_l + (\alpha\gamma)_{ik} + (\alpha\delta)_{il} + (\gamma\delta)_{kl} + (\beta\gamma)_{j(i)k} + (\beta\delta)_{j(i)l} + (\alpha\gamma\delta)_{ikl} + (\beta\gamma\delta)_{j(i)kl} + \varepsilon_{ijklm}$$
+onde $\sum \alpha_i = 0$ (fixo), e todos os demais efeitos são variáveis aleatórias independentes com variâncias $\sigma^2_{A(F)}$, $\sigma^2_O$, $\sigma^2_D$, $\sigma^2_{FO}$, $\sigma^2_{FD}$, $\sigma^2_{OD}$, $\sigma^2_{OA(F)}$, $\sigma^2_{DA(F)}$, $\sigma^2_{FOD}$, $\sigma^2_{ODA(F)}$ e $\sigma^2_e$.
+
+#### Decomposição ortogonal de Graus de Liberdade:
+| Fonte de Variação | Símbolo | Graus de Liberdade ($GL$) | Exemplo ($2 \times 6 \times 3 \times 2 \times 6$) |
+|---|---|---|---|
+| Fabricante | $F$ | $f - 1$ | 1 |
+| Agulha(Fabricante) | $A(F)$ | $f(a - 1)$ | 10 |
+| Analista | $O$ | $o - 1$ | 2 |
+| Dia | $D$ | $d - 1$ | 1 |
+| Fabricante × Analista | $FO$ | $(f - 1)(o - 1)$ | 2 |
+| Fabricante × Dia | $FD$ | $(f - 1)(d - 1)$ | 1 |
+| Analista × Dia | $OD$ | $(o - 1)(d - 1)$ | 2 |
+| Analista × Agulha(Fabricante) | $OA(F)$ | $f(a - 1)(o - 1)$ | 20 |
+| Dia × Agulha(Fabricante) | $DA(F)$ | $f(a - 1)(d - 1)$ | 10 |
+| Fabricante × Analista × Dia | $FOD$ | $(f - 1)(o - 1)(d - 1)$ | 2 |
+| Analista × Dia × Agulha(Fabricante) | $ODA(F)$ | $f(a - 1)(o - 1)(d - 1)$ | 20 |
+| Repetibilidade (resíduo) | $E$ | $faod(r - 1)$ | 360 |
+| **Total** | | $faodr - 1$ | **431** |
+
+#### Solução exata por Esperanças de Quadrados Médios ($E[QM]$):
+As variâncias são estimadas por resolução exata do sistema linear triangular superior $\mathbf{M} \boldsymbol{\sigma}^2 = \mathbf{MS}$, derivado pelas regras de Bennett-Franklin / Montgomery para o modelo irrestrito.
+- Componentes negativos são truncados em zero para partição descritiva de variância e intervalos de confiança (conforme ISO 5725-2), mas preservados em suas formas irrestritas para cálculo dos testes F sintetizados.
+- Intervalos de confiança de 95% para cada desvio-padrão são calculados pela distribuição Qui-quadrado com os respectivos graus de liberdade de Satterthwaite: $\left[\sqrt{\frac{\nu \cdot \sigma^2}{\chi^2_{1-\alpha/2, \nu}}}, \sqrt{\frac{\nu \cdot \sigma^2}{\chi^2_{\alpha/2, \nu}}}\right]$.
+
+#### Testes F Sintetizados (Satterthwaite 1946):
+Para efeitos cujo denominador exato não existe na tabela ANOVA (ex.: Fabricante, Analista, Dia, Agulha), o denominador é construído por combinação linear de quadrados médios $L = \sum a_i MS_i$, com graus de liberdade aproximados de Satterthwaite:
+$$\nu_{\text{satt}} = \frac{\left(\sum a_i MS_i\right)^2}{\sum \frac{(a_i MS_i)^2}{\nu_i}}$$
+Quando uma combinação possui termos com coeficientes negativos ($a_i < 0$), o sistema sinaliza explicitamente a potencial instabilidade com alerta metrológico.
+
+#### Diagnóstico de Outliers por Resíduos Estudentizados:
+O resíduo estudentizado é calculado a partir da média de cada célula ajustada $\hat{y}_{ijkl\cdot}$ e da variância residual agrupada $s_r = \sqrt{MS_E}$:
+$$r^*_m = \frac{y_{ijklm} - \bar{y}_{ijkl\cdot}}{s_r \sqrt{1 - 1/r}}$$
+O p-valor bicaudal pela distribuição t ($GL = df_E = 360$) é confrontado com o limiar ajustado por Bonferroni $\alpha_B = \alpha / N$. Observações que excedem o limiar são sinalizadas para investigação da causa raiz metrológica, **sem nunca serem excluídas automaticamente**.
+
+#### Análise de Sensibilidade: Homocedasticidade e Welch-ANOVA:
+Para verificar se a heterogeneidade de variâncias entre analistas impacta as conclusões:
+1. Executa-se o teste de homocedasticidade de Bartlett entre operadores sobre os dados centrados por agulha.
+2. Em caso de heterocedasticidade ($p < 0,05$), executa-se a Welch-ANOVA bloqueada por agulha com graus de liberdade fracionários de Welch, fornecendo um teste F robusto para o efeito de analista.
+
+#### Integração ao Orçamento de Incerteza GUM:
+O modelo exporta os componentes com graus de liberdade exatos para o `dimensionalUncertaintyBudget`:
+- **Repetibilidade**: $u_{\text{rep}} = s_r / \sqrt{n}$, com $\nu = df_E = 360$.
+- **Reprodutibilidade (Operador)**: $u_{\text{oper}} = \sigma_O$, com $\nu = \nu_O$ de Satterthwaite.
+- **Dia**: $u_{\text{dia}} = \sigma_D$, com $\nu = \nu_D$ de Satterthwaite.
+- **Precisão Intermediária**: $u_{\text{ip}} = \sqrt{\sigma_O^2 + \sigma_D^2 + \sigma_{OD}^2}$, com $\nu = \nu_{\text{ip}}$ de Satterthwaite.
+
+Garante-se assim que o orçamento de incerteza atenda rigorosamente ao JCGM 100:2008 §G.4, eliminando o risco de graus de liberdade ausentes ou infinitos superestimarem a capacidade do processo de medição.
+
 ## 18. Módulos complementares e pacotes Eurachem/CITAC
 
 | Funcionalidade | Módulo / Função | Equação / Regra principal | Referência |
@@ -1249,8 +1306,8 @@ Para cada ponto de calibração/referência `j`, apresenta o erro relativo perce
 | Não normalidade | série exponencial rejeitada em S–W e A–D mantém `logTransform.applied = false` até ação explícita | exata |
 | Covariáveis ambientais | regressão linear `y ~ temperatura` detecta `p < 0,05` e gera alerta ambiental | 1e-6 |
 | Orçamentos e relatórios | `seedDimensionalDemo` aprova 8 parâmetros; DOCX (`PK`) e PDF (`%PDF`) válidos nas 5 famílias | estrutural |
-| Módulos complementares | EMP Wheeler, `Cg/Cgk`, EP09c Deming/Passing–Bablok, Probit IRLS, Monte Carlo JCGM 101 e Eurachem | conferida |
 | Refinamentos metrológicos | Mandel `h`/`k` exatos (5%/1%), GUM `ν_B = ∞` e `r(x_i,x_j)`, Henderson Tipo III/REML (invariância à transposição) e JCGM 106 bayesiano (`R_C = R_P = 0,125` em Sheppard) | 1e-7 a 1e-9 |
+| ANOVA mista aninhada-cruzada | Delineamento 2×6×3×2×6 (432 obs, 431 GL): partição exata de SQ; F sintetizado com GL de Satterthwaite; resíduos estudentizados (Bonferroni) e Welch-ANOVA | 1e-7 a 1e-9 |
 
 Os testes de referência ficam em `src/stats/__tests__/` e `src/lib/__tests__/`; a
 caracterização da análise analítica fica em

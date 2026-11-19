@@ -256,13 +256,19 @@ describe('Módulo de ANOVA Mista Aninhada-Cruzada (Tarefa B)', () => {
     const measurements: Measurement[] = rawData.map((d, i) => ({
       id: `m-${i + 1}`,
       validationId: 'val-mixed',
-      value: d.value,
-      partId: d.needle,
+      runOrder: d.runOrder ?? i + 1,
+      level: '1',
       analyst: d.analyst,
       day: d.day,
+      equipment: 'Equip-1',
+      lot: 'Lote-1',
+      sample: 'Amostra-1',
+      partId: d.needle,
       manufacturer: d.manufacturer,
       replicate: d.replicate,
-      runOrder: d.runOrder,
+      value: d.value,
+      textValue: String(d.value),
+      notes: '',
       timestamp: new Date().toISOString(),
     }));
 
