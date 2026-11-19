@@ -457,18 +457,33 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
     const sigmaRep = repParam?.rawMetrics.sigma_rep ?? analysis.qc.descriptive.sd ?? resolution;
     const sigmaOper = reproParam?.rawMetrics.sigma_oper ?? null;
 
+    const mixedAnova =
+      (repParam?.results?.mixedAnova as any) ??
+      (reproParam?.results?.mixedAnova as any) ??
+      null;
+
     const repDof =
-      typeof repParam?.rawMetrics?.df_rep === 'number' && repParam.rawMetrics.df_rep > 0
+      mixedAnova?.budget?.repeatability?.df ??
+      (typeof repParam?.rawMetrics?.df_rep === 'number' && repParam.rawMetrics.df_rep > 0
         ? repParam.rawMetrics.df_rep
         : ((repParam?.results?.gageRR as any)?.components?.find((c: any) => c.key === 'repeatability')?.df ??
-          null);
+          null));
 
     const reproDof =
-      typeof reproParam?.rawMetrics?.df_oper === 'number' && reproParam.rawMetrics.df_oper > 0
+      mixedAnova?.budget?.analyst?.df ??
+      (typeof reproParam?.rawMetrics?.df_oper === 'number' && reproParam.rawMetrics.df_oper > 0
         ? reproParam.rawMetrics.df_oper
         : ((reproParam?.results?.gageRR as any)?.components?.find((c: any) => c.key === 'operator')?.df ??
           (reproParam?.results?.gageRR as any)?.components?.find((c: any) => c.key === 'operator')?.interval?.df ??
-          null);
+          null));
+
+    const daySd =
+      mixedAnova?.budget?.day?.sd ??
+      (typeof reproParam?.rawMetrics?.sigma_day === 'number' ? reproParam.rawMetrics.sigma_day : null);
+
+    const dayDof =
+      mixedAnova?.budget?.day?.df ??
+      (typeof reproParam?.rawMetrics?.df_day === 'number' ? reproParam.rawMetrics.df_day : null);
 
     const modelItems =
       profile.id === 'dimensional'
@@ -482,6 +497,8 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
             nReplicates: bundle.design?.input.nReplicates ?? 3,
             reproducibilitySd: sigmaOper,
             reproducibilityDof: reproDof,
+            daySd,
+            dayDof,
             referenceUncertainty: calU,
           })
         : physicalUncertaintyBudget({

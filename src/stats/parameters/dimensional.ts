@@ -57,8 +57,15 @@ import {
 import { computeUncertainty, type UncertaintyResult } from '../uncertainty';
 import { computeEmp, type EmpResult } from '../emp';
 import { computeCapabilityCg, type CapabilityCgResult } from '../capabilityCg';
+import {
+  mixedNestedCrossedAnova,
+  type MixedAnovaObservation,
+  type MixedAnovaResult,
+} from '../mixedAnova';
 
 const GAGE_REFERENCE = 'AIAG MSA (2010), 4. ed.; ISO 22514-7:2021; Montgomery (2020)';
+const MIXED_ANOVA_REFERENCE =
+  'Montgomery (2020), Design and Analysis of Experiments, Caps. 13-14; Satterthwaite (1946); ISO 5725-2:2019';
 const STABILITY_REFERENCE = 'AIAG MSA (2010); ISO 7870-2; Montgomery (2020)';
 const TOLERANCE_REFERENCE = 'JCGM 100:2008 (GUM); ISO/IEC 17025:2017, 7.6';
 
@@ -241,11 +248,258 @@ function gageRRTables(result: GageRRResult) {
   };
 }
 
+export function needleMixedAnovaStudy(
+  context: AnalysisContext,
+): MixedAnovaResult | { error: string } | null {
+  const measurements = context.used.filter(
+    (m) =>
+      !hasReference(m) &&
+      m.value !== null &&
+      Number.isFinite(m.value),
+  );
+  if (!measurements.length) return null;
+
+  const manufacturers = new Set<string>();
+  const days = new Set<string>();
+  const analysts = new Set<string>();
+  const needles = new Set<string>();
+
+  for (const m of measurements) {
+    const mfg = (m.manufacturer ?? m.lot ?? '').trim();
+    const day = (m.day ?? '').trim();
+    const analyst = (m.analyst ?? m.equipment ?? '').trim();
+    const needle = (m.partId ?? '').trim();
+
+    if (mfg) manufacturers.add(mfg);
+    if (day) days.add(day);
+    if (analyst) analysts.add(analyst);
+    if (needle) needles.add(needle);
+  }
+
+  // Candidato a ANOVA mista aninhada-cruzada de 4 fatores:
+  // Requer pelo menos 2 fabricantes, 2 dias, 2 analistas e agulhas identificadas
+  if (manufacturers.size < 2 || days.size < 2 || analysts.size < 2 || needles.size < 2) {
+    return null;
+  }
+
+  const cellCounts = new Map<string, number>();
+  const obs: MixedAnovaObservation[] = [];
+
+  for (let idx = 0; idx < measurements.length; idx++) {
+    const m = measurements[idx];
+    const mfg = (m.manufacturer ?? m.lot ?? '').trim();
+    const day = (m.day ?? '').trim();
+    const analyst = (m.analyst ?? m.equipment ?? '').trim();
+    const needle = (m.partId ?? '').trim();
+
+    const cellKey = `${mfg}\u0000${needle}\u0000${analyst}\u0000${day}`;
+    const rep = (cellCounts.get(cellKey) ?? 0) + 1;
+    cellCounts.set(cellKey, rep);
+
+    obs.push({
+      manufacturer: mfg,
+      needle,
+      analyst,
+      day,
+      replicate: rep,
+      value: m.value!,
+      runOrder: idx + 1,
+    });
+  }
+
+  try {
+    return mixedNestedCrossedAnova(obs, {
+      confidence: context.options.confidence ?? 0.95,
+      alphaOutlier: context.options.alpha ?? 0.05,
+    });
+  } catch (err) {
+    return { error: errorMessage(err) };
+  }
+}
+
+function mixedAnovaToTables(study: MixedAnovaResult) {
+  const anovaTable = {
+    title: 'ANOVA Mista Aninhada-Cruzada — E[QM] e F Sintetizado',
+    columns: [
+      'Fonte de Variação',
+      'GL',
+      'SQ',
+      'QM',
+      'E[QM]',
+      'F sintetizado',
+      'p-valor',
+    ],
+    rows: study.table.map((row) => [
+      row.source,
+      row.df,
+      fmt(row.ss),
+      fmt(row.ms),
+      row.expectedMsText,
+      row.f === null ? '—' : fmt(row.f),
+      row.p === null ? '—' : fmt(row.p),
+    ]),
+    note: 'Montgomery (2020), Caps. 13 e 14. Modelo: Fabricante (fixo) > Agulha(Fabricante) × Analista × Dia. F sintetizado com GL de Satterthwaite.',
+  };
+
+  const componentsTable = {
+    title: 'Componentes de Variância e Graus de Liberdade Efetivos (Satterthwaite)',
+    columns: [
+      'Componente',
+      'Variância (σ²)',
+      'Desvio-Padrão (σ)',
+      '% Contribuição',
+      'GL Satterthwaite (ν)',
+      'IC 95% do Desvio-Padrão',
+    ],
+    rows: study.components.map((comp) => [
+      comp.label,
+      fmt(comp.variance),
+      fmt(comp.standardDeviation),
+      `${fmt(comp.percentContribution)}%`,
+      comp.df === null ? '—' : fmt(comp.df),
+      comp.confidenceInterval
+        ? `[${fmt(comp.confidenceInterval.lower)}, ${fmt(comp.confidenceInterval.upper)}]`
+        : '—',
+    ]),
+    note: 'Variâncias resolvidas por sistema linear exato M·σ² = MS. Componentes negativos truncados em 0 conforme ISO 5725-2; termos não restritos mantidos no teste F sintetizado.',
+  };
+
+  const tables: Array<{
+    title: string;
+    columns: string[];
+    rows: (string | number)[][];
+    note?: string;
+  }> = [anovaTable, componentsTable];
+
+  if (study.outliers.flagged.length > 0) {
+    tables.push({
+      title: 'Diagnóstico de Outliers — Resíduos Estudentizados (Bonferroni)',
+      columns: [
+        'Obs.',
+        'Fabricante',
+        'Agulha',
+        'Analista',
+        'Dia',
+        'Réplica',
+        'Valor',
+        'Resíduo Estud.',
+        'p-valor (Bonferroni)',
+      ],
+      rows: study.outliers.flagged.slice(0, 15).map((o) => [
+        o.index,
+        o.manufacturer,
+        o.needle,
+        o.analyst,
+        o.day,
+        o.replicate,
+        fmt(o.value),
+        fmt(o.studentizedResidual),
+        fmt(o.pValue),
+      ]),
+      note: `Variância residual agrupada s_r = ${fmt(study.outliers.sr)}. ${study.outliers.flagged.length} observação(ões) sinalizada(s) para investigação metrológica (nenhuma excluída automaticamente).`,
+    });
+  }
+
+  const sensitivityTable = {
+    title: 'Análise de Sensibilidade — Heterocedasticidade entre Analistas',
+    columns: ['Teste Estatístico', 'Estatística', 'GL', 'p-valor', 'Interpretação'],
+    rows: [
+      [
+        'Homocedasticidade de Bartlett',
+        study.sensitivity.bartlettStatistic === null ? '—' : fmt(study.sensitivity.bartlettStatistic),
+        `${study.factors.analysts.length - 1}`,
+        study.sensitivity.bartlettP === null ? '—' : fmt(study.sensitivity.bartlettP),
+        study.sensitivity.isHeteroscedastic
+          ? 'Variâncias entre analistas heterogêneas (alerta metrológico)'
+          : 'Variâncias entre analistas homogêneas',
+      ],
+      [
+        'Welch-ANOVA (bloqueado por agulha)',
+        study.sensitivity.welchF === null ? '—' : fmt(study.sensitivity.welchF),
+        study.sensitivity.welchDf1 === null || study.sensitivity.welchDf2 === null
+          ? '—'
+          : `${fmt(study.sensitivity.welchDf1, 1)} / ${fmt(study.sensitivity.welchDf2, 1)}`,
+        study.sensitivity.welchP === null ? '—' : fmt(study.sensitivity.welchP),
+        study.sensitivity.welchP !== null && study.sensitivity.welchP < 0.05
+          ? 'Efeito de analista significativo mesmo sob heterocedasticidade'
+          : 'Sem efeito significativo de analista sob variâncias desiguais',
+      ],
+    ],
+    note: 'Verificação de robustez: se as variâncias entre analistas forem desiguais, o Welch-ANOVA confirma se o efeito de analista permanece significativo.',
+  };
+
+  tables.push(sensitivityTable);
+
+  return {
+    tables,
+    warnings: study.warnings,
+    notes: study.notes,
+  };
+}
+
 export const dimensionalRepeatabilityAnalysis: AnalysisModule = ({
   parameter,
   criteria,
   context,
 }) => {
+  const mixedStudy = needleMixedAnovaStudy(context);
+  if (mixedStudy) {
+    if ('error' in mixedStudy) {
+      return emptyParameter(parameter, context.used.length, mixedStudy.error, [
+        'O delineamento de 4 fatores (Fabricante > Agulha × Analista × Dia) requer desenho balanceado.',
+      ]);
+    }
+    const mixedExtras = mixedAnovaToTables(mixedStudy);
+    const sigmaRep = mixedStudy.budget.repeatability.sd;
+    const dfRep = mixedStudy.budget.repeatability.df;
+    const totalVar = mixedStudy.components.reduce((sum, c) => sum + c.variance, 0);
+    const evPct = totalVar > 0 ? (100 * (sigmaRep * sigmaRep)) / totalVar : null;
+    const raw = {
+      ev_pct: evPct,
+      sigma_rep: sigmaRep,
+      df_rep: dfRep,
+      grr_pct: null,
+      ndc: null,
+    };
+    const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+    return {
+      key: parameter.key,
+      label: parameter.label,
+      n: mixedStudy.nTotal,
+      verdict,
+      summary: parameterSummary(
+        parameter.label,
+        verdict,
+        `ANOVA mista aninhada-cruzada: σ_rep = ${fmt(sigmaRep)} ${unitOf(context.options)}; ν_rep = ${dfRep} g.l. (resíduo E). ${mixedStudy.summary}`,
+      ),
+      metrics: [
+        buildMetric(
+          parameter,
+          'sigma_rep',
+          raw.sigma_rep,
+          criteria,
+          'σ_rep = √MS_E da ANOVA mista aninhada-cruzada',
+          MIXED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'ev_pct',
+          raw.ev_pct,
+          criteria,
+          '%EV = 100·σ²_rep/σ²_total',
+          MIXED_ANOVA_REFERENCE,
+        ),
+      ],
+      rawMetrics: raw,
+      tables: mixedExtras.tables,
+      charts: [],
+      warnings: mixedExtras.warnings,
+      notes: mixedExtras.notes,
+      reference: MIXED_ANOVA_REFERENCE,
+      results: { mixedAnova: mixedStudy, study: 'mixed_anova' },
+    };
+  }
+
   const study = gageRRStudy(context, criteria);
   if ('error' in study) {
     return emptyParameter(parameter, context.used.length, study.error, [
@@ -363,6 +617,73 @@ export const dimensionalReproducibilityAnalysis: AnalysisModule = ({
   criteria,
   context,
 }) => {
+  const mixedStudy = needleMixedAnovaStudy(context);
+  if (mixedStudy) {
+    if ('error' in mixedStudy) {
+      return emptyParameter(parameter, context.used.length, mixedStudy.error, [
+        'O delineamento de 4 fatores (Fabricante > Agulha × Analista × Dia) requer desenho balanceado.',
+      ]);
+    }
+    const mixedExtras = mixedAnovaToTables(mixedStudy);
+    const sigmaOper = mixedStudy.budget.analyst.sd;
+    const dfOper = mixedStudy.budget.analyst.df;
+    const sigmaDay = mixedStudy.budget.day.sd;
+    const dfDay = mixedStudy.budget.day.df;
+    const sigmaIp = mixedStudy.budget.intermediatePrecision.sd;
+    const dfIp = mixedStudy.budget.intermediatePrecision.df;
+    const totalVar = mixedStudy.components.reduce((sum, c) => sum + c.variance, 0);
+    const operPct = totalVar > 0 ? (100 * (sigmaOper * sigmaOper)) / totalVar : null;
+    const raw = {
+      oper_pct: operPct,
+      sigma_oper: sigmaOper,
+      df_oper: dfOper,
+      sigma_day: sigmaDay,
+      df_day: dfDay,
+      sigma_ip: sigmaIp,
+      df_ip: dfIp,
+      grr_pct: null,
+      pt_pct: null,
+      ndc: null,
+    };
+    const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
+    return {
+      key: parameter.key,
+      label: parameter.label,
+      n: mixedStudy.nTotal,
+      verdict,
+      summary: parameterSummary(
+        parameter.label,
+        verdict,
+        `ANOVA mista aninhada-cruzada: σ_oper = ${fmt(sigmaOper)} ${unitOf(context.options)} (ν = ${dfOper === null ? '—' : fmt(dfOper)}); σ_dia = ${fmt(sigmaDay)} ${unitOf(context.options)} (ν = ${dfDay === null ? '—' : fmt(dfDay)}); σ_ip = ${fmt(sigmaIp)} ${unitOf(context.options)} (ν = ${dfIp === null ? '—' : fmt(dfIp)}). ${mixedStudy.summary}`,
+      ),
+      metrics: [
+        buildMetric(
+          parameter,
+          'sigma_oper',
+          raw.sigma_oper,
+          criteria,
+          'σ_oper da ANOVA mista aninhada-cruzada (Satterthwaite)',
+          MIXED_ANOVA_REFERENCE,
+        ),
+        buildMetric(
+          parameter,
+          'oper_pct',
+          raw.oper_pct,
+          criteria,
+          '%AV = 100·σ²_oper/σ²_total',
+          MIXED_ANOVA_REFERENCE,
+        ),
+      ],
+      rawMetrics: raw,
+      tables: mixedExtras.tables,
+      charts: [],
+      warnings: mixedExtras.warnings,
+      notes: mixedExtras.notes,
+      reference: MIXED_ANOVA_REFERENCE,
+      results: { mixedAnova: mixedStudy, study: 'mixed_anova' },
+    };
+  }
+
   const study = gageRRStudy(context, criteria);
   if ('error' in study) {
     return emptyParameter(parameter, context.used.length, study.error, [
@@ -1468,6 +1789,14 @@ export interface DimensionalBudgetInput {
   reproducibilitySd?: number | null;
   /** Graus de liberdade da reprodutibilidade (Satterthwaite do componente de operador). */
   reproducibilityDof?: number | null;
+  /** Desvio-padrão entre dias (efeito de Dia da ANOVA mista). */
+  daySd?: number | null;
+  /** Graus de liberdade do efeito de Dia (Satterthwaite). */
+  dayDof?: number | null;
+  /** Desvio-padrão de precisão intermediária intralaboratorial. */
+  intermediatePrecisionSd?: number | null;
+  /** Graus de liberdade da precisão intermediária (Satterthwaite). */
+  intermediatePrecisionDof?: number | null;
   /** Incerteza expandida do padrão de referência, U_ref. */
   referenceUncertainty?: number | null;
   /** Desvio máximo de planicidade (distribuição retangular). */
@@ -1596,7 +1925,7 @@ export function dimensionalUncertaintyBudget(
     input.reproducibilitySd !== undefined
   ) {
     let reproDof: number | null = null;
-    let reproNote = 'u_reprod = σ_operador do Gage R&R (desvio-padrão entre operadores).';
+    let reproNote = 'u_reprod = σ_operador do Gage R&R / ANOVA mista (desvio-padrão entre operadores).';
     if (
       typeof input.reproducibilityDof === 'number' &&
       Number.isFinite(input.reproducibilityDof) &&
@@ -1607,7 +1936,7 @@ export function dimensionalUncertaintyBudget(
       reproNote += ` ν = ${formattedDof} (Satterthwaite do componente de operador).`;
     } else {
       reproDof = null;
-      reproNote += ' Atenção: graus de liberdade do operador não informados (Tipo A incompleto). Preencha a partir do estudo Gage R&R.';
+      reproNote += ' Atenção: graus de liberdade do operador não informados (Tipo A incompleto). Preencha a partir do estudo Gage R&R / ANOVA mista.';
     }
 
     items.push(
@@ -1621,6 +1950,71 @@ export function dimensionalUncertaintyBudget(
         1,
         reproDof,
         reproNote,
+      ),
+    );
+  }
+
+  if (input.daySd !== null && input.daySd !== undefined) {
+    let dayDof: number | null = null;
+    let dayNote = 'u_dia = σ_dia da ANOVA mista aninhada-cruzada.';
+    if (
+      typeof input.dayDof === 'number' &&
+      Number.isFinite(input.dayDof) &&
+      input.dayDof > 0
+    ) {
+      dayDof = input.dayDof;
+      const formattedDof = Number.isInteger(dayDof) ? dayDof : dayDof.toFixed(2);
+      dayNote += ` ν = ${formattedDof} (Satterthwaite do componente de Dia).`;
+    } else {
+      dayDof = null;
+      dayNote += ' Atenção: graus de liberdade do dia não informados (Tipo A incompleto).';
+    }
+
+    items.push(
+      budgetItem(
+        input,
+        'day',
+        'Variação entre dias (efeito de Dia)',
+        'A',
+        'normal',
+        input.daySd,
+        1,
+        dayDof,
+        dayNote,
+      ),
+    );
+  }
+
+  if (
+    input.intermediatePrecisionSd !== null &&
+    input.intermediatePrecisionSd !== undefined
+  ) {
+    let ipDof: number | null = null;
+    let ipNote = 'u_ip = σ_ip da ANOVA mista aninhada-cruzada (precisão intermediária intralaboratorial).';
+    if (
+      typeof input.intermediatePrecisionDof === 'number' &&
+      Number.isFinite(input.intermediatePrecisionDof) &&
+      input.intermediatePrecisionDof > 0
+    ) {
+      ipDof = input.intermediatePrecisionDof;
+      const formattedDof = Number.isInteger(ipDof) ? ipDof : ipDof.toFixed(2);
+      ipNote += ` ν = ${formattedDof} (Satterthwaite da precisão intermediária).`;
+    } else {
+      ipDof = null;
+      ipNote += ' Atenção: graus de liberdade da precisão intermediária não informados (Tipo A incompleto).';
+    }
+
+    items.push(
+      budgetItem(
+        input,
+        'intermediate_precision',
+        'Precisão intermediária intralaboratorial',
+        'A',
+        'normal',
+        input.intermediatePrecisionSd,
+        1,
+        ipDof,
+        ipNote,
       ),
     );
   }
