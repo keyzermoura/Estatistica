@@ -62,6 +62,10 @@ import {
   type MixedAnovaObservation,
   type MixedAnovaResult,
 } from '../mixedAnova';
+import {
+  diagnoseDesignStructure,
+  type DesignDiagnosis,
+} from '../designStructure';
 
 const GAGE_REFERENCE = 'AIAG MSA (2010), 4. ed.; ISO 22514-7:2021; Montgomery (2020)';
 const MIXED_ANOVA_REFERENCE =
@@ -148,15 +152,58 @@ function componentOf(result: GageRRResult, key: 'repeatability' | 'operator' | '
 
 // ── Gage R&R (repetibilidade e reprodutibilidade) ─────────────────────────
 
-interface GageRRStudy {
+interface GageRRStudySuccess {
   result: GageRRResult;
   measurements: number;
+  diagnosis: DesignDiagnosis;
+}
+
+interface GageRRStudyError {
+  error: string;
+  diagnosis?: DesignDiagnosis;
+  blockedByStructure?: boolean;
+}
+
+type GageRRStudyOutcome = GageRRStudySuccess | GageRRStudyError;
+
+function designDiagnosisTable(diagnosis: DesignDiagnosis) {
+  return {
+    title: 'Diagnóstico de Estrutura do Delineamento Amostral',
+    columns: ['Propriedade', 'Valor Diagnosticado', 'Interpretação'],
+    rows: [
+      ['Classificação', diagnosis.classification, diagnosis.summary],
+      [
+        'Peças distintas',
+        `${diagnosis.partsCount}`,
+        `${diagnosis.singleAnalystPartsCount} exclusivas de 1 analista; ${diagnosis.singleDayPartsCount} exclusivas de 1 dia`,
+      ],
+      [
+        'Analistas / Operadores',
+        `${diagnosis.analystsCount}`,
+        diagnosis.partAnalystIncidence.isConnected
+          ? 'Rede conectada'
+          : 'Rede desconectada (ilhas isoladas)',
+      ],
+      [
+        'Células vazias (peça × operador)',
+        `${diagnosis.partAnalystIncidence.emptyCells}`,
+        `${diagnosis.partAnalystIncidence.totalCells - diagnosis.partAnalystIncidence.emptyCells} preenchidas`,
+      ],
+      [
+        'Equilíbrio amostral',
+        diagnosis.isBalanced ? 'Balanceado' : 'Desbalanceado',
+        `Réplicas por célula: mín. ${diagnosis.partAnalystIncidence.minReplicates}, máx. ${diagnosis.partAnalystIncidence.maxReplicates}`,
+      ],
+      ['Modelo sugerido', diagnosis.suggestedModel, diagnosis.recommendation],
+    ],
+    note: 'Diagnóstico automático de delineamento amostral para prevenir especificação incorreta de modelo ANOVA (cruzado vs. aninhado).',
+  };
 }
 
 function gageRRStudy(
   context: AnalysisContext,
   criteria: AcceptanceCriterion[],
-): GageRRStudy | { error: string } {
+): GageRRStudyOutcome {
   const measurements = context.used.filter(
     (m) =>
       (m.partId ?? '').trim() !== '' &&
@@ -169,6 +216,31 @@ function gageRRStudy(
         'Informe as peças (coluna “Peça”) e as medições do estudo Gage R&R; medições com referência são usadas em tendência/linearidade.',
     };
   }
+
+  const diagnosis = diagnoseDesignStructure(measurements);
+  const forceCrossed =
+    Boolean(context.options.forceCrossedModel) ||
+    Boolean(
+      context.options.plans?.some(
+        (p) =>
+          p.notes?.includes('forçar_cruzado') ||
+          p.notes?.includes('force_crossed'),
+      ),
+    );
+
+  if (
+    !forceCrossed &&
+    (diagnosis.classification === 'nested' ||
+      diagnosis.classification === 'disconnected' ||
+      diagnosis.classification === 'partially_crossed')
+  ) {
+    return {
+      error: `Delineamento amostral incompatível com Gage R&R cruzado (${diagnosis.classification}): ${diagnosis.summary}. ${diagnosis.recommendation}`,
+      diagnosis,
+      blockedByStructure: true,
+    };
+  }
+
   const partIds = [
     ...new Set(measurements.map((m) => (m.partId ?? '').trim()).filter(Boolean)),
   ].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
@@ -176,12 +248,13 @@ function gageRRStudy(
     ...new Set(measurements.map((m) => m.analyst || m.equipment || 'Operador')),
   ].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true }));
   if (partIds.length < 2) {
-    return { error: 'O Gage R&R requer pelo menos 2 peças com medições válidas.' };
+    return { error: 'O Gage R&R requer pelo menos 2 peças com medições válidas.', diagnosis };
   }
   if (operators.length < 2) {
     return {
       error:
         'O Gage R&R requer pelo menos 2 operadores; use a coluna “Analista/operador” para identificá-los.',
+      diagnosis,
     };
   }
 
@@ -200,6 +273,7 @@ function gageRRStudy(
     return {
       error:
         'O Gage R&R requer pelo menos 2 réplicas por peça × operador; r = 1 não permite estimar a repetibilidade.',
+      diagnosis,
     };
   }
 
@@ -233,9 +307,18 @@ function gageRRStudy(
         unit: unitOf(context.options),
       },
     );
-    return { result, measurements: measurements.length };
+    if (
+      forceCrossed &&
+      diagnosis.classification !== 'crossed_balanced' &&
+      diagnosis.classification !== 'crossed_unbalanced'
+    ) {
+      result.warnings.unshift(
+        `AVISO DE RISCO METROLÓGICO: Modelo cruzado forçado pelo usuário para desenho ${diagnosis.classification}. ${diagnosis.summary}`,
+      );
+    }
+    return { result, measurements: measurements.length, diagnosis };
   } catch (error) {
-    return { error: errorMessage(error) };
+    return { error: errorMessage(error), diagnosis };
   }
 }
 
@@ -502,11 +585,21 @@ export const dimensionalRepeatabilityAnalysis: AnalysisModule = ({
 
   const study = gageRRStudy(context, criteria);
   if ('error' in study) {
-    return emptyParameter(parameter, context.used.length, study.error, [
-      'A repetibilidade usa o Gage R&R cruzado: a mesma peça é medida várias vezes pelo mesmo operador.',
-    ]);
+    const notes =
+      study.diagnosis && study.diagnosis.warnings.length > 0
+        ? [study.diagnosis.recommendation, ...study.diagnosis.warnings]
+        : [
+            'A repetibilidade usa o Gage R&R cruzado: a mesma peça é medida várias vezes pelo mesmo operador.',
+          ];
+    const param = emptyParameter(parameter, context.used.length, study.error, notes);
+    if (study.diagnosis) {
+      param.warnings = study.diagnosis.warnings;
+      param.tables = [designDiagnosisTable(study.diagnosis)];
+      param.results = { diagnosis: study.diagnosis };
+    }
+    return param;
   }
-  const { result } = study;
+  const { result, diagnosis } = study;
   const repetition = componentOf(result, 'repeatability');
   const part = componentOf(result, 'part');
   const operator = componentOf(result, 'operator');
@@ -608,7 +701,7 @@ export const dimensionalRepeatabilityAnalysis: AnalysisModule = ({
     tables: [...baseExtras.tables, ...empTables],
     notes: [...baseExtras.notes, ...empNotes],
     reference: GAGE_REFERENCE,
-    results: { gageRR: result, emp, study: 'gage_rr' },
+    results: { gageRR: result, emp, study: 'gage_rr', diagnosis },
   };
 };
 
@@ -686,11 +779,21 @@ export const dimensionalReproducibilityAnalysis: AnalysisModule = ({
 
   const study = gageRRStudy(context, criteria);
   if ('error' in study) {
-    return emptyParameter(parameter, context.used.length, study.error, [
-      'A reprodutibilidade dimensional é a variação entre operadores no Gage R&R cruzado; não exige laboratórios distintos.',
-    ]);
+    const notes =
+      study.diagnosis && study.diagnosis.warnings.length > 0
+        ? [study.diagnosis.recommendation, ...study.diagnosis.warnings]
+        : [
+            'A reprodutibilidade dimensional é a variação entre operadores no Gage R&R cruzado; não exige laboratórios distintos.',
+          ];
+    const param = emptyParameter(parameter, context.used.length, study.error, notes);
+    if (study.diagnosis) {
+      param.warnings = study.diagnosis.warnings;
+      param.tables = [designDiagnosisTable(study.diagnosis)];
+      param.results = { diagnosis: study.diagnosis };
+    }
+    return param;
   }
-  const { result } = study;
+  const { result, diagnosis } = study;
   const operator = componentOf(result, 'operator');
   const operDf =
     operator?.df ??
@@ -761,7 +864,7 @@ export const dimensionalReproducibilityAnalysis: AnalysisModule = ({
     rawMetrics: raw,
     ...gageRRTables(result),
     reference: GAGE_REFERENCE,
-    results: { gageRR: result, study: 'gage_rr' },
+    results: { gageRR: result, study: 'gage_rr', diagnosis },
   };
 };
 

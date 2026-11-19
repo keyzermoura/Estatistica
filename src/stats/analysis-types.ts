@@ -150,6 +150,8 @@ export interface AnalysisOptions {
   includeMethodComparison?: boolean;
   /** Verificação de homogeneidade do lote no perfil físico destrutivo. */
   homogeneity?: HomogeneityAnalysisOptions | null;
+  /** Forçar uso de modelo cruzado mesmo se o diagnóstico apontar estrutura aninhada/desconexa. */
+  forceCrossedModel?: boolean;
 }
 
 /** Opções da verificação de homogeneidade do lote (ensaio destrutivo). */

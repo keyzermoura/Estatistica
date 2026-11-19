@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { diagnoseDesignStructure } from '../designStructure';
 import type { Measurement } from '../../lib/types';
+import type { ParameterDef } from '../../profiles/types';
+import type { AnalysisContext } from '../analysis-types';
+import { dimensionalRepeatabilityAnalysis } from '../parameters/dimensional';
 
 function createMockMeasurement(
   id: string,
@@ -201,3 +204,144 @@ describe('Diagnóstico de Estrutura do Delineamento Amostral (Etapa D1)', () => 
     expect(diagnosis.canRunNestedAnova).toBe(false);
   });
 });
+
+function createMockContext(
+  measurements: Measurement[],
+  options: AnalysisContext['options'] = {},
+): AnalysisContext {
+  return {
+    all: measurements,
+    used: measurements,
+    values: measurements.map((m) => m.value!).filter(Number.isFinite),
+    options,
+    uniqueLevels: [],
+    regressionPoints: [],
+    regression: null,
+    iso5725: null,
+    uncertaintyItems: [],
+    observedMean: 10.0,
+    attributeData: null,
+    attributeStudy: null,
+    attributeError: null,
+  };
+}
+
+describe('Bloqueio de Gage R&R Cruzado sob Delineamento Aninhado / Desconexo (Etapa D2)', () => {
+  const mockRepParameter: ParameterDef = {
+    key: 'repeatability',
+    label: 'Repetibilidade',
+    shortDescription: 'Repetibilidade dimensional',
+    reference: 'AIAG MSA (2010)',
+    metrics: [
+      { key: 'sigma_rep', label: 'σ_rep', unit: 'mm' },
+      { key: 'ev_pct', label: '%EV', unit: '%' },
+    ],
+  };
+
+  it('bloqueia Gage R&R cruzado quando dados possuem estrutura aninhada Dia > Peça e retorna not_evaluated com diagnóstico', () => {
+    // 24 peças distintas: 12 no Dia 1 (Op-A e Op-B), 12 no Dia 2 (Op-A e Op-B), 2 réplicas
+    const measurements: Measurement[] = [];
+    let count = 0;
+    for (let i = 1; i <= 24; i++) {
+      const day = i <= 12 ? 'Dia-1' : 'Dia-2';
+      const part = `P-${i}`;
+      for (const op of ['Op-A', 'Op-B']) {
+        for (let r = 1; r <= 2; r++) {
+          count++;
+          measurements.push(createMockMeasurement(`m-${count}`, part, op, day, r, 10.0 + (i % 3) * 0.1 + r * 0.01));
+        }
+      }
+    }
+
+    const context = createMockContext(measurements, {
+      lsl: 9.0,
+      usl: 11.0,
+      unit: 'mm',
+    });
+
+    const res = dimensionalRepeatabilityAnalysis({
+      parameter: mockRepParameter,
+      criteria: [],
+      context,
+    });
+
+    expect(res.verdict).toBe('not_evaluated');
+    expect(res.summary).toContain('incompatível com Gage R&R cruzado (nested)');
+    expect(res.summary).toContain('ANOVA aninhada (Dia > Peça > Réplica)');
+    expect(res.warnings.length).toBeGreaterThan(0);
+    expect(res.tables.some((t) => t.title.includes('Diagnóstico de Estrutura do Delineamento Amostral'))).toBe(true);
+    const diag = res.results?.diagnosis as { classification: string } | undefined;
+    expect(diag?.classification).toBe('nested');
+  });
+
+  it('bloqueia Gage R&R cruzado quando dados formam rede desconectada (ilhas isoladas)', () => {
+    const measurements: Measurement[] = [];
+    let count = 0;
+
+    // Ilha 1: Peças 1, 2 por Op-A, Op-B
+    for (const part of ['P1', 'P2']) {
+      for (const op of ['Op-A', 'Op-B']) {
+        for (let r = 1; r <= 2; r++) {
+          count++;
+          measurements.push(createMockMeasurement(`m-${count}`, part, op, 'Dia-1', r));
+        }
+      }
+    }
+    // Ilha 2: Peças 3, 4 por Op-C, Op-D
+    for (const part of ['P3', 'P4']) {
+      for (const op of ['Op-C', 'Op-D']) {
+        for (let r = 1; r <= 2; r++) {
+          count++;
+          measurements.push(createMockMeasurement(`m-${count}`, part, op, 'Dia-1', r));
+        }
+      }
+    }
+
+    const context = createMockContext(measurements, { unit: 'mm' });
+
+    const res = dimensionalRepeatabilityAnalysis({
+      parameter: mockRepParameter,
+      criteria: [],
+      context,
+    });
+
+    expect(res.verdict).toBe('not_evaluated');
+    expect(res.summary).toContain('incompatível com Gage R&R cruzado (disconnected)');
+    const diag = res.results?.diagnosis as { classification: string } | undefined;
+    expect(diag?.classification).toBe('disconnected');
+    expect(res.tables.some((t) => t.title.includes('Diagnóstico de Estrutura'))).toBe(true);
+  });
+
+  it('permite override quando forceCrossedModel for verdadeiro, emitindo aviso de risco metrológico', () => {
+    // 24 peças em 2 dias (estrutura aninhada Dia > Peça), mas com forceCrossedModel: true
+    const measurements: Measurement[] = [];
+    let count = 0;
+    for (let i = 1; i <= 6; i++) {
+      const day = i <= 3 ? 'Dia-1' : 'Dia-2';
+      const part = `P-${i}`;
+      for (const op of ['Op-A', 'Op-B']) {
+        for (let r = 1; r <= 2; r++) {
+          count++;
+          measurements.push(createMockMeasurement(`m-${count}`, part, op, day, r, 10.0 + r * 0.05));
+        }
+      }
+    }
+
+    const context = createMockContext(measurements, {
+      forceCrossedModel: true,
+      unit: 'mm',
+    });
+
+    const res = dimensionalRepeatabilityAnalysis({
+      parameter: mockRepParameter,
+      criteria: [],
+      context,
+    });
+
+    // Como forceCrossedModel está ativo, não deve ter sido bloqueado por estrutura
+    expect(res.results?.study).toBe('gage_rr');
+    expect(res.warnings.some((w) => w.includes('AVISO DE RISCO METROLÓGICO'))).toBe(true);
+  });
+});
+
+
