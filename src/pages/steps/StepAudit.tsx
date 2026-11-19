@@ -20,6 +20,7 @@ import {
   createVersionSnapshot,
   newVersion,
   verifyValidationAuditTrail,
+  exportValidationAuditAnchor,
 } from '../../lib/repository';
 import { formatDate, downloadText, slugify } from '../../lib/utils';
 import { StepShell } from '../../components/wizard';
@@ -63,6 +64,20 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
   useEffect(() => {
     setReason('');
   }, [approveOpen, versionOpen]);
+
+  const handleExportAnchor = () => {
+    try {
+      const manifest = exportValidationAuditAnchor(bundle.validation.id);
+      downloadText(
+        JSON.stringify(manifest, null, 2),
+        `ancora-auditoria-${slugify(bundle.validation.title)}-v${bundle.validation.version}.json`,
+        'application/json',
+      );
+      toast.push('Manifesto com hash âncora exportado para custódia externa.');
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : 'Falha ao exportar âncora.', 'danger');
+    }
+  };
 
   const selectedParameters = bundle.parameters.filter((parameter) => parameter.selected);
   const failed = analysis.parameters.filter((parameter) => parameter.verdict === 'fail');
@@ -298,23 +313,28 @@ export function StepAudit({ bundle, analysis, goTo, reload }: StepProps) {
       <Card>
         <CardHeader
           title={`Trilha de auditoria (${audit.length})`}
-          description="Eventos ordenados cronologicamente. Cada registro é encadeado por SHA-256 (21 CFR Part 11)."
+          description="Integridade com detecção de alteração acidental, sem controle de acesso nem identidade verificada."
           icon={<ScrollText className="h-4 w-4" />}
           action={
-            auditVerification.isValid ? (
-              <Badge tone="success" className="gap-1 font-mono text-[11px]">
-                <ShieldCheck className="h-3 w-3" /> 21 CFR Part 11 · Íntegra ({auditVerification.totalLogs} blocos)
-              </Badge>
-            ) : (
-              <Badge tone="danger" className="gap-1 font-mono text-[11px]">
-                <AlertTriangle className="h-3 w-3" /> Falha de integridade
-              </Badge>
-            )
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" onClick={handleExportAnchor} title="Exportar manifesto com hash âncora para custódia externa">
+                <Download className="h-3 w-3" /> Exportar Âncora
+              </Button>
+              {auditVerification.isValid ? (
+                <Badge tone="success" className="gap-1 font-mono text-[11px]">
+                  <ShieldCheck className="h-3 w-3" /> Trilha Íntegra ({auditVerification.totalLogs} blocos)
+                </Badge>
+              ) : (
+                <Badge tone="danger" className="gap-1 font-mono text-[11px]">
+                  <AlertTriangle className="h-3 w-3" /> Falha de integridade
+                </Badge>
+              )}
+            </div>
           }
         />
         {!auditVerification.isValid ? (
           <div className="p-4 border-b border-rose-200 bg-rose-50/50 dark:border-rose-900/50 dark:bg-rose-950/20">
-            <Alert tone="danger" title="Violação de Integridade Criptográfica (21 CFR Part 11)">
+            <Alert tone="danger" title="Violação de Integridade Criptográfica">
               {auditVerification.tamperedReason}
             </Alert>
           </div>

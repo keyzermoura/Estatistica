@@ -484,6 +484,8 @@ export interface AppSettings {
   responsible: string;
   reviewer: string;
   approver: string;
+  userName?: string;
+  userRegistration?: string;
   defaultConfidence: number;
   defaultPower: number;
   reportFooter: string;

@@ -38,7 +38,7 @@ e critério de aceitação cadastrado**. Quando falta um dos dois, o veredito é
 - Coleta manual, importação de XLSX/CSV e exportação de dados.
 - Relatório com hash SHA-256, três assinaturas eletrônicas e bloqueio após a
   aprovação.
-- Snapshots imutáveis por versão; nova versão reabre a edição preservando o
+- Snapshots congelados por versão; nova versão reabre a edição preservando o
   histórico.
 - Persistência local em SQLite (WebAssembly) sobre IndexedDB, sem backend.
 
@@ -251,8 +251,15 @@ scripts/
   o schema.
 - **Seletividade**: não há cálculo automático; exige experimento e evidência
   registrada. Permanece “não avaliado” até haver critério e dado.
-- **Assinaturas**: são eletrônicas simples (nome, papel, instante e hash), não
-  certificado digital ICP-Brasil.
+- **Integridade da Trilha e Conformidade (21 CFR Part 11)**:
+  - O sistema oferece **integridade com detecção de alteração acidental, sem controle de acesso nem identidade verificada**.
+  - A aplicação opera localmente no navegador (IndexedDB) e **não atende integralmente ao 21 CFR Part 11**. Faltam especificamente:
+    1. Identificação única de usuário com autenticação (credencial verificada, MFA ou SSO);
+    2. Controle de acesso baseado em papéis (RBAC);
+    3. Assinatura digital vinculada à identidade (criptografia assimétrica / certificado ICP-Brasil/PKI);
+    4. Âncora e carimbo de tempo externo confiável (TSA independente via RFC 3161).
+  - Como mitigação parcial no ambiente cliente, o sistema exige **identificação declarada do operador (nome/matrícula)** antes de criar ou aprovar validações e permite **exportar o hash âncora** da cadeia para custódia externa independente.
+- **Assinaturas**: são eletrônicas simples com registro nominal, papel, instante e hash SHA-256 encadeado, não certificado digital ICP-Brasil.
 - **Uso**: aplicação local/monousuário; não há autenticação, servidor central
   nem sincronização entre dispositivos.
 - **Aprovação**: congela o relatório e a validação; qualquer alteração posterior

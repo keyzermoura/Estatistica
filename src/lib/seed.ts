@@ -453,7 +453,7 @@ export async function seedIfEmpty(): Promise<boolean> {
   ensureDefaultLabSettings();
 
   const method = saveMethod(DEMO_METHOD);
-  const validation = createValidation(method.id, 'Validação HPLC-CAF-01 — 2026');
+  const validation = createValidation(method.id, 'Validação HPLC-CAF-01 — 2026', 'Especialista em Validação');
   const selectedKeys = profile.parameters
     .filter((parameter) => parameter.defaultSelected)
     .map((parameter) => parameter.key);

@@ -30,7 +30,11 @@ import {
   GENESIS_HASH,
   sha256Sync,
   verifyAuditChain,
+  exportAuditAnchor,
+  verifyAuditChainWithAnchor,
   type AuditVerificationResult,
+  type AuditAnchorManifest,
+  type AuditAnchorVerificationResult,
   type StoredAuditRow,
 } from './auditChain';
 import {
@@ -83,6 +87,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   responsible: '',
   reviewer: '',
   approver: '',
+  userName: '',
+  userRegistration: '',
   defaultConfidence: 0.95,
   defaultPower: 0.8,
   reportFooter: DEFAULT_REPORT_CONFIG.templateFooter,
@@ -94,6 +100,25 @@ export const DEFAULT_SETTINGS: AppSettings = {
     'ICH Q2(R2) — Validation of Analytical Procedures.',
   ],
 };
+
+/**
+ * Retorna a identificação declarada do usuário ativo (nome/matrícula) para trilha de auditoria.
+ *
+ * Importante: trata-se de identificação declarada pelo operador local e NÃO de autenticação
+ * criptográfica de usuário (ver documentação sobre 21 CFR Part 11).
+ */
+export function getDeclaredActor(settings?: AppSettings, fallback = ''): string {
+  try {
+    const s = settings ?? loadSettings();
+    if (s.userName?.trim()) {
+      const reg = s.userRegistration?.trim();
+      return reg ? `${s.userName.trim()} (${reg})` : s.userName.trim();
+    }
+  } catch {
+    // fallback se o banco ainda não estiver pronto
+  }
+  return fallback;
+}
 
 function mapMethod(r: Row): Method {
   return {
@@ -558,11 +583,18 @@ function methodFamilyForValidation(validationId: string): MethodFamily {
 export function createValidation(
   methodId: string,
   title?: string,
-  actor = 'sistema',
+  actor?: string,
 ): Validation {
   const method = getMethod(methodId);
   if (!method) throw new Error('Método não encontrado.');
   const settings = loadSettings();
+  const declared = getDeclaredActor(settings);
+  const effectiveActor = actor && actor !== 'sistema' ? actor.trim() : (declared || actor?.trim() || '');
+  if (!effectiveActor) {
+    throw new Error(
+      'Identificação declarada do usuário (nome/matrícula) é obrigatória antes de criar validações. Configure em Configurações > Responsáveis.',
+    );
+  }
   const timestamp = nowIso();
   const id = uid('val');
   const reportConfig: ReportConfig = {
@@ -584,7 +616,7 @@ export function createValidation(
     status: 'draft',
     currentStep: 0,
     version: 1,
-    responsible: settings.responsible,
+    responsible: settings.responsible || declared,
     reviewer: settings.reviewer,
     approver: settings.approver,
     approvedAt: null,
@@ -625,7 +657,7 @@ export function createValidation(
         [id, parameter.key, selected.has(parameter.key) ? 1 : 0, '', '[]'],
       );
     }
-    logAudit(id, 'validation', 'create', actor, null, validation, 'Criação da validação');
+    logAudit(id, 'validation', 'create', effectiveActor, null, validation, 'Criação da validação');
   });
   return validation;
 }
@@ -1244,12 +1276,19 @@ export function createVersionSnapshot(
 
 export function approveValidation(
   validationId: string,
-  actor: string,
+  actor?: string,
   reason = 'Aprovação da validação',
 ): Validation {
   const validation = getValidation(validationId);
   if (!validation) throw new Error('Validação não encontrada.');
   if (validation.locked) return validation;
+  const declared = getDeclaredActor();
+  const effectiveActor = actor && actor !== 'sistema' ? actor.trim() : (declared || actor?.trim() || '');
+  if (!effectiveActor) {
+    throw new Error(
+      'Identificação declarada do usuário (nome/matrícula) é obrigatória antes de aprovar ou assinar validações.',
+    );
+  }
   const rawReport = row(
     'SELECT * FROM reports WHERE validation_id = ? AND version = ? ORDER BY version DESC LIMIT 1',
     [validationId, validation.version],
@@ -1277,16 +1316,16 @@ export function approveValidation(
         locked: true,
         updatedAt: timestamp,
       },
-      actor,
+      effectiveActor,
     );
     run(
       `UPDATE validations SET status='approved', approved_at=?, locked=1, updated_at=? WHERE id=?`,
       [timestamp, timestamp, validationId],
     );
     approved = getValidation(validationId)!;
-    logAudit(validationId, 'validation', 'approve', actor, validation, approved, reason);
+    logAudit(validationId, 'validation', 'approve', effectiveActor, validation, approved, reason);
     // O snapshot é criado por último para refletir o estado aprovado e congelado.
-    createVersionSnapshot(validationId, reason, actor);
+    createVersionSnapshot(validationId, reason, effectiveActor);
   });
   return approved!;
 }
@@ -1317,7 +1356,7 @@ export function listAudit(validationId: string): AuditLog[] {
 }
 
 /**
- * Valida a integridade criptográfica da cadeia de auditoria (21 CFR Part 11) de uma validação.
+ * Valida a integridade da trilha de auditoria de uma validação (detecção de alteração acidental).
  */
 export function verifyValidationAuditTrail(validationId: string): AuditVerificationResult {
   const auditRows = rows<StoredAuditRow>(
@@ -1325,6 +1364,31 @@ export function verifyValidationAuditTrail(validationId: string): AuditVerificat
     [validationId],
   );
   return verifyAuditChain(auditRows);
+}
+
+/**
+ * Exporta o manifesto com o hash âncora da trilha de auditoria para custódia externa.
+ */
+export function exportValidationAuditAnchor(validationId: string): AuditAnchorManifest {
+  const auditRows = rows<StoredAuditRow>(
+    'SELECT * FROM audit_logs WHERE validation_id = ? ORDER BY timestamp ASC, rowid ASC',
+    [validationId],
+  );
+  return exportAuditAnchor(auditRows);
+}
+
+/**
+ * Verifica a integridade da trilha de auditoria e compara com o hash âncora externo fornecido.
+ */
+export function verifyValidationAuditWithAnchor(
+  validationId: string,
+  anchor: string | AuditAnchorManifest,
+): AuditAnchorVerificationResult {
+  const auditRows = rows<StoredAuditRow>(
+    'SELECT * FROM audit_logs WHERE validation_id = ? ORDER BY timestamp ASC, rowid ASC',
+    [validationId],
+  );
+  return verifyAuditChainWithAnchor(auditRows, anchor);
 }
 
 // ── Configurações ──────────────────────────────────────────────────────────

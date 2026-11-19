@@ -1,9 +1,21 @@
 /**
- * Módulo de Integridade Criptográfica e Trilha de Auditoria (21 CFR Part 11 / ISO 17025).
+ * Módulo de Integridade e Trilha de Auditoria com Encadeamento de Hash (Hash-Chaining).
  *
  * Implementa SHA-256 determinístico síncrono (FIPS PUB 180-4) e encadeamento
- * de blocos criptográficos (hash-chaining) para garantir imutabilidade e detecção
- * de adulterações em logs de auditoria.
+ * de blocos criptográficos para integridade com detecção de alteração acidental,
+ * sem controle de acesso nem identidade verificada.
+ *
+ * NOTA DE CONFORMIDADE REGULATÓRIA (21 CFR Part 11):
+ * Esta aplicação local-first oferece detecção de corrupção ou alteração acidental de dados.
+ * Não atende integralmente ao FDA 21 CFR Part 11 por operar em cliente isolado (IndexedDB), faltando:
+ *  1. Identificação única de usuário com autenticação (credencial verificada, MFA ou SSO);
+ *  2. Controle de acesso baseado em papéis (RBAC) com bloqueio de escrita no banco de dados;
+ *  3. Assinatura digital vinculada à identidade (criptografia assimétrica / certificado ICP-Brasil/PKI);
+ *  4. Âncora e carimbo de tempo externo confiável (TSA independente via RFC 3161).
+ *
+ * Como mitigação parcial no modelo cliente, o sistema oferece:
+ *  - Identificação declarada do usuário (nome e matrícula);
+ *  - Exportação de manifesto de âncora externa para custódia do último hash fora do navegador.
  */
 
 export const GENESIS_HASH = '0000000000000000000000000000000000000000000000000000000000000000';
@@ -242,5 +254,108 @@ export function verifyAuditChain(logs: StoredAuditRow[]): AuditVerificationResul
     tamperedLogId: null,
     tamperedReason: null,
     latestHash: expectedPrevHash,
+  };
+}
+
+export interface AuditAnchorManifest {
+  version: '1.0';
+  exportedAt: string;
+  totalLogs: number;
+  latestHash: string;
+  genesisHash: string;
+  firstLogTimestamp: string | null;
+  lastLogTimestamp: string | null;
+  logsChecksum: string;
+  declaration: string;
+}
+
+/**
+ * Exporta um manifesto com o hash âncora do estado atual da trilha de auditoria para custódia externa.
+ *
+ * Mitigação parcial para persistência em IndexedDB: permite que o usuário salve externamente o hash
+ * final e compare futuramente para detectar recomputações maliciosas ou acidentais de toda a cadeia.
+ */
+export function exportAuditAnchor(logs: StoredAuditRow[]): AuditAnchorManifest {
+  const verified = verifyAuditChain(logs);
+  if (!verified.isValid) {
+    throw new Error(
+      `Não é possível exportar âncora de custódia: a trilha de auditoria contém violação (${verified.tamperedReason}).`,
+    );
+  }
+  const hashes = logs.map((l) => l.current_hash || '').join(':');
+  const logsChecksum = sha256Sync(hashes);
+  const latestHash = verified.latestHash ?? GENESIS_HASH;
+
+  return {
+    version: '1.0',
+    exportedAt: new Date().toISOString(),
+    totalLogs: logs.length,
+    latestHash,
+    genesisHash: GENESIS_HASH,
+    firstLogTimestamp: logs[0]?.timestamp ?? null,
+    lastLogTimestamp: logs[logs.length - 1]?.timestamp ?? null,
+    logsChecksum,
+    declaration:
+      'Âncora de custódia externa para trilha de auditoria (mitigação parcial de integridade declarada, sem autoridade externa de carimbo de tempo RFC 3161). Guarde este arquivo em mídia externa protegida.',
+  };
+}
+
+export interface AuditAnchorVerificationResult extends AuditVerificationResult {
+  anchorMatches: boolean;
+  anchorExpectedHash: string;
+  divergenceReason: string | null;
+}
+
+/**
+ * Verifica a trilha de auditoria comparando-a contra um hash âncora exportado anteriormente.
+ *
+ * Garante que a cadeia não apenas é internamente consistente, mas também coincide com o hash
+ * de custódia externa previamente registrado, detectando substituições completas do banco IndexedDB.
+ */
+export function verifyAuditChainWithAnchor(
+  logs: StoredAuditRow[],
+  anchorManifestOrHash: string | AuditAnchorManifest,
+): AuditAnchorVerificationResult {
+  const chainResult = verifyAuditChain(logs);
+  const expectedHash =
+    typeof anchorManifestOrHash === 'string'
+      ? anchorManifestOrHash.trim()
+      : anchorManifestOrHash.latestHash.trim();
+
+  if (!chainResult.isValid) {
+    return {
+      ...chainResult,
+      anchorMatches: false,
+      anchorExpectedHash: expectedHash,
+      divergenceReason: `Cadeia internamente adulterada: ${chainResult.tamperedReason}`,
+    };
+  }
+
+  const currentLatest = chainResult.latestHash ?? GENESIS_HASH;
+  if (currentLatest === expectedHash) {
+    return {
+      ...chainResult,
+      anchorMatches: true,
+      anchorExpectedHash: expectedHash,
+      divergenceReason: null,
+    };
+  }
+
+  // Verifica se o hash âncora corresponde a um ponto histórico íntegro da cadeia
+  const historicalIndex = logs.findIndex((l) => l.current_hash === expectedHash);
+  if (historicalIndex !== -1) {
+    return {
+      ...chainResult,
+      anchorMatches: true,
+      anchorExpectedHash: expectedHash,
+      divergenceReason: null,
+    };
+  }
+
+  return {
+    ...chainResult,
+    anchorMatches: false,
+    anchorExpectedHash: expectedHash,
+    divergenceReason: `Hash âncora divergente: esperado "${expectedHash}", mas o hash mais recente é "${currentLatest}" e o valor não existe no histórico verificado.`,
   };
 }

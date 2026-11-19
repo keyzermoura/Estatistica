@@ -199,8 +199,8 @@ settings (chave/valor: laboratório, logo, tema, referências)
 | `analyses` | validation_id, parameter_key, kind, input_hash, results_json | Resultados congelados por versão |
 | `uncertainty_items` | validation_id, source, type, distribution, value, divisor, sensitivity, std_uncertainty, dof | Orçamento GUM |
 | `reports` | validation_id, version, status, content_json, elaborated/reviewed/approved, dates, locked | Relatório e assinaturas |
-| `validation_versions` | validation_id, version, snapshot_json, reason, created_by, created_at | Histórico imutável |
-| `audit_logs` | validation_id, entity, action, actor, before_json, after_json, reason, timestamp | Trilha de auditoria |
+| `validation_versions` | validation_id, version, snapshot_json, reason, created_by, created_at | Histórico congelado por versão |
+| `audit_logs` | validation_id, entity, action, actor, before_json, after_json, reason, timestamp, previous_hash, current_hash | Trilha de auditoria encadeada por SHA-256 (detecção de alteração acidental) |
 | `settings` | key, value_json | Configuração local |
 | `schema_migrations` | version, applied_at, description | Versão aplicada do schema |
 

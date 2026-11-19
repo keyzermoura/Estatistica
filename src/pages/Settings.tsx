@@ -160,6 +160,16 @@ export function Settings() {
         <Card>
           <CardHeader title="Responsáveis e assinaturas" description="Nomes pré-preenchidos nas novas validações e no relatório." icon={<Users className="h-4 w-4" />} />
           <CardBody className="space-y-3">
+            <div className="rounded-lg border border-brand-200 bg-brand-50/50 p-3 dark:border-brand-900/50 dark:bg-brand-950/20">
+              <p className="text-xs font-semibold text-brand-900 dark:text-brand-300">Identificação declarada do operador (Auditoria local)</p>
+              <p className="mt-0.5 text-[11px] text-ink-500">
+                Nome e matrícula registrados na trilha de auditoria e exigidos ao criar ou aprovar validações. Declaração de autoria, sem autenticação verificada (21 CFR Part 11).
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-3">
+                <Input label="Nome completo *" value={draft.userName ?? ''} onChange={(e) => set('userName', e.target.value)} placeholder="Ex.: Dr. Carlos Silva" />
+                <Input label="Matrícula / Registro" value={draft.userRegistration ?? ''} onChange={(e) => set('userRegistration', e.target.value)} placeholder="Ex.: CRQ 04412345" />
+              </div>
+            </div>
             <Input label="Responsável pela elaboração" value={draft.responsible} onChange={(e) => set('responsible', e.target.value)} />
             <Input label="Revisor" value={draft.reviewer} onChange={(e) => set('reviewer', e.target.value)} />
             <Input label="Aprovador" value={draft.approver} onChange={(e) => set('approver', e.target.value)} />

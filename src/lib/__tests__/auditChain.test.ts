@@ -4,6 +4,8 @@ import {
   computeAuditLogHash,
   sha256Sync,
   verifyAuditChain,
+  exportAuditAnchor,
+  verifyAuditChainWithAnchor,
   type StoredAuditRow,
 } from '../auditChain';
 
@@ -106,5 +108,79 @@ describe('verifyAuditChain (21 CFR Part 11 Hash-Chaining)', () => {
     expect(result.isValid).toBe(true);
     expect(result.totalLogs).toBe(0);
     expect(result.verifiedLogs).toBe(0);
+  });
+
+  it('detecta edição no meio da cadeia quando recalculado apenas o registro alterado', () => {
+    const logs = createChain(5);
+    // Adulteração no registro 3: altera o ator e recalcula seu hash intrínseco
+    logs[2].actor = 'operador_modificado';
+    logs[2].current_hash = computeAuditLogHash({
+      previousHash: logs[2].previous_hash!,
+      id: logs[2].id,
+      validationId: logs[2].validation_id,
+      entity: logs[2].entity,
+      action: logs[2].action,
+      actor: logs[2].actor,
+      beforeJson: logs[2].before_json,
+      afterJson: logs[2].after_json,
+      reason: logs[2].reason,
+      timestamp: logs[2].timestamp,
+    });
+
+    // O registro 4 ainda aponta para o previous_hash antigo
+    const result = verifyAuditChain(logs);
+    expect(result.isValid).toBe(false);
+    expect(result.tamperedLogId).toBe('aud-4');
+    expect(result.tamperedReason).toContain('Quebra de elo na cadeia');
+    expect(result.verifiedLogs).toBe(3);
+  });
+
+  it('exporta âncora de custódia e valida cadeia íntegra contra o hash âncora', () => {
+    const logs = createChain(6);
+    const anchor = exportAuditAnchor(logs);
+
+    expect(anchor.totalLogs).toBe(6);
+    expect(anchor.latestHash).toBe(logs[5].current_hash);
+    expect(anchor.logsChecksum).toBeDefined();
+
+    const result = verifyAuditChainWithAnchor(logs, anchor);
+    expect(result.isValid).toBe(true);
+    expect(result.anchorMatches).toBe(true);
+    expect(result.divergenceReason).toBeNull();
+  });
+
+  it('detecta divergência contra âncora exportada mesmo se toda a cadeia for recalculada no IndexedDB', () => {
+    const logs = createChain(5);
+    // Exporta âncora antes de qualquer adulteração
+    const anchor = exportAuditAnchor(logs);
+
+    // Ataque simulado no IndexedDB: adulterar o registro 2 e recalcular toda a cadeia subsequente
+    // para tentar forjar integridade interna sem backend
+    logs[1].after_json = JSON.stringify({ runOrder: 2, value: 9999 }); // adulteração
+    for (let i = 1; i < logs.length; i++) {
+      logs[i].previous_hash = logs[i - 1].current_hash;
+      logs[i].current_hash = computeAuditLogHash({
+        previousHash: logs[i].previous_hash!,
+        id: logs[i].id,
+        validationId: logs[i].validation_id,
+        entity: logs[i].entity,
+        action: logs[i].action,
+        actor: logs[i].actor,
+        beforeJson: logs[i].before_json,
+        afterJson: logs[i].after_json,
+        reason: logs[i].reason,
+        timestamp: logs[i].timestamp,
+      });
+    }
+
+    // A cadeia agora é internamente consistente
+    const internalCheck = verifyAuditChain(logs);
+    expect(internalCheck.isValid).toBe(true);
+
+    // Porém, ao comparar com o hash âncora guardado externamente pelo usuário, a fraude é exposta:
+    const anchorCheck = verifyAuditChainWithAnchor(logs, anchor);
+    expect(anchorCheck.isValid).toBe(true);
+    expect(anchorCheck.anchorMatches).toBe(false);
+    expect(anchorCheck.divergenceReason).toContain('Hash âncora divergente');
   });
 });
