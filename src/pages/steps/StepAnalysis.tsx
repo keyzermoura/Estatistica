@@ -457,6 +457,19 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
     const sigmaRep = repParam?.rawMetrics.sigma_rep ?? analysis.qc.descriptive.sd ?? resolution;
     const sigmaOper = reproParam?.rawMetrics.sigma_oper ?? null;
 
+    const repDof =
+      typeof repParam?.rawMetrics?.df_rep === 'number' && repParam.rawMetrics.df_rep > 0
+        ? repParam.rawMetrics.df_rep
+        : ((repParam?.results?.gageRR as any)?.components?.find((c: any) => c.key === 'repeatability')?.df ??
+          null);
+
+    const reproDof =
+      typeof reproParam?.rawMetrics?.df_oper === 'number' && reproParam.rawMetrics.df_oper > 0
+        ? reproParam.rawMetrics.df_oper
+        : ((reproParam?.results?.gageRR as any)?.components?.find((c: any) => c.key === 'operator')?.df ??
+          (reproParam?.results?.gageRR as any)?.components?.find((c: any) => c.key === 'operator')?.interval?.df ??
+          null);
+
     const modelItems =
       profile.id === 'dimensional'
         ? dimensionalUncertaintyBudget({
@@ -465,8 +478,10 @@ export function StepAnalysis({ bundle, analysis, goTo, reload }: StepProps) {
             calibrationUncertainty: calU,
             coverageFactor: 2,
             repeatabilitySd: sigmaRep,
+            repeatabilityDof: repDof,
             nReplicates: bundle.design?.input.nReplicates ?? 3,
             reproducibilitySd: sigmaOper,
+            reproducibilityDof: reproDof,
             referenceUncertainty: calU,
           })
         : physicalUncertaintyBudget({

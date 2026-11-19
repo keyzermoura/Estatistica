@@ -822,8 +822,10 @@ export function seedDimensionalDemo(): string {
       deltaT: 1.0,
     },
     repeatabilitySd: 0.0007,
+    repeatabilityDof: 60, // 10 peças × 3 operadores × (3 - 1) réplicas = 60 gl do resíduo (dfE)
     nReplicates: 3,
     reproducibilitySd: 0.0003,
+    reproducibilityDof: 2, // 3 operadores - 1 = 2 gl (Satterthwaite / anova dfO)
     referenceUncertainty: 0.00015,
     flatness: 0.0003,
     parallelism: 0.0003,

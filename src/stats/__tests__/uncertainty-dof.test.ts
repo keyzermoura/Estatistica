@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { computeUncertainty } from '../uncertainty';
+import {
+  dimensionalRepeatabilityAnalysis,
+  dimensionalReproducibilityAnalysis,
+  dimensionalUncertaintyBudget,
+} from '../parameters/dimensional';
+import { DIMENSIONAL_PROFILE } from '../../profiles/dimensional';
 
 describe('Item A1: Tratamento de graus de liberdade (GL) no orçamento GUM (JCGM 100 §G.4)', () => {
   // Caso ilustrativo:
@@ -94,5 +100,129 @@ describe('Item A1: Tratamento de graus de liberdade (GL) no orçamento GUM (JCGM
     expect(res.dofComplete).not.toBe(false);
     expect(res.effectiveDof).toBeGreaterThan(0);
     expect(res.expanded).toBeGreaterThan(res.combined);
+  });
+});
+
+describe('Item A2: GL do orçamento dimensional ligado ao estudo de origem', () => {
+  it('preenche repeatabilityDof e reproducibilityDof vindos do estudo e calcula ν_eff e k sem aproximações indevidas', () => {
+    // Estudo dimensional 10 peças × 3 operadores × 3 réplicas:
+    // dfE = 10 * 3 * (3 - 1) = 60
+    // dfO = 3 - 1 = 2
+    const items = dimensionalUncertaintyBudget({
+      validationId: 'val-test-1',
+      resolution: 0.001,
+      calibrationUncertainty: 0.0008,
+      coverageFactor: 2,
+      repeatabilitySd: 0.0007,
+      repeatabilityDof: 60,
+      nReplicates: 3,
+      reproducibilitySd: 0.0003,
+      reproducibilityDof: 2,
+      referenceUncertainty: 0.00015,
+    });
+
+    const repItem = items.find((i) => i.id === 'dim-repeatability');
+    const reproItem = items.find((i) => i.id === 'dim-reproducibility');
+
+    expect(repItem).toBeDefined();
+    expect(repItem?.dof).toBe(60);
+    expect(repItem?.notes).toContain('ν = 60 do resíduo do estudo');
+
+    expect(reproItem).toBeDefined();
+    expect(reproItem?.dof).toBe(2);
+    expect(reproItem?.notes).toContain('ν = 2 (Satterthwaite');
+
+    const result = computeUncertainty(items);
+    expect(result.dofComplete).not.toBe(false);
+    expect(result.effectiveDof).not.toBeNull();
+    // Como reprodutibilidade tem GL = 2, ν_eff reflete essa limitação e k > 2 (t-Student)
+    expect(result.effectiveDof).toBeGreaterThan(0);
+    expect(result.effectiveDof!).toBeLessThan(60);
+    expect(result.coverageFactor).toBeGreaterThan(2);
+  });
+
+  it('usa fallback conservador (n - 1) para repetibilidade com aviso documentado quando repeatabilityDof ausente', () => {
+    const items = dimensionalUncertaintyBudget({
+      validationId: 'val-test-2',
+      resolution: 0.001,
+      calibrationUncertainty: 0.0008,
+      repeatabilitySd: 0.0007,
+      nReplicates: 4, // fallback deve ser 4 - 1 = 3
+      reproducibilitySd: 0.0003,
+      reproducibilityDof: 5,
+    });
+
+    const repItem = items.find((i) => i.id === 'dim-repeatability');
+    expect(repItem?.dof).toBe(3);
+    expect(repItem?.notes).toContain('fallback (n − 1 réplicas)');
+    expect(repItem?.notes).toContain('conservador');
+  });
+
+  it('quando reproducibilityDof é ausente, dof permanece null e sinaliza incomplete sem inventar valor', () => {
+    const items = dimensionalUncertaintyBudget({
+      validationId: 'val-test-3',
+      resolution: 0.001,
+      calibrationUncertainty: 0.0008,
+      repeatabilitySd: 0.0007,
+      repeatabilityDof: 60,
+      reproducibilitySd: 0.0003,
+      // reproducibilityDof omitido
+    });
+
+    const reproItem = items.find((i) => i.id === 'dim-reproducibility');
+    expect(reproItem?.dof).toBeNull();
+    expect(reproItem?.notes).toContain('graus de liberdade do operador não informados');
+
+    const result = computeUncertainty(items);
+    expect(result.dofComplete).toBe(false);
+    expect(result.effectiveDof).toBeNull();
+    expect(result.coverageFactor).toBe(2); // provisório sinalizado
+  });
+
+  it('repete e expõe df_rep e df_oper em dimensionalRepeatabilityAnalysis e dimensionalReproducibilityAnalysis', () => {
+    // Matriz balanceada 3 peças × 2 operadores × 2 réplicas = 12 medições
+    // anova: dfP = 2, dfO = 1, dfPO = 2, dfE = 6
+    const measurements = [
+      // P1: Op1 (10.0, 10.1), Op2 (10.2, 10.3)
+      { partId: 'P1', analyst: 'Op1', replicate: 1, value: 10.0 },
+      { partId: 'P1', analyst: 'Op1', replicate: 2, value: 10.1 },
+      { partId: 'P1', analyst: 'Op2', replicate: 1, value: 10.2 },
+      { partId: 'P1', analyst: 'Op2', replicate: 2, value: 10.3 },
+      // P2: Op1 (20.0, 20.1), Op2 (20.2, 20.3)
+      { partId: 'P2', analyst: 'Op1', replicate: 1, value: 20.0 },
+      { partId: 'P2', analyst: 'Op1', replicate: 2, value: 20.1 },
+      { partId: 'P2', analyst: 'Op2', replicate: 1, value: 20.2 },
+      { partId: 'P2', analyst: 'Op2', replicate: 2, value: 20.3 },
+      // P3: Op1 (30.0, 30.1), Op2 (30.2, 30.3)
+      { partId: 'P3', analyst: 'Op1', replicate: 1, value: 30.0 },
+      { partId: 'P3', analyst: 'Op1', replicate: 2, value: 30.1 },
+      { partId: 'P3', analyst: 'Op2', replicate: 1, value: 30.2 },
+      { partId: 'P3', analyst: 'Op2', replicate: 2, value: 30.3 },
+    ];
+
+    const ctx = {
+      used: measurements,
+      options: { tolerance: 1.0, unit: 'mm' },
+    } as any;
+
+    const repDef = DIMENSIONAL_PROFILE.parameters.find((p) => p.key === 'repeatability')!;
+    const reproDef = DIMENSIONAL_PROFILE.parameters.find((p) => p.key === 'reproducibility')!;
+
+    const repRes = dimensionalRepeatabilityAnalysis({
+      parameter: repDef,
+      criteria: [],
+      context: ctx,
+    });
+
+    const reproRes = dimensionalReproducibilityAnalysis({
+      parameter: reproDef,
+      criteria: [],
+      context: ctx,
+    });
+
+    // No modelo com interação dfE = 6; com interação não-significativa agregada (pooling), dfE,red = 6 + 2 = 8
+    expect([6, 8]).toContain(repRes.rawMetrics.df_rep);
+    expect(reproRes.rawMetrics.df_oper).toBeDefined();
+    expect(Number.isFinite(reproRes.rawMetrics.df_oper)).toBe(true);
   });
 });

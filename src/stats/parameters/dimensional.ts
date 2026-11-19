@@ -292,11 +292,17 @@ export const dimensionalRepeatabilityAnalysis: AnalysisModule = ({
   const empNotes = emp
     ? [`EMP (Wheeler): ${emp.monitorClass} (ICC = ${fmt(emp.icc)}; atenuação de sinal = ${fmt(emp.signalAttenuationPct)}%).`]
     : [];
+  const repDf =
+    repetition?.df ??
+    repetition?.interval?.df ??
+    result.rawMetrics.df_rep ??
+    null;
   const raw = {
     ev_pct: repetition?.studyVariationPct ?? null,
     sigma_rep: repetition?.standardDeviation ?? null,
     grr_pct: result.rawMetrics.grr_pct ?? null,
     ndc: result.rawMetrics.ndc ?? null,
+    df_rep: repDf,
   };
   const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
   return {
@@ -365,12 +371,18 @@ export const dimensionalReproducibilityAnalysis: AnalysisModule = ({
   }
   const { result } = study;
   const operator = componentOf(result, 'operator');
+  const operDf =
+    operator?.df ??
+    operator?.interval?.df ??
+    result.rawMetrics.df_oper ??
+    null;
   const raw = {
     oper_pct: operator?.studyVariationPct ?? null,
     sigma_oper: operator?.standardDeviation ?? null,
     grr_pct: result.rawMetrics.grr_pct ?? null,
     pt_pct: result.rawMetrics.pt_pct ?? null,
     ndc: result.rawMetrics.ndc ?? null,
+    df_oper: operDf,
   };
   const verdict = evaluateParameter(parameter.key, raw, criteria).verdict;
   return {
@@ -1442,10 +1454,14 @@ export interface DimensionalBudgetInput {
   } | null;
   /** Desvio-padrão de repetibilidade, s. */
   repeatabilitySd?: number | null;
+  /** Graus de liberdade do estudo de repetibilidade (ex.: dfE da ANOVA ou Gage R&R). */
+  repeatabilityDof?: number | null;
   /** Número de réplicas usado em s/√n. */
   nReplicates?: number | null;
   /** Desvio-padrão entre operadores (reprodutibilidade). */
   reproducibilitySd?: number | null;
+  /** Graus de liberdade da reprodutibilidade (Satterthwaite do componente de operador). */
+  reproducibilityDof?: number | null;
   /** Incerteza expandida do padrão de referência, U_ref. */
   referenceUncertainty?: number | null;
   /** Desvio máximo de planicidade (distribuição retangular). */
@@ -1537,6 +1553,23 @@ export function dimensionalUncertaintyBudget(
 
   const nReplicates = Math.max(1, Math.round(input.nReplicates ?? 1));
   if (input.repeatabilitySd !== null && input.repeatabilitySd !== undefined) {
+    let repDof: number | null = null;
+    let repNote = 'u_rep = s/√n, com s do estudo de repetibilidade.';
+    if (
+      typeof input.repeatabilityDof === 'number' &&
+      Number.isFinite(input.repeatabilityDof) &&
+      input.repeatabilityDof > 0
+    ) {
+      repDof = input.repeatabilityDof;
+      repNote += ` ν = ${repDof} do resíduo do estudo (ANOVA/Gage R&R).`;
+    } else if (nReplicates > 1) {
+      repDof = nReplicates - 1;
+      repNote += ` Atenção: ν = ${repDof} adotado por fallback (n − 1 réplicas); conservador frente aos graus de liberdade do estudo completo.`;
+    } else {
+      repDof = null;
+      repNote += ' Atenção: graus de liberdade não informados (Tipo A incompleto).';
+    }
+
     items.push(
       budgetItem(
         input,
@@ -1546,8 +1579,8 @@ export function dimensionalUncertaintyBudget(
         'normal',
         input.repeatabilitySd,
         Math.sqrt(nReplicates),
-        Math.max(1, nReplicates - 1),
-        'u_rep = s/√n, com s do estudo de repetibilidade.',
+        repDof,
+        repNote,
       ),
     );
   }
@@ -1556,6 +1589,21 @@ export function dimensionalUncertaintyBudget(
     input.reproducibilitySd !== null &&
     input.reproducibilitySd !== undefined
   ) {
+    let reproDof: number | null = null;
+    let reproNote = 'u_reprod = σ_operador do Gage R&R (desvio-padrão entre operadores).';
+    if (
+      typeof input.reproducibilityDof === 'number' &&
+      Number.isFinite(input.reproducibilityDof) &&
+      input.reproducibilityDof > 0
+    ) {
+      reproDof = input.reproducibilityDof;
+      const formattedDof = Number.isInteger(reproDof) ? reproDof : reproDof.toFixed(2);
+      reproNote += ` ν = ${formattedDof} (Satterthwaite do componente de operador).`;
+    } else {
+      reproDof = null;
+      reproNote += ' Atenção: graus de liberdade do operador não informados (Tipo A incompleto). Preencha a partir do estudo Gage R&R.';
+    }
+
     items.push(
       budgetItem(
         input,
@@ -1565,8 +1613,8 @@ export function dimensionalUncertaintyBudget(
         'normal',
         input.reproducibilitySd,
         1,
-        null,
-        'u_reprod = σ_operador do Gage R&R (desvio-padrão entre operadores).',
+        reproDof,
+        reproNote,
       ),
     );
   }

@@ -147,6 +147,8 @@ export interface GageRRComponent {
   verdict: Verdict;
   /** IC para o desvio-padrão do componente, quando estimável. */
   interval: GageRRConfidenceInterval | null;
+  /** Graus de liberdade do componente (ex.: dfE para repetibilidade, Satterthwaite para operador). */
+  df?: number | null;
 }
 
 export interface GageRRMetric {
@@ -1734,6 +1736,7 @@ function buildComponents(
       criterionText: 'Sem critério cadastrado; componente descritivo.',
       verdict: 'not_evaluated',
       interval: chiSquareSdInterval(draft.variance, draft.df, confidence),
+      df: draft.df,
     };
   });
 
@@ -2364,6 +2367,8 @@ export function gageRRAnalysis(
       componentModel.totalVariance > 0
         ? (100 * componentModel.partVariance) / componentModel.totalVariance
         : null,
+    df_rep: componentModel.components.find((component) => component.key === 'repeatability')?.df ?? anova.dfE,
+    df_oper: componentModel.components.find((component) => component.key === 'operator')?.df ?? anova.dfO,
     df_grr: componentModel.grrDf,
     df_part: componentModel.partDf,
     n_eff: data.n,

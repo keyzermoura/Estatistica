@@ -323,6 +323,12 @@ export function AnalysisUncertaintyTab({
                     >
                       {item.source || '—'}
                     </span>
+                    <span
+                      className="w-16 font-mono text-[11px] text-ink-500 text-right"
+                      title="Graus de liberdade (ν)"
+                    >
+                      ν = {item.dof !== null && item.dof !== undefined ? item.dof : (item.type === 'B' ? '∞' : '—')}
+                    </span>
                     <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-100 dark:bg-ink-800">
                       <div
                         className="h-full rounded-full bg-brand-500"
