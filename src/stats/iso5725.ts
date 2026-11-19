@@ -168,6 +168,7 @@ export interface Iso5725LevelResult {
   level: string;
   p: number;
   n: number;
+  nBar?: number;
   grandMean: number;
   msBetween: number;
   msWithin: number;
@@ -230,19 +231,24 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
     const byLab = groupBy(list, (r) => r.lab);
     const p = byLab.size;
     const sizes = [...byLab.values()].map((v) => v.length);
-    const n = Math.min(...sizes);
-    const balanced = sizes.every((s) => s === n);
-    if (!balanced) warnings.push(`Nível ${level}: número de réplicas desigual entre laboratórios.`);
+    const nMin = Math.min(...sizes);
+    const balanced = sizes.every((s) => s === nMin);
+    if (!balanced) {
+      warnings.push(`Nível ${level}: número de réplicas desigual entre laboratórios; aplicado cálculo ponderado conforme ISO 5725-2:2019.`);
+    }
     if (p < 6) warnings.push(`Nível ${level}: apenas ${p} laboratórios (ISO 5725-2 recomenda ≥ 6).`);
-    if (n < 2) warnings.push(`Nível ${level}: menos de 2 réplicas por laboratório.`);
-    const grandMean = mean(list.map((r) => r.value));
+    if (nMin < 2) warnings.push(`Nível ${level}: menos de 2 réplicas por laboratório.`);
+
     const labStats = [...byLab.entries()].map(([lab, labRows]) => {
       const values = labRows.map((r) => r.value);
       return { lab, mean: mean(values), sd: sd(values), n: values.length };
     });
     const pEff = labStats.length;
-    const msBetween =
-      (n / (pEff - 1)) * labStats.reduce((acc, l) => acc + (l.mean - grandMean) ** 2, 0);
+    const totalN = list.length;
+    // Média geral ponderada pelos tamanhos amostrais dos laboratórios
+    const grandMean = mean(list.map((r) => r.value));
+
+    // Soma de quadrados e variância residual dentro dos laboratórios (within)
     let ssWithin = 0;
     let dfWithin = 0;
     for (const [, labRows] of byLab) {
@@ -252,10 +258,23 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
     }
     const msWithin = dfWithin > 0 ? ssWithin / dfWithin : NaN;
     const sr2 = msWithin;
-    const sL2 = pEff > 1 && n > 0 ? Math.max(0, (msBetween - msWithin) / n) : NaN;
+
+    // ISO 5725-2:2019 / Satterthwaite (1946) para delineamentos desbalanceados:
+    // SS_between = Σ n_i * (mean_i - grandMean)²
+    // df_between = p - 1
+    // n_bar = [N - Σ(n_i²)/N] / (p - 1)
+    const sumNiSq = labStats.reduce((acc, l) => acc + l.n * l.n, 0);
+    const dfBetween = Math.max(1, pEff - 1);
+    const nBar = pEff > 1 ? (totalN - sumNiSq / totalN) / dfBetween : nMin;
+    const ssBetween = labStats.reduce((acc, l) => acc + l.n * (l.mean - grandMean) ** 2, 0);
+    const msBetween = ssBetween / dfBetween;
+
+    // Estimador de momentos de s_L² com truncamento em 0 (ISO 5725-2)
+    const sL2 = pEff > 1 && nBar > 0 ? Math.max(0, (msBetween - msWithin) / nBar) : NaN;
     const sr = Math.sqrt(Math.max(0, sr2));
     const sL = Number.isFinite(sL2) ? Math.sqrt(sL2) : NaN;
     const sR = Math.sqrt(Math.max(0, sr2 + (Number.isFinite(sL2) ? sL2 : 0)));
+
     const hDenom = Math.sqrt(
       labStats.reduce((acc, l) => acc + (l.mean - grandMean) ** 2, 0) / Math.max(1, pEff - 1),
     );
@@ -263,10 +282,10 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
       labStats.reduce((acc, l) => acc + l.sd * l.sd, 0) / Math.max(1, pEff),
     );
     const hCrit01 = pEff >= 3 ? mandelHCritical(pEff, 0.01) : 2;
-    const kCrit01 = pEff >= 2 && n >= 2 ? mandelKCritical(pEff, n, 0.01) : 2;
     const labMeans = labStats.map((l) => {
       const h = hDenom > 0 ? (l.mean - grandMean) / hDenom : 0;
       const k = kDenom > 0 ? l.sd / kDenom : 0;
+      const kCrit01 = pEff >= 2 && l.n >= 2 ? mandelKCritical(pEff, l.n, 0.01) : 2;
       return {
         lab: l.lab,
         mean: l.mean,
@@ -280,7 +299,8 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
     levels.push({
       level,
       p,
-      n,
+      n: balanced ? nMin : nBar,
+      ...(balanced ? {} : { nBar }),
       grandMean,
       msBetween,
       msWithin,
@@ -299,7 +319,7 @@ export function iso5725Analysis(rows: Iso5725Row[]): Iso5725Result {
     pooledSL2Num += (pEff - 1) * (Number.isFinite(sL2) ? sL2 : 0);
     pooledSL2Den += pEff - 1;
     minP = Math.min(minP, p);
-    minN = Math.min(minN, n);
+    minN = Math.min(minN, nMin);
   }
 
   const sr2 = pooledSr2Den > 0 ? pooledSr2Num / pooledSr2Den : NaN;

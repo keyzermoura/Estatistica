@@ -93,6 +93,83 @@ describe('ISO 5725-2', () => {
     close(result.pooled.sR, Math.sqrt(3.75), 1e-9);
     expect(result.pooled.repeatabilityLimit).toBeCloseTo(2.8 * Math.sqrt(0.5), 6);
   });
+
+  it('calcula s_r, s_L e s_R em desenho desbalanceado contra referência independente (Python/R)', () => {
+    // 3 laboratórios com réplicas desiguais:
+    // Lab A: 3 réplicas [10.2, 10.5, 10.1]
+    // Lab B: 4 réplicas [9.8, 10.0, 9.9, 10.1]
+    // Lab C: 2 réplicas [11.0, 11.2]
+    const rows = [
+      { lab: 'Lab A', level: '1', replicate: 1, value: 10.2 },
+      { lab: 'Lab A', level: '1', replicate: 2, value: 10.5 },
+      { lab: 'Lab A', level: '1', replicate: 3, value: 10.1 },
+      { lab: 'Lab B', level: '1', replicate: 1, value: 9.8 },
+      { lab: 'Lab B', level: '1', replicate: 2, value: 10.0 },
+      { lab: 'Lab B', level: '1', replicate: 3, value: 9.9 },
+      { lab: 'Lab B', level: '1', replicate: 4, value: 10.1 },
+      { lab: 'Lab C', level: '1', replicate: 1, value: 11.0 },
+      { lab: 'Lab C', level: '1', replicate: 2, value: 11.2 },
+    ];
+    const result = iso5725Analysis(rows);
+    const lvl = result.levels[0];
+    expect(lvl.balanced).toBe(false);
+    expect(result.warnings.some((w) => w.includes('número de réplicas desigual entre laboratórios'))).toBe(true);
+
+    // Referência independente calculada via ISO 5725-2:2019 / Python:
+    // N = 9, p = 3, sum(n_i²) = 9 + 16 + 4 = 29
+    // n_bar = (9 - 29/9) / 2 = 2.888888888888889
+    // grandMean = 10.311111111111112
+    // msWithin = 0.02611111111111111 => sr = 0.1615893285805409
+    // msBetween = 0.886111111111111 => sL2 = (0.8861111 - 0.0261111) / 2.8888889 = 0.2976926926926926
+    // sL = 0.5456121943916035
+    // sR = 0.5690372864177484
+    close(lvl.nBar!, 2.888888888888889, 1e-6);
+    close(lvl.grandMean, 10.311111111111112, 1e-6);
+    close(lvl.msWithin, 0.02611111111111111, 1e-6);
+    close(lvl.msBetween, 0.886111111111111, 1e-6);
+    close(lvl.sr, 0.1615893285805409, 1e-6);
+    close(lvl.sL, 0.5456121943916035, 1e-6);
+    close(lvl.sR, 0.5690372864177484, 1e-6);
+  });
+
+  it('remoção de 1 a 2 réplicas de estudo balanceado mantém estimativas consistentes', () => {
+    // Estudo balanceado: 6 laboratórios com 5 réplicas cada
+    const balancedRows: Array<{ lab: string; level: string; replicate: number; value: number }> = [];
+    const labOffsets = [0, 0.5, -0.3, 0.8, -0.6, 0.2];
+    const errors = [
+      [0.1, -0.1, 0.05, -0.05, 0.0],
+      [0.08, -0.06, 0.02, -0.1, 0.06],
+      [-0.05, 0.09, -0.04, 0.01, -0.01],
+      [0.12, -0.08, 0.04, -0.05, -0.03],
+      [-0.1, 0.07, -0.02, 0.08, -0.03],
+      [0.05, -0.04, 0.06, -0.08, 0.01],
+    ];
+    for (let i = 0; i < 6; i++) {
+      for (let r = 0; r < 5; r++) {
+        balancedRows.push({
+          lab: `Lab ${i + 1}`,
+          level: '1',
+          replicate: r + 1,
+          value: 10 + labOffsets[i] + errors[i][r],
+        });
+      }
+    }
+    const balancedResult = iso5725Analysis(balancedRows).levels[0];
+
+    // Remove 1 réplica do Lab 1 e 2 réplicas do Lab 2
+    const unbalancedRows = balancedRows.filter((r) => {
+      if (r.lab === 'Lab 1' && r.replicate === 5) return false;
+      if (r.lab === 'Lab 2' && (r.replicate === 4 || r.replicate === 5)) return false;
+      return true;
+    });
+    const unbalancedResult = iso5725Analysis(unbalancedRows).levels[0];
+
+    expect(unbalancedResult.balanced).toBe(false);
+    // Estimativas de s_r e s_R devem ser consistentes com o estudo completo (desvio relativo < 8%)
+    expect(Math.abs(unbalancedResult.sr - balancedResult.sr) / balancedResult.sr).toBeLessThan(0.08);
+    expect(Math.abs(unbalancedResult.sR - balancedResult.sR) / balancedResult.sR).toBeLessThan(0.08);
+    expect(Math.abs(unbalancedResult.grandMean - balancedResult.grandMean)).toBeLessThan(0.1);
+  });
 });
 
 describe('normalidade', () => {
