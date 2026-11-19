@@ -1033,20 +1033,38 @@ divisor = 1 (normal), √3 (retangular), √6 (triangular), √2 (forma U)
 contribuição_i = |c_i|·u_i
 u_c² = Σ(c_i·u_i)² + 2·Σ_{i<j} c_i·c_j·u_i·u_j·r(x_i, x_j)   (r ∈ [−1, 1], JCGM 100 §5.2 Eq. 13)
 %contribuição_i = 100·(c_i·u_i)²/u_c²
-ν_eff = u_c⁴ / Σ(u_i⁴/ν_i)          (Welch–Satterthwaite; ν_B = ∞ ⇒ u_B⁴/∞ = 0)
+ν_eff = u_c⁴ / Σ(u_i⁴/ν_i)          (Welch–Satterthwaite, JCGM 100 §G.4)
 U = k·u_c
-k = t_{1−α/2, ν_eff}               (quando ν_eff é conhecido)
-k = 2                              (quando faltam graus de liberdade em fontes Tipo A)
+k = t_{1−α/2, ν_eff}               (quando ν_eff é conhecido e completo)
+k = 2                              (apenas provisório quando faltam graus de liberdade em fontes Tipo A)
 ```
 
-Tipo A: `u = s/√n`, `ν = n−1`. Tipo B normal a partir de incerteza expandida:
-`u = U/k`. Conforme JCGM 100:2008 §G.4.2, fontes Tipo B sem graus de liberdade
-informados (`dof: null`) ou `dof: Infinity` são tratadas como `ν_i = ∞` (parcela
-nula no denominador de Welch–Satterthwaite); apenas fontes Tipo A exigem `ν`
-finito para calcular `ν_eff`. Quando todas as fontes têm `ν = ∞` (denominador
-zero), o sistema adota `ν_eff = 10⁶` (`k ≈ 1,96`). Pares correlacionados
-`r(x_i, x_j)` usam os coeficientes de sensibilidade com sinal (`c_i·c_j`).
-Referências: JCGM 100:2008 (GUM), cláusulas 5 (Eq. 13) e G (§G.4.2);
+### 14.1 Regras de graus de liberdade no orçamento GUM (JCGM 100:2008 §G.4 e §G.4.2)
+
+1. **Fontes Tipo B sem graus de liberdade informados** (`dof: null` ou `dof: Infinity`):
+   Conforme o JCGM 100:2008 §G.4.2, incertezas Tipo B com limites confiáveis ou certificados
+   são tratadas com graus de liberdade infinitos (`ν_i = ∞`), de modo que sua parcela no
+   denominador de Welch–Satterthwaite é nula (`u_i⁴ / ∞ = 0`). Se todas as fontes forem Tipo B
+   com `ν = ∞`, o sistema adota `ν_eff = 10⁶` (`k ≈ 1,960` para 95,45%).
+2. **Fontes Tipo A com graus de liberdade ausentes, nulos ou não positivos** (`dof === null` ou `dof ≤ 0`):
+   **Não podem** ser omitidas do denominador nem tratadas como `ν = ∞` (o que superestimaria
+   artificialmente o `ν_eff` e subestimaria o fator de abrangência `k`). Nessa situação:
+   - O cálculo de `ν_eff` é interrompido (`effectiveDof = null`);
+   - O fator `k = 2,000` é adotado **apenas em caráter provisório sinalizado**;
+   - O orçamento recebe o atributo explícito `dofComplete: false` e emite alerta destacado na interface e no relatório.
+3. **Vínculo dos graus de liberdade ao estudo experimental de origem**:
+   - **Repetibilidade (`u_rep`)**: utiliza os graus de liberdade do resíduo do estudo experimental
+     (`ν_rep = df_E` da ANOVA ou Gage R&R cruzado, ou `df_{E,red}` no caso de modelo reduzido com *pooling*
+     da interação não significativa). Quando não informado e houver `n > 1` réplicas declaradas,
+     aplica-se o *fallback* conservador documentado `ν = n − 1` acompanhado de nota técnica.
+   - **Reprodutibilidade (`u_reprod` / `u_oper`)**: utiliza os graus de liberdade efetivos de Satterthwaite
+     do componente de operador (`ν_oper`), calculados diretamente a partir dos quadrados médios da ANOVA
+     do Gage R&R. Se ausente, o campo permanece `dof: null` (Tipo A incompleto), sem inventar valores
+     artificiais.
+4. **Pares correlacionados**:
+   Pares com correlação estimada `r(x_i, x_j)` utilizam os coeficientes de sensibilidade com sinal (`c_i·c_j`).
+
+Referências: JCGM 100:2008 (GUM), cláusulas 5 (Eq. 13), §G.4 e §G.4.2;
 JCGM 101:2008; EURACHEM/CITAC (2012).
 
 ## 15. Como cada parâmetro é calculado e julgado
